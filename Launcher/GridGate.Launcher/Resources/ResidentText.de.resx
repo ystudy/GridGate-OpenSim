@@ -564,4 +564,23 @@
   <data name="Iar.Refused.NoRegion" xml:space="preserve"><value>Gerade läuft keine Region. Versuchen Sie es später noch einmal.</value></data>
   <data name="Iar.Refused.TakedownsUnreadable" xml:space="preserve"><value>Uploads können gerade nicht geprüft werden. Versuchen Sie es später noch einmal.</value></data>
   <data name="Iar.Stage.Receiving" xml:space="preserve"><value>Die Datei wird empfangen…</value></data>
+  <data name="Economy.TooMany" xml:space="preserve"><value>Zu viele Anfragen. Warten Sie eine Minute und versuchen Sie es dann erneut.</value></data>
+  <data name="Economy.LogInAgain" xml:space="preserve"><value>Melden Sie sich bitte erneut im Grid an und versuchen Sie es dann noch einmal.</value></data>
+  <data name="Economy.Unavailable" xml:space="preserve"><value>Das Geld ist gerade nicht verfügbar. Versuchen Sie es später erneut.</value></data>
+  <data name="Economy.NoMoney" xml:space="preserve"><value>Dieses Grid verwendet kein Geld, daher gibt es keine Münzen zu kaufen.</value></data>
+  <data name="Economy.PlayCoins" xml:space="preserve"><value>Dieses Grid verwendet Spielmünzen ({0}). Sie können nicht gekauft werden. Klicken Sie auf OK, um zu sehen, wie Sie welche bekommen.</value></data>
+  <data name="Economy.RealCoins" xml:space="preserve"><value>Münzen können nicht im Viewer gekauft werden. Klicken Sie auf OK, um zu sehen, wie Sie welche kaufen.</value></data>
+  <data name="Economy.BuyNotOffered" xml:space="preserve"><value>Der Kauf von Münzen im Viewer wird in diesem Grid nicht angeboten.</value></data>
+  <data name="Economy.NoMoneyLand" xml:space="preserve"><value>Dieses Grid verwendet kein Geld, daher kann nur kostenloses Land gekauft werden.</value></data>
+  <data name="Economy.Shortfall" xml:space="preserve"><value>Ihnen fehlen noch {0} {1}, um dieses Land zu kaufen.</value></data>
+  <data name="Coins.Title" xml:space="preserve"><value>Münzen</value></data>
+  <data name="Coins.Intro" xml:space="preserve"><value>Das Geld dieses Grids heißt {0} ({1}).</value></data>
+  <data name="Coins.Play" xml:space="preserve"><value>Das sind Spielmünzen. Sie können weder gekauft noch ausgezahlt werden.</value></data>
+  <data name="Coins.HowTo" xml:space="preserve"><value>So bekommen Sie welche</value></data>
+  <data name="Coins.Starting" xml:space="preserve"><value>Jeder neue Bewohner startet mit {0}.</value></data>
+  <data name="Coins.Allowance" xml:space="preserve"><value>Jede Woche bekommen Sie {0}.</value></data>
+  <data name="Coins.Gifts" xml:space="preserve"><value>Das Team des Grids kann Ihnen Münzen geben.</value></data>
+  <data name="Coins.Earn" xml:space="preserve"><value>Andere Bewohner können Sie bezahlen, zum Beispiel für Dinge, die Sie herstellen und verkaufen.</value></data>
+  <data name="Coins.Off" xml:space="preserve"><value>Dieses Grid verwendet kein Geld.</value></data>
+  <data name="Coins.AskStaff" xml:space="preserve"><value>Fragen Sie das Team des Grids, wie Sie hier Münzen bekommen.</value></data>
 </root>

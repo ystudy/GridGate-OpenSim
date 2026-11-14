@@ -69,9 +69,9 @@ public sealed class MoneyServiceHost(
 
     public async Task StopAsync(CancellationToken cancellationToken)
     {
-        if (_app is null) return;
-        await _app.StopAsync(cancellationToken);
-        await _app.DisposeAsync();
-        _app = null;
+        // Taken once: the host may stop it from two places at once (seen when a test host is disposed).
+        if (Interlocked.Exchange(ref _app, null) is not { } app) return;
+        await app.StopAsync(cancellationToken);
+        await app.DisposeAsync();
     }
 }

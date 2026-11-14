@@ -8,6 +8,7 @@ using GridGate.Launcher.Core.Grid;
 using GridGate.Launcher.Core.Groups;
 using GridGate.Launcher.Core.Guests;
 using GridGate.Launcher.Core.Logs;
+using GridGate.Launcher.Economy;
 using GridGate.Launcher.Endpoints;
 using GridGate.Launcher.Core.ModelImport;
 using GridGate.Launcher.Core.Modules;
@@ -206,7 +207,8 @@ builder.Services.AddRazorPages(o =>
     // The public front page ("/" shows it to anyone not signed in as staff, see SetupGate); like the guest pages it is not there
     // on a Region Server or a Connected Server.
     // The operator's legal pages and the sign-up page are public in the same way.
-    foreach (var publicPage in new[] { "/Home", "/Legal", "/SignUp" })
+    // The coins page too (money plan 2): where the viewer's Buy currency window sends residents.
+    foreach (var publicPage in new[] { "/Home", "/Legal", "/SignUp", "/Coins" })
         o.Conventions.AddPageApplicationModelConvention(publicPage, m => m.Filters.Add(new GuestSideOnly()));
     // The owner's legal editor: the Security folder's owner policy, and not there where there is no guest side.
     o.Conventions.AddPageApplicationModelConvention("/Security/Legal", m => m.Filters.Add(new GuestSideOnly()));
@@ -230,7 +232,7 @@ builder.Services.AddRazorPages(o =>
     // The same for the Email pages: email is for the guest side's sign-up and password reset.
     foreach (var emailPage in new[] { "/Security/Email", "/Security/EmailWording", "/Security/Wording", "/Security/Languages", "/Security/Translate" })
         o.Conventions.AddPageApplicationModelConvention(emailPage, m => m.Filters.Add(new GuestSideOnly()));
-    foreach (var open in new[] { "/Login", "/Login/Code", "/Logout", "/Welcome", "/Waiting", "/SetupDone", "/Setup", "/Home", "/Legal", "/SignUp", "/Guest/SignIn", "/Guest/SignInCode", "/Guest/ForgotPassword", "/Guest/ResetPassword", "/Guest/Confirm", "/Guest/ConfirmEmail", "/Guest/Connect", "/Language" })
+    foreach (var open in new[] { "/Login", "/Login/Code", "/Logout", "/Welcome", "/Waiting", "/SetupDone", "/Setup", "/Home", "/Legal", "/SignUp", "/Guest/SignIn", "/Guest/SignInCode", "/Guest/ForgotPassword", "/Guest/ResetPassword", "/Guest/Confirm", "/Guest/ConfirmEmail", "/Guest/Connect", "/Language", "/Coins" })
         o.Conventions.AllowAnonymousToPage(open);
     o.Conventions.AllowAnonymousToFolder("/Setup");
     // Support tickets for guests: open to anyone (each page checks the ticket's link or cookie), only where there is a guest side.
@@ -244,7 +246,7 @@ builder.Services.AddRazorPages(o =>
     o.Conventions.AddPageApplicationModelConvention("/Language", m => m.Filters.Add(new GuestSideOnly()));
     foreach (var folder in new[] { "/Guest", "/Support" })
         o.Conventions.AddFolderApplicationModelConvention(folder, m => m.Filters.Add(new ResidentLanguageFilter(welcome: false)));
-    foreach (var page in new[] { "/Home", "/Legal", "/SignUp" })
+    foreach (var page in new[] { "/Home", "/Legal", "/SignUp", "/Coins" })
         o.Conventions.AddPageApplicationModelConvention(page, m => m.Filters.Add(new ResidentLanguageFilter(welcome: false)));
     // The dashboard's forms post here: a POST to "/" belongs to the port-8001 contract (LegacyRootPolicy).
     o.Conventions.AddPageRoute("/Index", "dashboard");
@@ -415,6 +417,9 @@ builder.Services.AddSingleton<Func<CpuPriority, string?>>(_ => RegionSettingsRul
 // (MoneyRelease) and turned on; registered before GridHostedService so it is listening before regions start.
 builder.Services.AddSingleton(sp => new MoneyGate(sp.GetRequiredService<Func<LauncherSettings>>()));
 builder.Services.AddSingleton<MoneyStatus>();
+builder.Services.AddSingleton<ISecureSessionCheck>(sp => sp.GetRequiredService<PresenceCheck>());
+builder.Services.AddSingleton(sp => new EconomyLimits(sp.GetRequiredService<TimeProvider>()));
+builder.Services.AddSingleton<EconomyHelper>();
 builder.Services.AddSingleton(sp => new PresenceCheck(MoneyConnections.Robust(sp.GetRequiredService<Func<LauncherSettings>>())));
 builder.Services.AddSingleton(sp =>
 {
@@ -498,6 +503,7 @@ StatusApi.Map(app);
 DashboardApi.Map(app);
 SetupApi.Map(app);
 SplashApi.Map(app);
+EconomyApi.Map(app);
 app.MapRazorPages();
 
 app.Lifetime.ApplicationStarted.Register(() =>

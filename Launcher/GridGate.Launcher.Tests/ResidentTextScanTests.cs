@@ -16,7 +16,7 @@ public sealed class ResidentTextScanTests
 {
     // Pages that are resident, relative to Pages/. Folders are scanned whole.
     private static readonly string[] ResidentFolders = ["Guest", "Support"];
-    private static readonly string[] ResidentPages = ["Home.cshtml", "SignUp.cshtml", "Legal.cshtml", "Welcome.cshtml", "Language.cshtml"];
+    private static readonly string[] ResidentPages = ["Home.cshtml", "SignUp.cshtml", "Legal.cshtml", "Welcome.cshtml", "Language.cshtml", "Coins.cshtml"];
 
     // Resident layouts and partials that no page names with <partial>: a layout is named by Layout = "..." and the
     // ones below are found that way too, but listing them keeps the scan from quietly shrinking if a reference is renamed.

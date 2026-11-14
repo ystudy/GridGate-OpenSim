@@ -564,4 +564,23 @@
   <data name="Iar.Refused.NoRegion" xml:space="preserve"><value>No region is running right now. Try again later.</value></data>
   <data name="Iar.Refused.TakedownsUnreadable" xml:space="preserve"><value>Uploads can't be checked right now. Try again later.</value></data>
   <data name="Iar.Stage.Receiving" xml:space="preserve"><value>Receiving the file…</value></data>
+  <data name="Economy.TooMany" xml:space="preserve"><value>Too many requests. Please wait a minute and try again.</value></data>
+  <data name="Economy.LogInAgain" xml:space="preserve"><value>Please log in to the grid again, then try once more.</value></data>
+  <data name="Economy.Unavailable" xml:space="preserve"><value>Money is unavailable right now. Please try again later.</value></data>
+  <data name="Economy.NoMoney" xml:space="preserve"><value>This grid doesn't use money, so there are no coins to buy.</value></data>
+  <data name="Economy.PlayCoins" xml:space="preserve"><value>This grid uses play coins ({0}). They can't be bought. Press OK to see how to get them.</value></data>
+  <data name="Economy.RealCoins" xml:space="preserve"><value>Coins can't be bought in the viewer. Press OK to see how to buy them.</value></data>
+  <data name="Economy.BuyNotOffered" xml:space="preserve"><value>Buying coins in the viewer isn't offered on this grid.</value></data>
+  <data name="Economy.NoMoneyLand" xml:space="preserve"><value>This grid doesn't use money, so only free land can be bought.</value></data>
+  <data name="Economy.Shortfall" xml:space="preserve"><value>You need {0} more {1} to buy this land.</value></data>
+  <data name="Coins.Title" xml:space="preserve"><value>Coins</value></data>
+  <data name="Coins.Intro" xml:space="preserve"><value>This grid's money is called {0} ({1}).</value></data>
+  <data name="Coins.Play" xml:space="preserve"><value>These are play coins. They can't be bought or cashed out.</value></data>
+  <data name="Coins.HowTo" xml:space="preserve"><value>How to get them</value></data>
+  <data name="Coins.Starting" xml:space="preserve"><value>Every new resident starts with {0}.</value></data>
+  <data name="Coins.Allowance" xml:space="preserve"><value>Every week you get {0}.</value></data>
+  <data name="Coins.Gifts" xml:space="preserve"><value>The grid's staff can give you coins.</value></data>
+  <data name="Coins.Earn" xml:space="preserve"><value>Other residents can pay you, for example for things you make and sell.</value></data>
+  <data name="Coins.Off" xml:space="preserve"><value>This grid doesn't use money.</value></data>
+  <data name="Coins.AskStaff" xml:space="preserve"><value>Ask the grid's staff how to get coins here.</value></data>
 </root>

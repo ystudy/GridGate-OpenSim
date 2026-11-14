@@ -564,4 +564,23 @@
   <data name="Iar.Refused.NoRegion" xml:space="preserve"><value>Сейчас не работает ни один регион. Попробуйте позже.</value></data>
   <data name="Iar.Refused.TakedownsUnreadable" xml:space="preserve"><value>Сейчас загрузки нельзя проверить. Попробуйте позже.</value></data>
   <data name="Iar.Stage.Receiving" xml:space="preserve"><value>Получаем файл…</value></data>
+  <data name="Economy.TooMany" xml:space="preserve"><value>Слишком много запросов. Подождите минуту и попробуйте ещё раз.</value></data>
+  <data name="Economy.LogInAgain" xml:space="preserve"><value>Войдите в грид заново и попробуйте ещё раз.</value></data>
+  <data name="Economy.Unavailable" xml:space="preserve"><value>Деньги сейчас недоступны. Попробуйте позже.</value></data>
+  <data name="Economy.NoMoney" xml:space="preserve"><value>В этом гриде нет денег, поэтому монеты купить нельзя.</value></data>
+  <data name="Economy.PlayCoins" xml:space="preserve"><value>В этом гриде используются игровые монеты ({0}). Их нельзя купить. Нажмите OK, чтобы узнать, как их получить.</value></data>
+  <data name="Economy.RealCoins" xml:space="preserve"><value>Монеты нельзя купить во вьюере. Нажмите OK, чтобы узнать, как их купить.</value></data>
+  <data name="Economy.BuyNotOffered" xml:space="preserve"><value>В этом гриде нельзя купить монеты во вьюере.</value></data>
+  <data name="Economy.NoMoneyLand" xml:space="preserve"><value>В этом гриде нет денег, поэтому купить можно только бесплатную землю.</value></data>
+  <data name="Economy.Shortfall" xml:space="preserve"><value>Чтобы купить эту землю, вам не хватает {0} {1}.</value></data>
+  <data name="Coins.Title" xml:space="preserve"><value>Монеты</value></data>
+  <data name="Coins.Intro" xml:space="preserve"><value>Деньги этого грида называются {0} ({1}).</value></data>
+  <data name="Coins.Play" xml:space="preserve"><value>Это игровые монеты. Их нельзя купить или обменять на настоящие деньги.</value></data>
+  <data name="Coins.HowTo" xml:space="preserve"><value>Как их получить</value></data>
+  <data name="Coins.Starting" xml:space="preserve"><value>Каждый новый житель получает {0} в начале.</value></data>
+  <data name="Coins.Allowance" xml:space="preserve"><value>Каждую неделю вы получаете {0}.</value></data>
+  <data name="Coins.Gifts" xml:space="preserve"><value>Администрация грида может подарить вам монеты.</value></data>
+  <data name="Coins.Earn" xml:space="preserve"><value>Другие жители могут платить вам, например за вещи, которые вы делаете и продаёте.</value></data>
+  <data name="Coins.Off" xml:space="preserve"><value>В этом гриде нет денег.</value></data>
+  <data name="Coins.AskStaff" xml:space="preserve"><value>Спросите администрацию грида, как получить здесь монеты.</value></data>
 </root>

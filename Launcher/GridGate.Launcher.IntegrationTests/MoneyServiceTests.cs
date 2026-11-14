@@ -489,6 +489,17 @@ public sealed class MoneyServiceTests(MoneyMariaDb maria) : IClassFixture<MoneyM
     }
 
     [Fact]
+    public async Task Two_stops_at_once_are_safe()
+    {
+        await StartAsync();
+
+        await Task.WhenAll(_host!.StopAsync(Ct), _host.StopAsync(Ct), _host.StopAsync(Ct));
+
+        using var tcp = new TcpClient();
+        await Assert.ThrowsAnyAsync<SocketException>(async () => await tcp.ConnectAsync(IPAddress.Loopback, _port, Ct));
+    }
+
+    [Fact]
     public async Task Off_mode_does_not_listen()
     {
         await StartAsync(MoneyMode.Off);

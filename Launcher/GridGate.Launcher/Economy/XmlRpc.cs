@@ -15,12 +15,15 @@ public static class XmlRpc
     /// <summary>A call: its method and the first param's struct members (string, int, bool, double or a nested struct).</summary>
     public sealed record Call(string Method, IReadOnlyDictionary<string, object> Params);
 
+    /// <summary>The largest call read: 16 KB.</summary>
+    public const int MaxBytes = 16384;
+
     private const int MaxDepth = 4;
 
     private sealed class Bad : Exception;
 
     /// <summary>The call in <paramref name="body"/>, or null for anything that isn't a plain XML-RPC call.</summary>
-    public static Call? Read(Stream body, int maxBytes = 16384)
+    public static Call? Read(Stream body, int maxBytes = MaxBytes)
     {
         try
         {

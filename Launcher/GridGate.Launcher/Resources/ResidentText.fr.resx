@@ -564,4 +564,23 @@
   <data name="Iar.Refused.NoRegion" xml:space="preserve"><value>Aucune région ne tourne en ce moment. Réessayez plus tard.</value></data>
   <data name="Iar.Refused.TakedownsUnreadable" xml:space="preserve"><value>Les envois ne peuvent pas être vérifiés pour le moment. Réessayez plus tard.</value></data>
   <data name="Iar.Stage.Receiving" xml:space="preserve"><value>Réception du fichier…</value></data>
+  <data name="Economy.TooMany" xml:space="preserve"><value>Trop de demandes. Attendez une minute, puis réessayez.</value></data>
+  <data name="Economy.LogInAgain" xml:space="preserve"><value>Reconnectez-vous à la grille, puis réessayez.</value></data>
+  <data name="Economy.Unavailable" xml:space="preserve"><value>L’argent n’est pas disponible pour le moment. Réessayez plus tard.</value></data>
+  <data name="Economy.NoMoney" xml:space="preserve"><value>Cette grille n’utilise pas d’argent : il n’y a donc pas de pièces à acheter.</value></data>
+  <data name="Economy.PlayCoins" xml:space="preserve"><value>Cette grille utilise des pièces de jeu ({0}). Elles ne peuvent pas être achetées. Cliquez sur OK pour savoir comment en obtenir.</value></data>
+  <data name="Economy.RealCoins" xml:space="preserve"><value>Les pièces ne peuvent pas être achetées dans le viewer. Cliquez sur OK pour savoir comment en acheter.</value></data>
+  <data name="Economy.BuyNotOffered" xml:space="preserve"><value>L’achat de pièces dans le viewer n’est pas proposé sur cette grille.</value></data>
+  <data name="Economy.NoMoneyLand" xml:space="preserve"><value>Cette grille n’utilise pas d’argent : seul le terrain gratuit peut être acheté.</value></data>
+  <data name="Economy.Shortfall" xml:space="preserve"><value>Il vous manque {0} {1} pour acheter ce terrain.</value></data>
+  <data name="Coins.Title" xml:space="preserve"><value>Pièces</value></data>
+  <data name="Coins.Intro" xml:space="preserve"><value>L’argent de cette grille s’appelle {0} ({1}).</value></data>
+  <data name="Coins.Play" xml:space="preserve"><value>Ce sont des pièces de jeu. Elles ne peuvent être ni achetées ni encaissées.</value></data>
+  <data name="Coins.HowTo" xml:space="preserve"><value>Comment en obtenir</value></data>
+  <data name="Coins.Starting" xml:space="preserve"><value>Chaque nouveau résident commence avec {0}.</value></data>
+  <data name="Coins.Allowance" xml:space="preserve"><value>Chaque semaine, vous recevez {0}.</value></data>
+  <data name="Coins.Gifts" xml:space="preserve"><value>L’équipe de la grille peut vous donner des pièces.</value></data>
+  <data name="Coins.Earn" xml:space="preserve"><value>D’autres résidents peuvent vous payer, par exemple pour ce que vous fabriquez et vendez.</value></data>
+  <data name="Coins.Off" xml:space="preserve"><value>Cette grille n’utilise pas d’argent.</value></data>
+  <data name="Coins.AskStaff" xml:space="preserve"><value>Demandez à l’équipe de la grille comment obtenir des pièces ici.</value></data>
 </root>
