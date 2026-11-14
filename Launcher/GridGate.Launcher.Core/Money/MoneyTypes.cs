@@ -29,6 +29,9 @@ public enum MoneyOutcome
 
     /// <summary>A transaction id already used for a different request.</summary>
     DuplicateTxn,
+
+    /// <summary>A hypergrid visitor on either side while the owner has visitor wallets off (money design §7.6).</summary>
+    VisitorsOff,
 }
 
 /// <summary>

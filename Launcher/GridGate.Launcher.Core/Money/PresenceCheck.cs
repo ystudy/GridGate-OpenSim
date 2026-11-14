@@ -66,6 +66,27 @@ public sealed class PresenceCheck(Func<CancellationToken, Task<MySqlConnection>>
         }
     }
 
+    /// <summary>
+    /// Whether the Gatekeeper let <paramref name="id"/> in from <paramref name="home"/>: it writes a <c>GridUser</c> row
+    /// <c>"uuid;HomeURI;First Last"</c> for every visitor (GatekeeperService.LoginAgent). Homes are compared as the ledger
+    /// compares them. An empty home is false without a query; a database failure throws.
+    /// </summary>
+    public async Task<bool> IsKnownVisitorAsync(Guid id, string home, CancellationToken ct)
+    {
+        var wanted = MoneyLedger.NormalHome(home);
+        if (id == Guid.Empty || wanted.Length == 0) return false;
+        await using var conn = await openRobust(ct);
+        await using var cmd = new MySqlCommand("SELECT UserID FROM GridUser WHERE UserID LIKE @prefix", conn);
+        cmd.Parameters.AddWithValue("@prefix", id.ToString() + ";%");
+        await using var r = await cmd.ExecuteReaderAsync(ct);
+        while (await r.ReadAsync(ct))
+        {
+            var parts = r.GetString(0).Split(';');
+            if (parts.Length >= 2 && MoneyLedger.NormalHome(parts[1]) == wanted) return true;
+        }
+        return false;
+    }
+
     /// <summary>Whether <paramref name="id"/> is a local account in Robust's <c>UserAccounts</c>. A database failure throws.</summary>
     public async Task<bool> IsLocalUserAsync(Guid id, CancellationToken ct)
     {

@@ -16,6 +16,7 @@ public sealed partial class MoneyLedger(
     Func<MoneySettings> settings,
     Func<MoneyMode> effectiveMode,
     Func<Guid, CancellationToken, Task<bool>> isLocalUser,
+    Func<Guid, string, CancellationToken, Task<bool>> isKnownVisitor,
     TimeProvider time) : IMoneyBooks
 {
     private const int DeadlockRetries = 3;
@@ -65,7 +66,7 @@ public sealed partial class MoneyLedger(
     private static bool Same(AccountRef a, AccountRef b) => a.AgentId == b.AgentId && NormalHome(a.Home) == NormalHome(b.Home);
 
     /// <summary>A visitor's home as stored: trimmed, without a trailing slash, lower case.</summary>
-    private static string NormalHome(string home) => home.Trim().TrimEnd('/').ToLowerInvariant();
+    internal static string NormalHome(string home) => home.Trim().TrimEnd('/').ToLowerInvariant();
 
     /// <summary>Resolves both accounts and moves the coins from <paramref name="from"/> to <paramref name="to"/>, guarded.</summary>
     private async Task<MoneyResult> MoveAsync(MySqlConnection conn, MySqlTransaction tx, AccountRef from, AccountRef to, long amount, Entry entry, CancellationToken ct)
@@ -135,19 +136,25 @@ public sealed partial class MoneyLedger(
 
     /// <summary>
     /// The account for <paramref name="who"/>, creating it when allowed: a resident only if they are a local user (§7.2), a
-    /// visitor only while visitor wallets are on. System accounts can't be named. Doesn't lock.
+    /// visitor only while visitor wallets are on and only for a home the Gatekeeper recorded (plan 3). While visitor wallets
+    /// are off a visitor is <see cref="MoneyOutcome.VisitorsOff"/>, unless <paramref name="staff"/> is acting: staff may still
+    /// tidy up an existing wallet. System accounts can't be named. Doesn't lock.
     /// </summary>
-    private async Task<(Account? Account, MoneyOutcome Refusal)> ResolveAsync(MySqlConnection conn, MySqlTransaction tx, AccountRef who, CancellationToken ct)
+    private async Task<(Account? Account, MoneyOutcome Refusal)> ResolveAsync(MySqlConnection conn, MySqlTransaction tx, AccountRef who, CancellationToken ct,
+        bool staff = false)
     {
         var home = NormalHome(who.Home);
         if (who.AgentId == Guid.Empty || home.StartsWith("system:", StringComparison.Ordinal) || home.Length > 255)
             return (null, MoneyOutcome.NoWallet);
+        var resident = home.Length == 0;
+        var visitorsOn = settings().VisitorWallets;
+        if (!resident && !visitorsOn && !staff)
+            return (null, MoneyOutcome.VisitorsOff);
 
         if (await FindAsync(conn, tx, who.AgentId, home, ct) is { } found)
             return (found, MoneyOutcome.Ok);
 
-        var resident = home.Length == 0;
-        if (resident ? !await isLocalUser(who.AgentId, ct) : !settings().VisitorWallets)
+        if (resident ? !await isLocalUser(who.AgentId, ct) : !visitorsOn || !await isKnownVisitor(who.AgentId, home, ct))
             return (null, MoneyOutcome.NoWallet);
 
         var created = await ExecAsync(conn, tx,

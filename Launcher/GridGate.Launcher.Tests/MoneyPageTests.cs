@@ -38,6 +38,15 @@ internal sealed class FakeBooks : IMoneyBooks
     }
 
     public Task<MoneyResult> BalanceAsync(AccountRef who, CancellationToken ct) => Moved($"balance {who.AgentId}");
+    /// <summary>What <see cref="FindBalanceAsync"/> answers: Ok with <see cref="Balance"/> unless set.</summary>
+    public MoneyOutcome FindOutcome { get; set; } = MoneyOutcome.Ok;
+    public Task<MoneyResult> FindBalanceAsync(AccountRef who, CancellationToken ct)
+    {
+        Up($"find {who.AgentId}");
+        return Task.FromResult(FindOutcome == MoneyOutcome.Ok ? new MoneyResult(MoneyOutcome.Ok, Balance) : MoneyResult.Of(FindOutcome));
+    }
+    public Task<MoneyResult> MergeWalletsAsync(AccountRef from, AccountRef to, StaffAction who, CancellationToken ct) =>
+        Moved($"merge {from.AgentId} {from.Home} -> {to.Home}", who);
     public Task<IReadOnlyList<HistoryLine>> HistoryAsync(AccountRef who, int max, CancellationToken ct)
     {
         Up($"history {who.AgentId} {max}");

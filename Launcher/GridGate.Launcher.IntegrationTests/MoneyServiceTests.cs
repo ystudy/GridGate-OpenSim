@@ -66,7 +66,7 @@ public sealed class MoneyServiceTests(MoneyMariaDb maria) : IClassFixture<MoneyM
         var dbSettings = dbOverride?.Invoke(settings) ?? settings;
         var time = TimeProvider.System;
         var presence = new PresenceCheck(MoneyConnections.Robust(() => dbSettings));
-        var ledger = new MoneyLedger(MoneyConnections.Money(() => dbSettings), () => settings.Money, () => mode, presence.IsLocalUserAsync, time);
+        var ledger = new MoneyLedger(MoneyConnections.Money(() => dbSettings), () => settings.Money, () => mode, presence.IsLocalUserAsync, presence.IsKnownVisitorAsync, time);
         var loggers = LoggerFactory.Create(b => b.AddProvider(new QueueLoggerProvider(_logs)).SetMinimumLevel(LogLevel.Trace));
         Directory.CreateDirectory(_dir);
         var cert = MoneyCertificate.LoadOrCreate(Path.Combine(_dir, MoneyCertificate.FileName), time);

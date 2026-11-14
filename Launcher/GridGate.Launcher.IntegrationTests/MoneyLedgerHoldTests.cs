@@ -108,7 +108,7 @@ public sealed class MoneyLedgerHoldTests(MoneyMariaDb maria) : IClassFixture<Mon
         var (first, db, time) = await MoneyLedgerTransferTests.Setup(maria);
         await first.HoldAsync(Buy(40), Ct);
         var s = new MoneySettings(Mode: MoneyMode.Play);
-        var second = new MoneyLedger(db.OpenMoney, () => s, () => MoneyMode.Play, MoneyLedgerTransferTests.LocalUsers(db), time);
+        var second = new MoneyLedger(db.OpenMoney, () => s, () => MoneyMode.Play, MoneyLedgerTransferTests.LocalUsers(db), MoneyLedgerTransferTests.KnownVisitors(db), time);
 
         time.Advance(TimeSpan.FromMinutes(6));
 

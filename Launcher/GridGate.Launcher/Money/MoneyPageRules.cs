@@ -51,6 +51,7 @@ public static class MoneyPageRules
         MoneyOutcome.Unavailable => "The money database can't be reached. Try again later.",
         MoneyOutcome.BadAmount => "That amount or reason isn't allowed.",
         MoneyOutcome.NoWallet => "That person has no wallet here.",
+        MoneyOutcome.VisitorsOff => "Visitor wallets are off.",
         MoneyOutcome.DuplicateReference => "That entry was already refunded.",
         _ => "That couldn't be done (" + Code(o) + ").",
     };

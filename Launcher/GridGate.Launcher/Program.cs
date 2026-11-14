@@ -428,7 +428,8 @@ builder.Services.AddSingleton(sp =>
 {
     var current = sp.GetRequiredService<Func<LauncherSettings>>();
     return new MoneyLedger(MoneyConnections.Money(current), () => current().Money, sp.GetRequiredService<MoneyGate>().Effective,
-        sp.GetRequiredService<PresenceCheck>().IsLocalUserAsync, sp.GetRequiredService<TimeProvider>());
+        sp.GetRequiredService<PresenceCheck>().IsLocalUserAsync, sp.GetRequiredService<PresenceCheck>().IsKnownVisitorAsync,
+        sp.GetRequiredService<TimeProvider>());
 });
 builder.Services.AddSingleton<IMoneyBooks>(sp => sp.GetRequiredService<MoneyLedger>());
 builder.Services.AddSingleton<MoneyNotices>();

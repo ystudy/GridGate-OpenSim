@@ -90,4 +90,39 @@ public sealed class PresenceCheckTests(MoneyMariaDb maria) : IClassFixture<Money
 
         Assert.Equal(PresenceOutcome.Unavailable, await check.CheckAsync(User, Session, Secure, Mine, Ct));
     }
+
+    [Fact]
+    public async Task Gatekeeper_row_makes_a_known_visitor()
+    {
+        var db = await maria.FreshAsync();
+        var visitor = Guid.NewGuid();
+        await db.AddVisitor(visitor, "http://grid.example:8002/");
+        var check = new PresenceCheck(db.OpenRobust);
+
+        Assert.True(await check.IsKnownVisitorAsync(visitor, "http://GRID.example:8002", Ct));
+        Assert.True(await check.IsKnownVisitorAsync(visitor, " http://grid.example:8002/ ", Ct));
+    }
+
+    [Fact]
+    public async Task Other_home_or_other_id_is_not_known()
+    {
+        var db = await maria.FreshAsync();
+        var visitor = Guid.NewGuid();
+        await db.AddVisitor(visitor, "http://grid.example:8002/");
+        await db.Sql($"INSERT INTO `robust`.`GridUser` (`UserID`) VALUES ('{User}')"); // a resident's row: no home part
+        var check = new PresenceCheck(db.OpenRobust);
+
+        Assert.False(await check.IsKnownVisitorAsync(visitor, "http://other.example/", Ct));
+        Assert.False(await check.IsKnownVisitorAsync(Guid.NewGuid(), "http://grid.example:8002/", Ct));
+        Assert.False(await check.IsKnownVisitorAsync(User, "", Ct));
+        Assert.False(await check.IsKnownVisitorAsync(visitor, "http://grid.example", Ct)); // a different port is a different grid
+    }
+
+    [Fact]
+    public async Task Empty_home_is_not_known_without_a_query()
+    {
+        var check = new PresenceCheck(_ => throw new InvalidOperationException("no query expected"));
+
+        Assert.False(await check.IsKnownVisitorAsync(Guid.NewGuid(), "  ", Ct));
+    }
 }

@@ -11,7 +11,7 @@ public sealed class MoneyLedgerTransferTests(MoneyMariaDb maria) : IClassFixture
 {
     private static readonly Guid A = Guid.Parse("a0000000-0000-0000-0000-00000000000a");
     private static readonly Guid B = Guid.Parse("b0000000-0000-0000-0000-00000000000b");
-    private static readonly Guid V = Guid.Parse("c0000000-0000-0000-0000-00000000000c");
+    internal static readonly Guid V = Guid.Parse("c0000000-0000-0000-0000-00000000000c");
     private const string OtherGrid = "http://other.example:8002";
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
@@ -24,9 +24,13 @@ public sealed class MoneyLedgerTransferTests(MoneyMariaDb maria) : IClassFixture
         await db.EnsureSchemaAsync();
         await db.AddUser(A);
         await db.AddUser(B);
+        // V has visited from these grids: the Gatekeeper wrote a GridUser row for each.
+        await db.AddVisitor(V, OtherGrid + "/");
+        await db.AddVisitor(V, "http://old.example:8002/", "Ann Old");
+        await db.AddVisitor(V, "http://new.example:8002/", "Ann New");
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 11, 13, 12, 0, 0, TimeSpan.Zero));
         var s = settings ?? new MoneySettings(Mode: mode);
-        var ledger = new MoneyLedger(db.OpenMoney, () => s, () => mode, LocalUsers(db), time);
+        var ledger = new MoneyLedger(db.OpenMoney, () => s, () => mode, LocalUsers(db), KnownVisitors(db), time);
         return (ledger, db, time);
     }
 
@@ -38,6 +42,10 @@ public sealed class MoneyLedgerTransferTests(MoneyMariaDb maria) : IClassFixture
         cmd.Parameters.AddWithValue("@id", id.ToString());
         return await cmd.ExecuteScalarAsync(ct) is not null;
     };
+
+    /// <summary>Whether Robust's GridUser table records this visitor's home, read by the launcher's own check.</summary>
+    internal static Func<Guid, string, CancellationToken, Task<bool>> KnownVisitors(MoneyTestDatabase db) =>
+        new PresenceCheck(db.OpenRobust).IsKnownVisitorAsync;
 
     private static TransferRequest Pay(Guid from, Guid to, long amount, Guid? txn = null) =>
         new(txn ?? Guid.NewGuid(), EntryType.PayAvatar, AccountRef.Resident(from), AccountRef.Resident(to), amount);
@@ -117,11 +125,11 @@ public sealed class MoneyLedgerTransferTests(MoneyMariaDb maria) : IClassFixture
     }
 
     [Fact]
-    public async Task Visitor_without_wallets_gets_NoWallet()
+    public async Task Visitor_without_wallets_gets_VisitorsOff()
     {
         var (ledger, _, _) = await Setup(maria, new MoneySettings(Mode: MoneyMode.Play, VisitorWallets: false));
 
-        Assert.Equal(MoneyOutcome.NoWallet, (await ledger.BalanceAsync(new AccountRef(V, OtherGrid), Ct)).Outcome);
+        Assert.Equal(MoneyOutcome.VisitorsOff, (await ledger.BalanceAsync(new AccountRef(V, OtherGrid), Ct)).Outcome);
     }
 
     [Fact]
@@ -270,7 +278,7 @@ public sealed class MoneyLedgerTransferTests(MoneyMariaDb maria) : IClassFixture
         var s = new MoneySettings(Mode: MoneyMode.Play);
         var closed = db.Settings with { MariaDbPort = MoneyMariaDb.FreePort() };
         var ledger = new MoneyLedger(ct => Core.Database.GridDb.OpenMoneyAsync(closed, 2, ct), () => s, () => MoneyMode.Play,
-            (_, _) => Task.FromResult(true), time);
+            (_, _) => Task.FromResult(true), (_, _, _) => Task.FromResult(true), time);
 
         Assert.Equal(MoneyOutcome.Unavailable, (await ledger.BalanceAsync(AccountRef.Resident(A), Ct)).Outcome);
         Assert.Equal(MoneyOutcome.Unavailable, (await ledger.TransferAsync(Pay(A, B, 1), Ct)).Outcome);

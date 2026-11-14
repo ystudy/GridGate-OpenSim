@@ -9,7 +9,7 @@ public sealed partial class MoneyLedger
     public Task<MoneyResult> GiveAsync(AccountRef to, long amount, StaffAction who, CancellationToken ct) =>
         StaffMoveAsync(who, amount, ct, async (conn, tx) =>
         {
-            var (account, refusal) = await ResolveAsync(conn, tx, to, ct);
+            var (account, refusal) = await ResolveAsync(conn, tx, to, ct, staff: true);
             if (account is null) return MoneyResult.Of(refusal);
             return await MoveBetweenAsync(conn, tx, MoneySchema.BankId, account.Id, amount, StaffEntry(EntryType.StaffGift, who), guarded: true, ct);
         });
@@ -18,7 +18,7 @@ public sealed partial class MoneyLedger
     public Task<MoneyResult> TakeAsync(AccountRef from, long amount, StaffAction who, CancellationToken ct) =>
         StaffMoveAsync(who, amount, ct, async (conn, tx) =>
         {
-            var (account, refusal) = await ResolveAsync(conn, tx, from, ct);
+            var (account, refusal) = await ResolveAsync(conn, tx, from, ct, staff: true);
             if (account is null) return MoneyResult.Of(refusal);
             return await MoveBetweenAsync(conn, tx, account.Id, MoneySchema.BankId, amount, StaffEntry(EntryType.StaffTake, who), guarded: true, ct);
         });
@@ -27,7 +27,7 @@ public sealed partial class MoneyLedger
     public Task<MoneyResult> MoveFeesAsync(AccountRef to, long amount, StaffAction who, CancellationToken ct) =>
         StaffMoveAsync(who, amount, ct, async (conn, tx) =>
         {
-            var (account, refusal) = await ResolveAsync(conn, tx, to, ct);
+            var (account, refusal) = await ResolveAsync(conn, tx, to, ct, staff: true);
             if (account is null) return MoneyResult.Of(refusal);
             return await MoveBetweenAsync(conn, tx, MoneySchema.FeesId, account.Id, amount, StaffEntry(EntryType.FeeMoved, who), guarded: true, ct);
         });
@@ -62,7 +62,7 @@ public sealed partial class MoneyLedger
             if (Same(from, to)) return MoneyResult.Of(MoneyOutcome.NotAllowed);
             var old = await FindAsync(conn, tx, from.AgentId, NormalHome(from.Home), ct);
             if (old is null || old.Kind is not (AccountKind.Person or AccountKind.Visitor)) return MoneyResult.Of(MoneyOutcome.NoWallet);
-            var (target, refusal) = await ResolveAsync(conn, tx, to, ct);
+            var (target, refusal) = await ResolveAsync(conn, tx, to, ct, staff: true);
             if (target is null) return MoneyResult.Of(refusal);
 
             var locked = await LockAsync(conn, tx, old.Id, ct);
@@ -72,6 +72,31 @@ public sealed partial class MoneyLedger
             await ExecAsync(conn, tx, "UPDATE accounts SET frozen = 1 WHERE id = @id", ct, ("@id", old.Id));
             return result;
         });
+
+    /// <summary>
+    /// The balance of an existing wallet, or <see cref="MoneyOutcome.NoWallet"/>: for staff pages, which must never create a
+    /// wallet (or a starting balance) just by being opened. Applies no allowance. A database failure is Unavailable.
+    /// </summary>
+    public async Task<MoneyResult> FindBalanceAsync(AccountRef who, CancellationToken ct)
+    {
+        try
+        {
+            return await ReadAsync(async conn =>
+            {
+                await using var cmd = new MySqlCommand(
+                    "SELECT balance FROM accounts WHERE agent_id = @agent AND home = @home AND kind IN ('Person', 'Visitor')", conn);
+                cmd.Parameters.AddWithValue("@agent", who.AgentId.ToString());
+                cmd.Parameters.AddWithValue("@home", NormalHome(who.Home));
+                return await cmd.ExecuteScalarAsync(ct) is { } v and not DBNull
+                    ? new MoneyResult(MoneyOutcome.Ok, Convert.ToInt64(v))
+                    : MoneyResult.Of(MoneyOutcome.NoWallet);
+            }, ct);
+        }
+        catch (MoneyUnavailableException)
+        {
+            return MoneyResult.Unavailable;
+        }
+    }
 
     /// <summary>The grid-wide freeze (money design §9.1): every payment is refused; holds still settle.</summary>
     public Task SetFrozenAsync(bool frozen, string reason, CancellationToken ct) =>
