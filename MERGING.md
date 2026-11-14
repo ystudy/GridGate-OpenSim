@@ -135,3 +135,19 @@ Windows.
 
 Once every commit up to some upstream commit has been picked or recorded, update `BASE` above (and the
 "Where our tree stands" section) to that commit, so the next list starts there.
+
+## GridGate's own changes to OpenSim
+
+Changes we made to OpenSimulator's own files for GridGate's money system (money design §7.8). Each is one commit,
+marked in the code with a `GridGate:` comment. When an upstream pick touches the same lines, keep these.
+
+| Commit | Files |
+|---|---|
+| `fix(opensim): PERMISSION_DEBIT must come from the object's owner` | `OpenSim/Region/ScriptEngine/Shared/Api/Implementation/LSL_Api.cs` (`llGiveMoney`, `llTransferLindenDollars`) |
+| `fix(opensim): auto_grant_all_perms never grants PERMISSION_DEBIT` | `LSL_Api.cs` (`llRequestPermissions`) |
+| `fix(opensim): llGiveMoney refuses amounts of 0 or less` | `LSL_Api.cs` (`llGiveMoney`) |
+| `fix(opensim): llGiveMoney refuses group-owned objects` | `LSL_Api.cs` (`llGiveMoney`) |
+| `feat(opensim): llTransferLindenDollars can pay hypergrid visitors` | `OpenSim/Framework/IVisitorMoneyModule.cs` (new), `OpenSim/Framework/OpenSim.Framework.csproj`, `LSL_Api.cs` (`llTransferLindenDollars`) |
+| `fix(opensim): UDP uploads are charged the upload fee` | `OpenSim/Region/CoreModules/Agent/AssetTransaction/AssetXferUploader.cs` |
+
+The money module itself is not an OpenSim change: it lives in `addon-modules/GridGateMoney`.
