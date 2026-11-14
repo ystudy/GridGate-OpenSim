@@ -146,9 +146,23 @@ public sealed class MyCoinsPageTests
 
         var rows = (await PageAsync(await GuestAsync(f))).QuerySelectorAll("#coins-history tbody tr").ToList();
 
-        Assert.Contains("Purchase, waiting for delivery", rows[1].TextContent);
-        Assert.Contains("Purchase returned", rows[0].TextContent);
+        // The buyer's hold line stays for good, so it says "Purchase", never "waiting" (final review, Important 5).
+        Assert.Equal("Purchase: dress", rows[1].QuerySelector(".what")!.TextContent.Trim());
+        Assert.Equal("Purchase returned: dress", rows[0].QuerySelector(".what")!.TextContent.Trim());
         Assert.All(rows, r => Assert.Equal("", r.QuerySelector(".who")!.TextContent.Trim()));
+    }
+
+    [Fact]
+    public async Task The_sellers_line_says_sale_with_the_object()
+    {
+        var books = new FakeBooks { Balance = 140 };
+        books.History.Add(new HistoryLine(9, DateTimeOffset.UtcNow, EntryType.HoldCompleted, null, 40, 140, "dress", EntryType.ObjectSale));
+        books.History.Add(new HistoryLine(10, DateTimeOffset.UtcNow, EntryType.HoldCompleted, null, 50, 190, "parcel 3", EntryType.LandSale));
+        await using var f = Make(books);
+
+        var whats = (await PageAsync(await GuestAsync(f))).QuerySelectorAll("#coins-history tbody tr .what").Select(w => w.TextContent.Trim()).ToList();
+
+        Assert.Equal(["Sale: dress", "Land sale: parcel 3"], whats);
     }
 
     [Fact]

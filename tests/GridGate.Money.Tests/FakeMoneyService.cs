@@ -29,31 +29,35 @@ internal sealed class FakeMoneyService : IMoneyService
 
     public IEnumerable<Call> Of(string method) => Calls.Where(c => c.Method == method);
 
-    private Task<MoneyAnswer> Record(string method, Guid txn, params object?[] args)
+    /// <summary>Awaited before a method answers (after the call is recorded): lets a test hold a call open.</summary>
+    public Func<string, Task>? Gate { get; set; }
+
+    private async Task<MoneyAnswer> Record(string method, Guid txn, CancellationToken ct, params object?[] args)
     {
         Calls.Enqueue(new Call(method, txn, args));
         lock (Order) Order.Add(method);
+        if (Gate is { } gate) await gate(method).WaitAsync(ct);
         lock (_queued)
-            return Task.FromResult(_queued.TryGetValue(method, out var q) && q.Count > 0 ? q.Dequeue() : Answer(method));
+            return _queued.TryGetValue(method, out var q) && q.Count > 0 ? q.Dequeue() : Answer(method);
     }
 
-    public Task<MoneyAnswer> BalanceAsync(MoneyWho who, CancellationToken ct) => Record("balance", Guid.Empty, who);
+    public Task<MoneyAnswer> BalanceAsync(MoneyWho who, CancellationToken ct) => Record("balance", Guid.Empty, ct, who);
 
     public Task<MoneyAnswer> TransferAsync(Guid txn, string type, MoneyWho from, MoneyWho to, long amount, Guid regionId, Guid? objectId, string? objectName,
-        CancellationToken ct) => Record("transfer", txn, type, from, to, amount, regionId, objectId, objectName);
+        CancellationToken ct) => Record("transfer", txn, ct, type, from, to, amount, regionId, objectId, objectName);
 
     public Task<MoneyAnswer> PayoutAsync(Guid txn, Guid ownerId, MoneyWho to, long amount, Guid regionId, Guid objectId, string objectName, CancellationToken ct) =>
-        Record("payout", txn, ownerId, to, amount, regionId, objectId, objectName);
+        Record("payout", txn, ct, ownerId, to, amount, regionId, objectId, objectName);
 
     public Task<MoneyAnswer> ChargeAsync(Guid txn, string type, MoneyWho payer, long amount, Guid? payTo, CancellationToken ct) =>
-        Record("charge", txn, type, payer, amount, payTo);
+        Record("charge", txn, ct, type, payer, amount, payTo);
 
     public Task<MoneyAnswer> HoldAsync(Guid txn, string kind, MoneyWho buyer, MoneyWho seller, long amount, Guid regionId, Guid? objectId, string? objectName,
-        CancellationToken ct) => Record("hold", txn, kind, buyer, seller, amount, regionId, objectId, objectName);
+        CancellationToken ct) => Record("hold", txn, ct, kind, buyer, seller, amount, regionId, objectId, objectName);
 
-    public Task<MoneyAnswer> CompleteAsync(Guid txn, long holdId, CancellationToken ct) => Record("complete", txn, holdId);
+    public Task<MoneyAnswer> CompleteAsync(Guid txn, long holdId, CancellationToken ct) => Record("complete", txn, ct, holdId);
 
-    public Task<MoneyAnswer> ReturnAsync(Guid txn, long holdId, CancellationToken ct) => Record("return", txn, holdId);
+    public Task<MoneyAnswer> ReturnAsync(Guid txn, long holdId, CancellationToken ct) => Record("return", txn, ct, holdId);
 
     public Task<EconomyInfo?> EconomyAsync(CancellationToken ct) => Task.FromResult(Economy);
 }

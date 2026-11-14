@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using OpenMetaverse;
@@ -92,54 +93,102 @@ internal sealed class MoneyActions(IMoneyService service, Guid regionId, Func<Ec
     /// <summary>
     /// Buying an object: the buyer's coins go on hold, the object is delivered, then the hold completes; a delivery that
     /// fails returns them. Free things, and your own, are delivered without money.
+    /// <para>
+    /// Buys of one object run one after another, and <paramref name="reread"/> (the object as it is now) is checked again
+    /// once a buy's turn comes and again after its hold: OpenSim's delivery doesn't check the sale, so without this two
+    /// buyers of an Original could both pay and only one get it (final review, Critical 1).
+    /// </para>
     /// </summary>
-    public async Task<bool> BuyAsync(Payer p, PartInfo part, MoneyWho seller, byte saleType, int salePrice, Func<bool> deliver)
+    public async Task<bool> BuyAsync(Payer p, PartInfo part, MoneyWho seller, byte saleType, int salePrice, Func<bool> deliver,
+        Func<PartInfo?>? reread = null)
     {
         if (MoneyRules.CheckBuy(part, saleType, salePrice) is var refusal && refusal != Refusal.None)
         {
             view.Tell(p.AgentId, MoneyRules.Message(refusal));
             return false;
         }
-        if (salePrice == 0 || seller.AgentId == p.AgentId) return deliver();
-
-        var hold = await service.HoldAsync(Guid.NewGuid(), "object", p.Who, seller, salePrice, regionId, part.PartId, part.Name, CancellationToken.None);
-        if (!hold.Ok || hold.HoldId is not { } holdId)
-        {
-            view.Tell(p.AgentId, MoneyRules.Message(hold.Ok ? MoneyAnswer.UnavailableCode : hold.Code));
-            return false;
-        }
-        var note = new BalanceNote((int)MoneyTransactionType.ObjectSale, p.AgentId, seller.AgentId, salePrice, part.Name);
-        if (hold.Balance is { } after) view.PushBalance(p.AgentId, after, note);
-
-        bool delivered;
+        var turn = BuyLocks[(int)((uint)part.RootId.GetHashCode() % BuyLocks.Length)];
+        await turn.WaitAsync().ConfigureAwait(false);
         try
         {
-            delivered = deliver();
-        }
-        catch (Exception e)
-        {
-            view.Warn($"Delivering {part.PartId} to {p.AgentId} failed with {e.GetType().Name}; returning hold {holdId}.");
-            delivered = false;
-        }
+            if (Changed(p, reread, seller, saleType, salePrice)) return false;
+            if (salePrice == 0 || seller.AgentId == p.AgentId) return deliver();
 
-        if (delivered)
-        {
-            var done = await SettleAsync(holdId, complete: true);
-            if (done.Ok && done.ToBalance is { } sellerAfter) view.PushBalance(seller.AgentId, sellerAfter, note);
-            return true;
+            var hold = await service.HoldAsync(Guid.NewGuid(), "object", p.Who, seller, salePrice, regionId, part.PartId, part.Name, CancellationToken.None);
+            if (!hold.Ok || hold.HoldId is not { } holdId)
+            {
+                view.Tell(p.AgentId, MoneyRules.Message(hold.Ok ? MoneyAnswer.UnavailableCode : hold.Code));
+                return false;
+            }
+            var note = new BalanceNote((int)MoneyTransactionType.ObjectSale, p.AgentId, seller.AgentId, salePrice, part.Name);
+            if (hold.Balance is { } after) view.PushBalance(p.AgentId, after, note);
+
+            bool delivered;
+            if (Changed(p, reread, seller, saleType, salePrice))
+            {
+                delivered = false;
+            }
+            else
+            {
+                try
+                {
+                    delivered = deliver();
+                }
+                catch (Exception e)
+                {
+                    view.Warn($"Delivering {part.PartId} to {p.AgentId} failed with {e.GetType().Name}; returning hold {holdId}.");
+                    delivered = false;
+                }
+            }
+
+            if (delivered)
+            {
+                var done = await SettleAsync(holdId, complete: true);
+                if (done.Ok && done.ToBalance is { } sellerAfter) view.PushBalance(seller.AgentId, sellerAfter, note);
+                return true;
+            }
+            var back = await SettleAsync(holdId, complete: false);
+            if (back.Ok && back.ToBalance is { } buyerAfter) view.PushBalance(p.AgentId, buyerAfter, null);
+            return false;
         }
-        var back = await SettleAsync(holdId, complete: false);
-        if (back.Ok && back.ToBalance is { } buyerAfter) view.PushBalance(p.AgentId, buyerAfter, null);
-        return false;
+        finally
+        {
+            turn.Release();
+        }
+    }
+
+    // Buys are serialized per object through one of these, picked by the root's id.
+    private static readonly SemaphoreSlim[] BuyLocks = Enumerable.Range(0, 64).Select(_ => new SemaphoreSlim(1, 1)).ToArray();
+
+    /// <summary>True (after telling the buyer) when the object is gone, or its sale or owner is no longer what was clicked.</summary>
+    private bool Changed(Payer p, Func<PartInfo?>? reread, MoneyWho seller, byte saleType, int salePrice)
+    {
+        if (reread is null) return false;
+        var now = reread();
+        var refusal = now is null ? Refusal.NotForSale : MoneyRules.CheckBuy(now, saleType, salePrice);
+        if (refusal == Refusal.None && now!.OwnerId == seller.AgentId) return false;
+        view.Tell(p.AgentId, MoneyRules.Message(refusal == Refusal.None ? Refusal.PriceChanged : refusal));
+        return true;
     }
 
     /// <summary>
     /// Holds the price of a parcel. The hold id, 0 for free land (nothing held), or null after telling the buyer why not.
     /// </summary>
-    public async Task<long?> HoldLandAsync(Payer p, MoneyWho seller, int price, int parcelLocalId)
+    /// <param name="limit">How long to wait for the service: the land module calls on the region's packet thread.</param>
+    public async Task<long?> HoldLandAsync(Payer p, MoneyWho seller, int price, int parcelLocalId, TimeSpan? limit = null)
     {
         if (price <= 0) return 0;
-        var hold = await service.HoldAsync(Guid.NewGuid(), "land", p.Who, seller, price, regionId, null, $"parcel {parcelLocalId}", CancellationToken.None);
+        using var cts = new CancellationTokenSource(limit ?? MoneyServiceClient.Timeout);
+        MoneyAnswer hold;
+        try
+        {
+            hold = await service.HoldAsync(Guid.NewGuid(), "land", p.Who, seller, price, regionId, null, $"parcel {parcelLocalId}", cts.Token);
+        }
+        catch (OperationCanceledException) when (cts.IsCancellationRequested)
+        {
+            // A hold the service did place after all is returned to the buyer when it expires.
+            hold = MoneyAnswer.Unavailable;
+        }
         if (!hold.Ok || hold.HoldId is not { } holdId)
         {
             view.Tell(p.AgentId, MoneyRules.Message(hold.Ok ? MoneyAnswer.UnavailableCode : hold.Code));
@@ -253,7 +302,12 @@ internal sealed class MoneyActions(IMoneyService service, Guid regionId, Func<Ec
             var answer = complete
                 ? await service.CompleteAsync(txn, holdId, CancellationToken.None)
                 : await service.ReturnAsync(txn, holdId, CancellationToken.None);
-            if (answer.Code != MoneyAnswer.UnavailableCode) return answer;
+            if (answer.Code != MoneyAnswer.UnavailableCode)
+            {
+                // A refusal here leaves the hold to expire: a delivered object stays paid for by nobody, or a buyer waits for coins.
+                if (!answer.Ok) view.Error($"Couldn't {(complete ? "complete" : "return")} hold {holdId}: {answer.Code}.");
+                return answer;
+            }
             if (attempt == SettleRetries.Length)
             {
                 view.Error($"Couldn't {(complete ? "complete" : "return")} hold {holdId}; the money service returns it to the buyer when it expires.");

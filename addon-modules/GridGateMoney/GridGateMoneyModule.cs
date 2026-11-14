@@ -28,6 +28,7 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
     public const string ModuleName = "GridGateMoneyModule";
     private static readonly ILog Log = LogManager.GetLogger(MethodBase.GetCurrentMethod()!.DeclaringType);
     private static readonly TimeSpan EconomyFresh = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan LandHoldLimit = TimeSpan.FromSeconds(3);
     private static readonly EconomyInfo NoEconomy = new("C$", 0, 0, true, true, 1_000_000);
 
     private readonly List<Scene> _scenes = [];
@@ -239,7 +240,9 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
             return;
         }
         bool Deliver() => scene.RequestModuleInterface<IBuySellModule>()?.BuyObject(c, category, localId, saleType, salePrice) ?? false;
-        await actions.BuyAsync(PayerOf(c), Info(part), WhoOf(group.RootPart.OwnerID), saleType, salePrice, Deliver).ConfigureAwait(false);
+        // The object as it is when this buy's turn comes: another buyer may have bought it, or the owner changed the sale.
+        PartInfo? Now() => scene.GetSceneObjectPart(localId) is { ParentGroup: { IsDeleted: false } } p ? Info(p) : null;
+        await actions.BuyAsync(PayerOf(c), Info(part), WhoOf(group.RootPart.OwnerID), saleType, salePrice, Deliver, Now).ConfigureAwait(false);
     }
 
     // ---- land ---------------------------------------------------------------------------------------
@@ -250,7 +253,7 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
         var land = scene.LandChannel?.GetLandObject(e.parcelLocalID);
         var client = FindClient(e.agentId, scene);
         if (land is null || client is null || ActionsFor(client) is not { } actions) return;
-        if (land.LandData.IsGroupOwned || e.groupOwned)
+        if (MoneyRules.LandGroupRefused(land.LandData.IsGroupOwned, e.groupOwned))
         {
             client.SendAlertMessage(MoneyRules.GroupLandText);
             return;
@@ -267,7 +270,8 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
             return;
         }
         var key = (scene.RegionInfo.RegionID, e.parcelLocalID);
-        // One purchase of a parcel at a time: a second click while the first is held is refused, not paid twice.
+        // One purchase of a parcel at a time. Validate and buy already run one after another on the region's packet thread,
+        // and the land module's own check refuses a parcel no longer for sale; this only guards against that changing.
         if (_landHolds.TryGetValue(key, out var busy) && DateTime.UtcNow - busy.At < TimeSpan.FromMinutes(1))
         {
             client.SendAlertMessage("Someone is buying this parcel right now. Please try again in a moment.");
@@ -275,7 +279,8 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
         }
         var payer = PayerOf(client);
         var seller = WhoOf(e.parcelOwnerID);
-        var hold = actions.HoldLandAsync(payer, seller, e.parcelPrice, e.parcelLocalID).GetAwaiter().GetResult();
+        // This runs on the region's packet thread (ParcelBuy is handled in line), so the service gets a few seconds only.
+        var hold = actions.HoldLandAsync(payer, seller, e.parcelPrice, e.parcelLocalID, LandHoldLimit).GetAwaiter().GetResult();
         if (hold is not { } holdId || holdId == 0) return;
         _landHolds[key] = new LandHold(e.agentId, holdId, payer, seller, DateTime.UtcNow);
         e.economyValidated = true;
@@ -363,14 +368,9 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
             reason = "SERVICE_ERROR";
             return false;
         }
-        if (Info(root).GroupOwned)
+        if (MoneyRules.CheckPayout(Info(root), fromID.Guid) is { } refused)
         {
-            reason = "GROUP_OWNED";
-            return false;
-        }
-        if (fromID != root.OwnerID)
-        {
-            reason = "SERVICE_ERROR";
+            reason = refused;
             return false;
         }
         return actions.Payout(fromID.Guid, WhoOf(toID), amount, root.UUID.Guid, root.Name, txn.Guid, out reason);

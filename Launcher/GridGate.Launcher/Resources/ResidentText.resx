@@ -615,10 +615,11 @@
   <data name="MyCoins.Type.upload_fee" xml:space="preserve"><value>Upload fee</value></data>
   <data name="MyCoins.Type.group_join_fee" xml:space="preserve"><value>Group joining fee</value></data>
   <data name="MyCoins.Type.classified_fee" xml:space="preserve"><value>Classified ad fee</value></data>
-  <data name="MyCoins.Type.hold" xml:space="preserve"><value>Purchase, waiting for delivery</value></data>
-  <data name="MyCoins.Type.hold_completed" xml:space="preserve"><value>Purchase completed</value></data>
+  <data name="MyCoins.Type.hold" xml:space="preserve"><value>Purchase</value></data>
+  <data name="MyCoins.Type.hold_completed" xml:space="preserve"><value>Sale</value></data>
   <data name="MyCoins.Type.hold_returned" xml:space="preserve"><value>Purchase returned</value></data>
   <data name="MyCoins.Type.refund" xml:space="preserve"><value>Refund</value></data>
   <data name="MyCoins.Type.wallet_merge" xml:space="preserve"><value>Wallets joined</value></data>
   <data name="MyCoins.Type.fee_moved" xml:space="preserve"><value>From the grid's fees</value></data>
+  <data name="MyCoins.WhatWithObject" xml:space="preserve"><value>{0}: {1}</value></data>
 </root>

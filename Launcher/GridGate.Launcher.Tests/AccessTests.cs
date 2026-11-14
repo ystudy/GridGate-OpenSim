@@ -292,7 +292,13 @@ public sealed class AccessTests
             "route /theme/images/{name}",
             // A ready starter avatar's snapshot for sign-up step 2 (nothing else answers).
             "route /starter-avatars/{id:guid}.webp",
+            // The viewer's economy helper (money plan 2): Firestorm's Buy currency and Buy land windows; it checks the
+            // viewer's secure session itself and moves no money.
+            "route /economy/currency.php",
+            "route /economy/landtool.php",
             // The public front page: SetupGate shows it at "/" to anyone not signed in as staff, where there is a guest side.
+            // How coins work here, where those windows send residents (money plan 2).
+            "page coins",
             "page home",
             // The guest door: any account at level 0 or more signs in here, to the guest pages only.
             "page guest/sign-in",

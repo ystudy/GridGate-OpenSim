@@ -46,7 +46,7 @@ else
                 {
                     <tr>
                         <td class="when">@line.At.UtcDateTime.ToString("g", System.Globalization.CultureInfo.CurrentCulture)</td>
-                        <td class="what">@T["MyCoins.Type." + line.Type]</td>
+                        <td class="what">@line.What</td>
                         <td class="who">@line.Who</td>
                         <td class="amount">@GridGate.Launcher.Pages.Guest.CoinsModel.Signed(line.Amount)</td>
                     </tr>

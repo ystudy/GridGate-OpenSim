@@ -12,8 +12,8 @@ using Microsoft.Extensions.Localization;
 
 namespace GridGate.Launcher.Pages.Guest;
 
-/// <summary>One line of My coins, ready to show: the other side is a name, a visitor's grid, or nothing.</summary>
-public sealed record CoinsLine(DateTimeOffset At, string Type, string Who, long Amount);
+/// <summary>One line of My coins, ready to show: what happened (with the object's name), and the other side as a name, a visitor's grid, or nothing.</summary>
+public sealed record CoinsLine(DateTimeOffset At, string What, string Who, long Amount);
 
 /// <summary>
 /// My coins (<c>/guest/coins</c>; money design §9.5): the resident's balance, the newest 50 lines, and the "my scripts may
@@ -84,7 +84,7 @@ public sealed class CoinsModel(IMoneyBooks books, Func<LauncherSettings> setting
             var names = new Dictionary<Guid, string>();
             var lines = new List<CoinsLine>();
             foreach (var line in await books.HistoryAsync(me, HistoryLines, ct))
-                lines.Add(new CoinsLine(line.At, line.Type, HoldTypes.Contains(line.Type) ? "" : await WhoAsync(line.Other, names, ct), line.Amount));
+                lines.Add(new CoinsLine(line.At, What(line), HoldTypes.Contains(line.Type) ? "" : await WhoAsync(line.Other, names, ct), line.Amount));
             Lines = lines;
         }
         catch (MoneyUnavailableException)
@@ -93,6 +93,17 @@ public sealed class CoinsModel(IMoneyBooks books, Func<LauncherSettings> setting
             Balance = null;
             Lines = [];
         }
+    }
+
+    /// <summary>
+    /// What a line was, in words. A completed hold is the seller's side: a sale, of land when the hold was for land. The
+    /// buyer's own hold line stays for good, so its words never say it is still waiting.
+    /// </summary>
+    private string What(HistoryLine line)
+    {
+        var type = line.Type == EntryType.HoldCompleted && line.Reason == EntryType.LandSale ? EntryType.LandSale : line.Type;
+        string words = t["MyCoins.Type." + type];
+        return string.IsNullOrWhiteSpace(line.ObjectName) ? words : t["MyCoins.WhatWithObject", words, line.ObjectName];
     }
 
     /// <summary>The other side of a line: a resident's name, "Visitor from host", or nothing for the grid's own accounts.</summary>

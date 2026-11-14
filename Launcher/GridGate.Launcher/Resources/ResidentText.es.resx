@@ -615,10 +615,11 @@
   <data name="MyCoins.Type.upload_fee" xml:space="preserve"><value>Tarifa de subida</value></data>
   <data name="MyCoins.Type.group_join_fee" xml:space="preserve"><value>Tarifa de ingreso a un grupo</value></data>
   <data name="MyCoins.Type.classified_fee" xml:space="preserve"><value>Tarifa de anuncio clasificado</value></data>
-  <data name="MyCoins.Type.hold" xml:space="preserve"><value>Compra, esperando la entrega</value></data>
-  <data name="MyCoins.Type.hold_completed" xml:space="preserve"><value>Compra completada</value></data>
+  <data name="MyCoins.Type.hold" xml:space="preserve"><value>Compra</value></data>
+  <data name="MyCoins.Type.hold_completed" xml:space="preserve"><value>Venta</value></data>
   <data name="MyCoins.Type.hold_returned" xml:space="preserve"><value>Compra devuelta</value></data>
   <data name="MyCoins.Type.refund" xml:space="preserve"><value>Reembolso</value></data>
   <data name="MyCoins.Type.wallet_merge" xml:space="preserve"><value>Monederos unidos</value></data>
   <data name="MyCoins.Type.fee_moved" xml:space="preserve"><value>De las tarifas del grid</value></data>
+  <data name="MyCoins.WhatWithObject" xml:space="preserve"><value>{0}: {1}</value></data>
 </root>

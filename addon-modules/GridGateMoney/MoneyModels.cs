@@ -72,6 +72,18 @@ internal static class MoneyRules
     }
 
     /// <summary>
+    /// A script paying out from <paramref name="root"/> for <paramref name="fromId"/>: the script reason when refused, or null.
+    /// A group-owned object has no wallet behind it; any source but the object's owner is someone else's money.
+    /// </summary>
+    public static string? CheckPayout(PartInfo root, Guid fromId) =>
+        root.GroupOwned ? "GROUP_OWNED"
+        : fromId != root.OwnerId ? "SERVICE_ERROR"
+        : null;
+
+    /// <summary>Whether a land purchase involves a group, on either side: a group holds no coins on this grid.</summary>
+    public static bool LandGroupRefused(bool parcelGroupOwned, bool buyForGroup) => parcelGroupOwned || buyForGroup;
+
+    /// <summary>
     /// Whether <paramref name="amount"/> is one the object offers. With the free-amount box shown any positive amount is;
     /// with it hidden, only a button's amount.
     /// </summary>
