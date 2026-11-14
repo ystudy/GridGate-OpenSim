@@ -284,10 +284,19 @@ public sealed class GridConfigWriterTests : IDisposable
         Assert.Equal(meshing, r.Get("Startup", "meshing"));
     }
 
-    [Fact]
-    public void No_active_third_party_urls_in_any_generated_file()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void No_active_third_party_urls_in_any_generated_file(bool moneyOn)
     {
-        Write(Make(owner: true));
+        var s = Make(owner: true);
+        if (moneyOn)
+            new GridConfigWriter(_paths, Core.Money.MoneyGate.Open).Write(s with
+            {
+                Money = new Core.Money.MoneySettings(Mode: Core.Money.MoneyMode.Play, ProgramKeys: new() { ["Region1"] = "k" }),
+            }, []);
+        else
+            Write(s);
         var docs = new[] { Robust(), Region(), Grid(), Flotsam(),
             IniDocument.Load(Path.Combine(_paths.RegionDefinitionDir("Region1"), "Welcome Area.ini")) };
         foreach (var doc in docs)
@@ -295,8 +304,9 @@ public sealed class GridConfigWriterTests : IDisposable
             {
                 foreach (var bad in new[] { "outworldz.com", "hyperica.com", "gloebit.com" })
                     Assert.False(value.Contains(bad, StringComparison.OrdinalIgnoreCase), $"[{section}] {key}={value}");
+                // Only GridGate's own module may be named, and only in [Economy] while money is on.
                 if (key.Equals("economymodule", StringComparison.OrdinalIgnoreCase))
-                    Assert.Equal("", value);
+                    Assert.Equal(moneyOn && section == "Economy" ? "GridGateMoneyModule" : "", value);
             }
         // the prototype on disk is untouched
         Assert.Contains("outworldz.com", File.ReadAllText(Path.Combine(_paths.RuntimeOpenSim, "Robust.HG.ini.proto")));
