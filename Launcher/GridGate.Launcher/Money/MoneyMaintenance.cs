@@ -6,7 +6,8 @@ namespace GridGate.Launcher.Money;
 /// Keeps the books honest in the background (money design §7.1, §7.2): the self-check at start and every 24 hours, and
 /// expired holds returned to their buyers every 30 seconds. Does nothing while the effective mode is Off.
 /// </summary>
-public sealed class MoneyMaintenance(MoneyLedger ledger, Func<MoneyMode> effective, TimeProvider time, ILogger<MoneyMaintenance> log) : BackgroundService
+public sealed class MoneyMaintenance(MoneyLedger ledger, Func<MoneyMode> effective, TimeProvider time, ILogger<MoneyMaintenance> log,
+    MoneyStatus? status = null) : BackgroundService
 {
     public static readonly TimeSpan SweepEvery = TimeSpan.FromSeconds(30);
     public static readonly TimeSpan CheckEvery = TimeSpan.FromHours(24);
@@ -62,6 +63,7 @@ public sealed class MoneyMaintenance(MoneyLedger ledger, Func<MoneyMode> effecti
         try
         {
             var result = await ledger.SelfCheckAsync(ct);
+            if (status is not null) status.LastCheck = (time.GetUtcNow(), result);
             if (!result.Ok)
                 log.LogError("The money self-check found a difference and froze all payments. Sum of balances {Sum}; accounts that differ: {Accounts}.",
                     result.Sum, string.Join(", ", result.Mismatches.Select(m => $"{m.AccountId} (stored {m.Stored}, entries {m.FromEntries})")));

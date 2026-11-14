@@ -47,6 +47,21 @@ public sealed class MoneyMaintenanceTests(MoneyMariaDb maria) : IClassFixture<Mo
     }
 
     [Fact]
+    public async Task Self_check_is_recorded_for_the_dashboard()
+    {
+        var (ledger, _, time) = await MoneyLedgerTransferTests.Setup(maria);
+        var status = new MoneyStatus();
+        using var maintenance = new MoneyMaintenance(ledger, () => MoneyMode.Play, time, NullLogger<MoneyMaintenance>.Instance, status);
+
+        await maintenance.StartAsync(Ct);
+
+        await Eventually(() => Task.FromResult(status.LastCheck is not null), "the check is recorded");
+        Assert.True(status.LastCheck!.Value.Result.Ok);
+        Assert.Equal(time.GetUtcNow(), status.LastCheck.Value.At);
+        await maintenance.StopAsync(Ct);
+    }
+
+    [Fact]
     public async Task Startup_self_check_freezes_tampered_books()
     {
         var (ledger, db, time) = await MoneyLedgerTransferTests.Setup(maria);

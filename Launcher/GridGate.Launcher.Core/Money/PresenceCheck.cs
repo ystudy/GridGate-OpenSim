@@ -39,6 +39,27 @@ public sealed class PresenceCheck(Func<CancellationToken, Task<MySqlConnection>>
         }
     }
 
+    /// <summary>
+    /// Ok when <paramref name="agentId"/> is logged in with <paramref name="secureSessionId"/>, in any region. The economy
+    /// helper's check (money design §8.5): the viewer sends only the secure session id, and the helper has no region.
+    /// </summary>
+    public async Task<PresenceOutcome> HasSecureSessionAsync(Guid agentId, Guid secureSessionId, CancellationToken ct)
+    {
+        if (agentId == Guid.Empty || secureSessionId == Guid.Empty) return PresenceOutcome.NoSession;
+        try
+        {
+            await using var conn = await openRobust(ct);
+            await using var cmd = new MySqlCommand("SELECT 1 FROM Presence WHERE UserID = @u AND SecureSessionID = @ss", conn);
+            cmd.Parameters.AddWithValue("@u", agentId.ToString());
+            cmd.Parameters.AddWithValue("@ss", secureSessionId.ToString());
+            return await cmd.ExecuteScalarAsync(ct) is null ? PresenceOutcome.NoSession : PresenceOutcome.Ok;
+        }
+        catch (MySqlException)
+        {
+            return PresenceOutcome.Unavailable;
+        }
+    }
+
     /// <summary>Whether <paramref name="id"/> is a local account in Robust's <c>UserAccounts</c>. A database failure throws.</summary>
     public async Task<bool> IsLocalUserAsync(Guid id, CancellationToken ct)
     {

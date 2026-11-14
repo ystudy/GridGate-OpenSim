@@ -17,7 +17,8 @@ public sealed class MoneyServiceHost(
     Func<MoneyMode> effective,
     Func<X509Certificate2> certificate,
     MoneyAuthFailures failures,
-    ILoggerFactory loggers) : IHostedService
+    ILoggerFactory loggers,
+    MoneyStatus? status = null) : IHostedService
 {
     /// <summary>A request body larger than this is refused before it is read.</summary>
     public const long MaxBodyBytes = 16 * 1024;
@@ -36,6 +37,7 @@ public sealed class MoneyServiceHost(
             app = Build(port, cert);
             await app.StartAsync(cancellationToken);
             _app = app;
+            if (status is not null) status.ServiceError = null;
             _log.LogInformation("The money service is listening on 127.0.0.1:{Port}.", port);
         }
         catch (Exception e) when (e is not OperationCanceledException)
@@ -43,6 +45,8 @@ public sealed class MoneyServiceHost(
             // Money being down must not take the launcher or the grid with it (money design §5): payments are refused
             // until the next start.
             _log.LogError("The money service couldn't start on 127.0.0.1:{Port}: {Error}: {Message}", port, e.GetType().Name, e.Message);
+            // The dashboard shows the type only: a message can carry paths or addresses.
+            if (status is not null) status.ServiceError = e.GetType().Name;
             if (app is not null) await app.DisposeAsync();
         }
     }
