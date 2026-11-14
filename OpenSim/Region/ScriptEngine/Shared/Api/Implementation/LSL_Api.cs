@@ -4527,7 +4527,8 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
                 }
                 if (World.GetExtraSetting("auto_grant_all_perms") == "true")
                 {
-                    implicitPerms = perm;
+                    // GridGate: spending the owner's money always needs the owner's own yes.
+                    implicitPerms = perm & ~ScriptBaseClass.PERMISSION_DEBIT;
                 }
             }
 
