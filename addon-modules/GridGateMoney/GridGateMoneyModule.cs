@@ -38,7 +38,7 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
     private readonly ConcurrentDictionary<(UUID Region, int Parcel), LandHold> _landHolds = new();
     private readonly object _economyGate = new();
 
-    private MoneyServiceClient? _client;
+    private IMoneyService? _client;
     private string _helperUri = "";
     private EconomyInfo? _economy;
     private DateTime _economyAt = DateTime.MinValue;
@@ -48,6 +48,9 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
 
     /// <summary>Whether the INI chose this module and gave it everything it needs.</summary>
     internal bool Enabled { get; private set; }
+
+    /// <summary>False on a Region Server not paired with its grid's money yet: every payment is refused (money plan 3).</summary>
+    internal bool IsPaired { get; private set; }
 
     public string Name => ModuleName;
 
@@ -64,6 +67,20 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
 
         var cfg = source.Configs["GridGateMoney"];
         string Need(string key) => cfg?.GetString(key, "")?.Trim() ?? "";
+        // An unpaired Region Server (money plan 3): the module runs so the region refuses payments and says why.
+        if (string.Equals(Need("Paired"), "false", StringComparison.OrdinalIgnoreCase))
+        {
+            if (Need("HelperURI") is not { Length: > 0 } unpairedHelper)
+            {
+                Log.Error("[GRIDGATE MONEY]: [GridGateMoney] HelperURI is missing; money stays off in this program.");
+                return;
+            }
+            _client = new UnpairedMoneyService();
+            _helperUri = unpairedHelper;
+            Enabled = true;
+            Log.Info("[GRIDGATE MONEY]: Money is on, but this Region Server isn't paired with its grid's money yet.");
+            return;
+        }
         var (uri, key, fingerprint, helper) = (Need("ServiceURI"), Need("RegionKey"), Need("ServiceFingerprint"), Need("HelperURI"));
         foreach (var (name, value) in new[] { ("ServiceURI", uri), ("RegionKey", key), ("ServiceFingerprint", fingerprint), ("HelperURI", helper) })
         {
@@ -79,6 +96,7 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
         _client = new MoneyServiceClient(service, key, fingerprint, why => Log.Warn("[GRIDGATE MONEY]: A money service call failed: " + why));
         _helperUri = helper;
         Enabled = true;
+        IsPaired = true;
         Log.Info($"[GRIDGATE MONEY]: Money is on; the money service is at {service.Host}:{service.Port}.");
     }
 
@@ -119,7 +137,7 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
         _actions.TryRemove(scene.RegionInfo.RegionID, out _);
     }
 
-    public void Close() => _client?.Dispose();
+    public void Close() => (_client as IDisposable)?.Dispose();
 
     // ---- economy settings ----------------------------------------------------------------------------
 

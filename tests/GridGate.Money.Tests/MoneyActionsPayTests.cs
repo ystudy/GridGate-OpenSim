@@ -119,7 +119,7 @@ public sealed class MoneyActionsPayTests
         Assert.Equal("Group-owned land can't be sold for coins on this grid.", MoneyRules.GroupLandText);
         Assert.Equal("You don't have enough coins for that.", MoneyRules.Message("not_enough"));
         Assert.Equal("Payments are paused on this grid right now.", MoneyRules.Message("frozen"));
-        Assert.Equal("Payments are paused on this grid right now.", MoneyRules.Message("account_frozen"));
+        Assert.Equal("Your coins are frozen. Please contact the grid's staff.", MoneyRules.Message("account_frozen"));
         Assert.Equal("Money is unavailable right now. Please try again later.", MoneyRules.Message("unavailable"));
         Assert.Equal("That person can't receive coins on this grid.", MoneyRules.Message("no_wallet"));
         Assert.Equal("Please log in again to use money here.", MoneyRules.Message("no_session"));

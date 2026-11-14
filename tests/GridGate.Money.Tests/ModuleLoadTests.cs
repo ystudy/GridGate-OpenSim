@@ -84,6 +84,47 @@ public sealed class ModuleLoadTests
     }
 
     [Fact]
+    public void Module_enabled_unpaired_with_helper_only()
+    {
+        var source = new IniConfigSource();
+        source.AddConfig("Economy").Set("EconomyModule", "GridGateMoneyModule");
+        var money = source.AddConfig("GridGateMoney");
+        money.Set("Paired", "false");
+        money.Set("HelperURI", "http://grid.example:8001/economy/");
+        var module = new GridGateMoneyModule();
+
+        module.Initialise(source);
+
+        Assert.True(module.Enabled);
+        Assert.False(module.IsPaired);
+        module.Close();
+    }
+
+    [Fact]
+    public void Unpaired_without_helper_stays_off()
+    {
+        var source = new IniConfigSource();
+        source.AddConfig("Economy").Set("EconomyModule", "GridGateMoneyModule");
+        source.AddConfig("GridGateMoney").Set("Paired", "false");
+        var module = new GridGateMoneyModule();
+
+        module.Initialise(source);
+
+        Assert.False(module.Enabled);
+    }
+
+    [Fact]
+    public void Paired_module_says_so()
+    {
+        var module = new GridGateMoneyModule();
+
+        module.Initialise(Config());
+
+        Assert.True(module.IsPaired);
+        module.Close();
+    }
+
+    [Fact]
     public void Plain_http_service_keeps_it_off()
     {
         var source = Config();
