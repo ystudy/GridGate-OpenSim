@@ -26,7 +26,7 @@ public sealed class StaffMenuTests
         Assert.Equal(["Regions", "Estates", "Hypergrid links", "OAR library", "Recently deleted"], Inside(StaffRole.Owner, plan, "World"));
         Assert.Equal(["Find a person", "Sign-ups", "Tickets", "Groups", "Takedowns", "Staff"], Inside(StaffRole.Owner, plan, "People", canApprove: true));
         Assert.Equal(["Splash page", "Legal pages", "Page wording", "Languages", "Sign-up and bots", "Inventory backups", "Starter avatars", "Email server", "Password reset"], Inside(StaffRole.Owner, plan, "Guest pages"));
-        Assert.Equal(["Plan", "Network", "Database", "Region defaults", "Logs"], Inside(StaffRole.Owner, plan, "Settings"));
+        Assert.Equal(["Plan", "Network", "Database", "Region defaults", "Money", "Logs"], Inside(StaffRole.Owner, plan, "Settings"));
         Assert.Equal(["Sessions", "Two-factor", "Email notices"], Inside(StaffRole.Owner, plan, "You"));
     }
 
@@ -41,7 +41,7 @@ public sealed class StaffMenuTests
     [Fact]
     public void Supervisor_who_cannot_approve_sees_Hypergrid_People_and_their_own_menu()
     {
-        Assert.Equal(["Hypergrid links", "People", "You"], Top(StaffRole.Supervisor, OwnerPlan.Local));
+        Assert.Equal(["Hypergrid links", "People", "Money", "You"], Top(StaffRole.Supervisor, OwnerPlan.Local));
         Assert.Equal(["Find a person", "Tickets"], Inside(StaffRole.Supervisor, OwnerPlan.Local, "People"));
         var world = StaffMenu.For(StaffRole.Supervisor, On(OwnerPlan.Local), false).Single(g => g.Text == "World");
         Assert.Equal("/hypergrid", world.SingleHref);

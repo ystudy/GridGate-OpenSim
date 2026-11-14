@@ -97,6 +97,18 @@ public sealed partial class MoneyLedger
             return true;
         }, ct);
 
+    /// <summary>An account's switches, or null when it has no wallet yet. A database failure is <see cref="MoneyUnavailableException"/>.</summary>
+    public Task<AccountFlags?> AccountFlagsAsync(AccountRef who, CancellationToken ct) =>
+        ReadAsync<AccountFlags?>(async conn =>
+        {
+            await using var cmd = new MySqlCommand(
+                "SELECT frozen, payouts_allowed FROM accounts WHERE agent_id = @agent AND home = @home AND kind IN ('Person', 'Visitor')", conn);
+            cmd.Parameters.AddWithValue("@agent", who.AgentId.ToString());
+            cmd.Parameters.AddWithValue("@home", NormalHome(who.Home));
+            await using var r = await cmd.ExecuteReaderAsync(ct);
+            return await r.ReadAsync(ct) ? new AccountFlags(r.GetInt32(0) != 0, r.GetInt32(1) != 0) : null;
+        }, ct);
+
     public Task<(bool Frozen, string Reason)> FrozenAsync(CancellationToken ct) =>
         ReadAsync(async conn =>
         {

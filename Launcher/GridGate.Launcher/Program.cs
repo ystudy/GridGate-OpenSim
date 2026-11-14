@@ -185,7 +185,7 @@ builder.Services.AddRazorPages(o =>
     // /Profile and the People page are for every staff member, and the Security and Staff pages are the owner's. (Two folder
     // policies on one page would both have to pass, so those folders are left out of the admin one rather than given a second.)
     // The Staff and People pages do not exist (404) where there are no supervisors, nor do the Guest pages (the guest side).
-    string[] ownFolders = ["/Profile/", "/Security/", "/Staff/", "/People/", "/Guest/", "/Hypergrid/"];
+    string[] ownFolders = ["/Profile/", "/Security/", "/Staff/", "/People/", "/Guest/", "/Hypergrid/", "/Money/"];
     o.Conventions.AddFolderApplicationModelConvention("/", m =>
     {
         if (!ownFolders.Any(f => m.ViewEnginePath.StartsWith(f, StringComparison.OrdinalIgnoreCase)))
@@ -200,6 +200,9 @@ builder.Services.AddRazorPages(o =>
     o.Conventions.AuthorizeFolder("/People", AuthSchemes.StaffPolicy);
     o.Conventions.AddFolderApplicationModelConvention("/Staff", m => m.Filters.Add(new StaffPagesOnly()));
     o.Conventions.AddFolderApplicationModelConvention("/People", m => m.Filters.Add(new StaffPagesOnly()));
+    // The Money pages (money plan 2): every staff member may look, the handlers let only admins change anything.
+    o.Conventions.AuthorizeFolder("/Money", AuthSchemes.StaffPolicy);
+    o.Conventions.AddFolderApplicationModelConvention("/Money", m => m.Filters.Add(new StaffPagesOnly()));
     o.Conventions.AuthorizeFolder("/Guest", AuthSchemes.GuestPolicy);
     o.Conventions.AddFolderApplicationModelConvention("/Guest", m => m.Filters.Add(new GuestSideOnly()));
     // A guest accepts the current Terms before any other guest page (the Terms page, sign-out and sign-in excepted, see TermsGate).
@@ -427,6 +430,8 @@ builder.Services.AddSingleton(sp =>
     return new MoneyLedger(MoneyConnections.Money(current), () => current().Money, sp.GetRequiredService<MoneyGate>().Effective,
         sp.GetRequiredService<PresenceCheck>().IsLocalUserAsync, sp.GetRequiredService<TimeProvider>());
 });
+builder.Services.AddSingleton<IMoneyBooks>(sp => sp.GetRequiredService<MoneyLedger>());
+builder.Services.AddSingleton<MoneyNotices>();
 builder.Services.AddSingleton(sp => new MoneyAuthFailures(sp.GetRequiredService<TimeProvider>(), sp.GetRequiredService<ILogger<MoneyAuthFailures>>()));
 builder.Services.AddSingleton(sp =>
 {

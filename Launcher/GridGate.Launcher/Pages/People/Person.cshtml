@@ -1,6 +1,7 @@
 @page "/people/{id:guid}"
 @model GridGate.Launcher.Pages.People.PersonModel
 @inject GridGate.Launcher.Core.Starter.StarterAvatarList Starters
+@inject GridGate.Launcher.Core.Money.MoneyGate MoneyGate
 @{
     ViewData["Title"] = Model.Person?.FullName ?? "Person";
 }
@@ -71,6 +72,10 @@ else
         </form>
     }
 </div>
+@if (Model.Person is { } coinsFor && MoneyGate.On)
+{
+    <p id="person-coins" class="mb-3"><a href="/money/person?id=@coinsFor.Row.Account.PrincipalId">Coins</a>: balance, history and changes.</p>
+}
 @if (Model.Iar is { } iar)
 {
     var g = Model.GridIar;

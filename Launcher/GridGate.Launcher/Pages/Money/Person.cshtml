@@ -1,0 +1,84 @@
+@page "/money/person"
+@model GridGate.Launcher.Pages.Money.PersonModel
+@{
+    ViewData["Title"] = "Coins: " + Model.Name;
+    ViewData["Wide"] = true;
+    var query = "id=" + Model.Id + (string.IsNullOrEmpty(Model.Home) ? "" : "&home=" + Uri.EscapeDataString(Model.Home));
+}
+<div class="page-head">
+    <h1>@Model.Name<help-tip class="help-start">This person's coins. Every change here needs a reason and is written to the audit log.</help-tip></h1>
+    <p><a href="/money">Back to Money</a></p>
+</div>
+<error-box text="@Model.Error" />
+<ok-box text="@Model.Notice" />
+@if (Model.DatabaseDown)
+{
+    <div class="error-box error alert alert-danger" role="alert">The money database can't be reached right now.</div>
+}
+<div class="list-columns">
+    <section class="work-panel" aria-labelledby="person-balance-title">
+        <h2 id="person-balance-title" class="panel-title">Balance</h2>
+        <p id="person-balance" class="fs-4">@(Model.Balance is { } b ? Model.Symbol + PersonModel.N(b) : "—")</p>
+        @if (Model.Flags is { } flags)
+        {
+            <p id="person-flags">@(flags.Frozen ? "Frozen: this account can't pay anyone." : "Not frozen.") @(flags.PayoutsAllowed ? "Their scripts may pay out." : "Their scripts may not pay out.")</p>
+        }
+        @if (Model.CanChange)
+        {
+            <form method="post" action="/money/person?handler=Give&@query" asp-antiforgery="true" class="mb-3">
+                <label class="form-label" for="give-amount">Give</label>
+                <input class="form-control mb-2" id="give-amount" name="Amount" type="number" min="1" required>
+                <label class="form-label" for="give-reason">Reason</label>
+                <input class="form-control mb-2" id="give-reason" name="Reason" maxlength="200" required>
+                <button type="submit" class="btn btn-outline-secondary">Give coins</button>
+            </form>
+            <form method="post" action="/money/person?handler=Take&@query" asp-antiforgery="true" class="mb-3">
+                <label class="form-label" for="take-amount">Take</label>
+                <input class="form-control mb-2" id="take-amount" name="Amount" type="number" min="1" required>
+                <label class="form-label" for="take-reason">Reason</label>
+                <input class="form-control mb-2" id="take-reason" name="Reason" maxlength="200" required>
+                <button type="submit" class="btn btn-outline-danger">Take coins</button>
+            </form>
+            <div class="d-flex flex-wrap gap-2">
+                <form method="post" action="/money/person?handler=@(Model.Flags?.Frozen == true ? "UnfreezeAccount" : "FreezeAccount")&@query" asp-antiforgery="true">
+                    <button type="submit" class="btn btn-outline-secondary">@(Model.Flags?.Frozen == true ? "Unfreeze account" : "Freeze account")</button>
+                </form>
+                @if (string.IsNullOrEmpty(Model.Home))
+                {
+                    <form method="post" action="/money/person?handler=Payouts&@query" asp-antiforgery="true">
+                        <input type="hidden" name="On" value="@(Model.Flags?.PayoutsAllowed == true ? "false" : "true")">
+                        <button type="submit" class="btn btn-outline-secondary">@(Model.Flags?.PayoutsAllowed == true ? "Stop their script payouts" : "Let their scripts pay out")</button>
+                    </form>
+                }
+            </div>
+        }
+    </section>
+    <section class="work-panel" aria-labelledby="person-history-title">
+        <h2 id="person-history-title" class="panel-title">History</h2>
+        @if (Model.History.Count == 0)
+        {
+            <p class="mb-0">Nothing yet.</p>
+        }
+        else
+        {
+            <div class="table-responsive">
+                <table id="person-history" class="table align-middle mb-0">
+                    <thead><tr><th>Entry</th><th>When</th><th>What</th><th>Amount</th><th>Balance</th><th>Note</th></tr></thead>
+                    <tbody>
+                    @foreach (var line in Model.History)
+                    {
+                        <tr>
+                            <td class="cell">@line.EntryId</td>
+                            <td class="cell">@line.At.ToString("yyyy-MM-dd HH:mm")</td>
+                            <td>@line.Type</td>
+                            <td class="cell">@(line.Amount > 0 ? "+" : "")@PersonModel.N(line.Amount)</td>
+                            <td class="cell">@PersonModel.N(line.BalanceAfter)</td>
+                            <td>@(line.Reason ?? line.ObjectName)</td>
+                        </tr>
+                    }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </section>
+</div>

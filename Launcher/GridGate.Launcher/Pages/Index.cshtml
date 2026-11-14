@@ -45,6 +45,10 @@
 </div>
 <p id="notice" class="notice alert alert-info mb-3 py-2" role="status">@Model.Notice</p>
 <partial name="_PlainHttpWarning" />
+@foreach (var n in Model.MoneyNotices)
+{
+    <div id="@n.Id" class="error-box error alert alert-danger" role="alert">@n.Text @if (n.Id == "money-frozen") { <a href="/money">Money</a> }</div>
+}
 @if (Model.EmailWarnings.Count > 0)
 {
     <div id="email-warnings">

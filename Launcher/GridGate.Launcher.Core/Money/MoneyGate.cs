@@ -17,4 +17,7 @@ public sealed class MoneyGate(Func<LauncherSettings> settings, Func<MoneySetting
     public MoneyMode Effective() => _effective(settings().Money);
 
     public bool On => Effective() != MoneyMode.Off;
+
+    /// <summary>Whether choosing <paramref name="mode"/> would actually run it: what the Money page may offer.</summary>
+    public bool Allows(MoneyMode mode) => _effective(settings().Money with { Mode = mode }) == mode;
 }
