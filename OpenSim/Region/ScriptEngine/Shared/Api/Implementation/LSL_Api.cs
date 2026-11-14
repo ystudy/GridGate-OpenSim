@@ -3223,6 +3223,10 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
 
         public LSL_Integer llGiveMoney(LSL_Key destination, LSL_Integer amount)
         {
+            // GridGate: nothing to give, and no way to take by giving less than nothing.
+            if (amount <= 0)
+                return 0;
+
             if (m_item.PermsGranter.IsZero())
                 return 0;
 
