@@ -21,4 +21,9 @@
     <ProjectReference Include="..\GridGate.Launcher\GridGate.Launcher.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- The region module's service client, tested against the real money service (money plan 2, task 3). -->
+    <Compile Include="$(GgRoot)addon-modules/GridGateMoney/MoneyServiceClient.cs" Link="Money/MoneyServiceClient.cs" />
+  </ItemGroup>
+
 </Project>
