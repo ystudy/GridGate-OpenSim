@@ -91,6 +91,10 @@ jobs:
       - name: Money module tests
         run: dotnet test --project tests/GridGate.Money.Tests -c Release
 
+      # GridGate's changes to OpenSim's script money functions (llGiveMoney, llTransferLindenDollars, PERMISSION_DEBIT).
+      - name: Script money tests
+        run: dotnet test --project tests/GridGate.Lsl.Tests -c Release
+
       # Both runners are x64, which is the shipped Rapier library (bin/lib64). When an arm64 job is added, skip these
       # three Rapier steps there until librapier-arm64.so and librapier-mt-arm64.so ship from rapier.yml.
       - name: Rapier tests
@@ -176,6 +180,10 @@ jobs:
 
       - name: Money module tests
         run: dotnet test --project tests/GridGate.Money.Tests -c Release
+
+      # GridGate's changes to OpenSim's script money functions (llGiveMoney, llTransferLindenDollars, PERMISSION_DEBIT).
+      - name: Script money tests
+        run: dotnet test --project tests/GridGate.Lsl.Tests -c Release
 
       # Both runners are x64, which is the shipped Rapier library (bin/lib64). When an arm64 job is added, skip these
       # three Rapier steps there until librapier-arm64.so and librapier-mt-arm64.so ship from rapier.yml.

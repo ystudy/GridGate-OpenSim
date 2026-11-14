@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Tests for GridGate's own changes to OpenSim's script functions (money design §12): real LSL_Api calls in a test
+    region built with OpenSim's own test helpers (tests/OpenSim.Tests.Common).
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnableUnsafeBinaryFormatterSerialization>true</EnableUnsafeBinaryFormatterSerialization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Runs on Microsoft.Testing.Platform (selected in global.json); no VSTest packages needed. -->
+    <PackageReference Include="xunit.v3" Version="4.0.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../OpenSim.Tests.Common/OpenSim.Tests.Common.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="Nini"><HintPath>$(GgRoot)bin/Nini.dll</HintPath></Reference>
+    <Reference Include="log4net"><HintPath>$(GgRoot)bin/log4net.dll</HintPath></Reference>
+    <Reference Include="OpenMetaverse"><HintPath>$(GgRoot)bin/OpenMetaverse.dll</HintPath></Reference>
+    <Reference Include="OpenMetaverseTypes"><HintPath>$(GgRoot)bin/OpenMetaverseTypes.dll</HintPath></Reference>
+  </ItemGroup>
+
+</Project>
