@@ -76,9 +76,10 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
             Log.Error("[GRIDGATE MONEY]: [GridGateMoney] ServiceURI isn't an https address; money stays off in this program.");
             return;
         }
-        _client = new MoneyServiceClient(service, key, fingerprint);
+        _client = new MoneyServiceClient(service, key, fingerprint, why => Log.Warn("[GRIDGATE MONEY]: A money service call failed: " + why));
         _helperUri = helper;
         Enabled = true;
+        Log.Info($"[GRIDGATE MONEY]: Money is on; the money service is at {service.Host}:{service.Port}.");
     }
 
     public void PostInitialise()
@@ -323,7 +324,9 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
                 Charge(agentID, "group_join_fee", amount, founder is { } f && !f.IsZero() ? f.Guid : null);
                 break;
             case MoneyTransactionType.ClassifiedCharge:
-                Charge(agentID, "classified_fee", amount, null);
+                // The grid's fee, whatever listing price the viewer sent.
+                if (FindClient(agentID) is { } client && ActionsFor(client) is { } classifieds) classifieds.ChargeClassified(PayerOf(client), amount);
+                else Log.Warn($"[GRIDGATE MONEY]: Uncollected classified_fee from {agentID}: not here");
                 break;
             default:
                 Log.Debug($"[GRIDGATE MONEY]: Ignored a {type} charge of {amount} for {agentID}.");

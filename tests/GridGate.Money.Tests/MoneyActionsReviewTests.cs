@@ -120,4 +120,32 @@ public sealed class MoneyActionsReviewTests
 
     [Fact]
     public void Personal_land_is_not_refused() => Assert.False(MoneyRules.LandGroupRefused(false, false));
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(50)]
+    [InlineData(100000)]
+    public void Classified_fee_is_the_grids_not_the_viewers(int typedByViewer)
+    {
+        // Found in the live checks: OpenSim passes the listing price the viewer typed; the fee is the owner's setting.
+        var actions = new MoneyActions(_service, Region, () => new EconomyInfo("C$", 0, 3, true, true, 1_000_000), _view);
+        _service.Queue("charge", new MoneyAnswer("ok", 97));
+
+        actions.ChargeClassified(A, typedByViewer);
+
+        var call = Assert.Single(_service.Of("charge"));
+        Assert.Equal("classified_fee", call.Args[0]);
+        Assert.Equal(3L, call.Args[2]);
+    }
+
+    [Fact]
+    public void Free_classifieds_cost_nothing()
+    {
+        ActionsWithFee(0).ChargeClassified(A, 50);
+
+        Assert.Empty(_service.Calls);
+    }
+
+    private MoneyActions ActionsWithFee(long fee) =>
+        new(_service, Region, () => new EconomyInfo("C$", 0, fee, true, true, 1_000_000), _view);
 }

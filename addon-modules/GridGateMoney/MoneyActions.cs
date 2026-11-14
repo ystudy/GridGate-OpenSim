@@ -279,6 +279,16 @@ internal sealed class MoneyActions(IMoneyService service, Guid regionId, Func<Ec
     }
 
     /// <summary>
+    /// The classified ad fee: always the grid's own setting. OpenSim passes the listing price the viewer typed
+    /// (<c>UserProfileModule</c>), which would let a resident pick their own fee (found in the live checks).
+    /// </summary>
+    public void ChargeClassified(Payer p, int viewerPrice)
+    {
+        _ = viewerPrice;
+        Charge(p, "classified_fee", (int)Math.Clamp(economy().ClassifiedFee, 0, int.MaxValue), null);
+    }
+
+    /// <summary>
     /// The balance shown on arrival. Robust may not have moved the avatar's Presence here yet, so a wrong_region is
     /// tried once more after 2 s (review focus 2); nothing is shown unless the service answered.
     /// </summary>

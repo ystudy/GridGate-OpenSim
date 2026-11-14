@@ -74,9 +74,12 @@ public sealed class MoneyServiceClient : IMoneyService, IDisposable
 
     private readonly HttpClient _http;
     private readonly string _authorization;
+    private readonly Action<string>? _failed;
 
-    public MoneyServiceClient(Uri serviceUri, string regionKey, string fingerprint)
+    /// <param name="failed">Told "path: why" for each failed call (an HTTP status or an exception's type); never a key, session or body.</param>
+    public MoneyServiceClient(Uri serviceUri, string regionKey, string fingerprint, Action<string>? failed = null)
     {
+        _failed = failed;
         var pin = fingerprint.Trim();
         var handler = new SocketsHttpHandler
         {
@@ -148,7 +151,11 @@ public sealed class MoneyServiceClient : IMoneyService, IDisposable
             };
             request.Headers.TryAddWithoutValidation("Authorization", _authorization);
             using var response = await _http.SendAsync(request, cts.Token).ConfigureAwait(false);
-            if (response.StatusCode != HttpStatusCode.OK) return null;
+            if (response.StatusCode != HttpStatusCode.OK)
+            {
+                _failed?.Invoke($"{path}: HTTP {(int)response.StatusCode}");
+                return null;
+            }
             await using var stream = await response.Content.ReadAsStreamAsync(cts.Token).ConfigureAwait(false);
             return await JsonSerializer.DeserializeAsync<T>(stream, Json, cts.Token).ConfigureAwait(false);
         }
@@ -158,6 +165,7 @@ public sealed class MoneyServiceClient : IMoneyService, IDisposable
         }
         catch (Exception e) when (e is HttpRequestException or OperationCanceledException or JsonException or IOException or NotSupportedException)
         {
+            _failed?.Invoke($"{path}: {e.GetType().Name}{(e.InnerException is { } inner ? " (" + inner.GetType().Name + ")" : "")}");
             return null;
         }
     }
