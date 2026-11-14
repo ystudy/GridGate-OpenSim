@@ -345,6 +345,12 @@ namespace OpenSim.Tests.Common
         public event GenericCall2 OnUpdateThrottles;
         public event AgentFOV OnAgentFOV;
 
+        // GridGate: IClientAPI gained the viewer's field of view, view size and flags.
+        public float FOV { get; set; }
+        public int viewHeight { get; set; }
+        public int viewWidth { get; set; }
+        public ViewerFlags ViewerFlags { get { return 0; } }
+
 #pragma warning restore 67
 
         /// <value>
@@ -1183,7 +1189,7 @@ namespace OpenSim.Tests.Common
             return string.Empty;
         }
 
-        public void SendScriptTeleportRequest(string objName, string simName, Vector3 pos, Vector3 lookAt)
+        public void SendScriptTeleportRequest(string objName, string simName, Vector3 pos, int options)
         {
         }
 
@@ -1330,7 +1336,7 @@ namespace OpenSim.Tests.Common
         {
         }
 
-        public void SendPickInfoReply(UUID pickID,UUID creatorID, bool topPick, UUID parcelID, string name, string desc, UUID snapshotID, string user, string originalName, string simName, Vector3 posGlobal, int sortOrder, bool enabled)
+        public void SendPickInfoReply(UUID pickID,UUID creatorID, bool topPick, UUID parcelID, string name, string desc, UUID snapshotID, string user, string originalName, string simName, Vector3d posGlobal, int sortOrder, bool enabled)
         {
         }
 

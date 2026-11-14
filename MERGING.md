@@ -151,4 +151,21 @@ marked in the code with a `GridGate:` comment. When an upstream pick touches the
 | `fix(opensim): UDP uploads are charged the upload fee` | `OpenSim/Region/CoreModules/Agent/AssetTransaction/AssetXferUploader.cs` |
 | `fix(opensim): classifieds are checked and charged at the money module's fee` | `OpenSim/Framework/IClassifiedFeeModule.cs` (new), `OpenSim/Framework/OpenSim.Framework.csproj`, `UserProfileModule.cs` (`ClassifiedInfoUpdate`) |
 
+The script changes (the five `LSL_Api.cs` rows) are tried against a real `LSL_Api` in a test region by
+`tests/GridGate.Lsl.Tests`, which CI runs on Linux and Windows. After an upstream pick that touches `LSL_Api.cs`, run it:
+
+```bash
+dotnet test --project tests/GridGate.Lsl.Tests -c Release
+```
+
+Those tests build OpenSim's own test helpers (`OpenSim/Tests/Common`, as the `tests/OpenSim.Tests.Common` project). The
+helpers had fallen behind OpenSim's interfaces, so we changed them too:
+
+| Commit | Files |
+|---|---|
+| `test(opensim): OpenSim's test helpers build again` | `OpenSim/Tests/Common/Mock/MockScriptEngine.cs`, `TestClient.cs`, `TestEventQueueGetModule.cs`, `TestXInventoryDataPlugin.cs` (missing interface members added), `MockRegionDataPlugin.cs` (`GetExtra` returns an empty set, so a test region keeps extra settings) |
+
+`Mock/TestLLUDPServer.cs` and `Helpers/ClientStackHelpers.cs` no longer match `LLUDPServer` and aren't built. If upstream
+fixes the helpers, take its version and drop ours.
+
 The money module itself is not an OpenSim change: it lives in `addon-modules/GridGateMoney`.

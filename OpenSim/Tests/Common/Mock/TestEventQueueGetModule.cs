@@ -61,6 +61,10 @@ namespace OpenSim.Tests.Common
 
         public Dictionary<UUID, List<Event>> Events { get; set; }
 
+        // GridGate: IEventQueue gained large generic messages; the test queue drops them.
+        public void SendLargeGenericMessage(UUID avatarID, UUID? transationID, UUID? sessionID, string method, UUID invoice, List<byte[]> message) {}
+        public void SendLargeGenericMessage(UUID avatarID, UUID? transationID, UUID? sessionID, string method, UUID invoice, List<string> message) {}
+
         public void Initialise(IConfigSource source) {}
 
         public void Close() {}

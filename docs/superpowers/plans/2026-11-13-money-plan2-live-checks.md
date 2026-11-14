@@ -44,11 +44,24 @@ The checks from Task 12 of `2026-11-13-money-plan2-region-module-helper-pages.md
 
 ## Not checked live
 
-- **Hypergrid recipient** (row 17): a Local grid has no other grid to visit from. Covered by `Payout_to_visitor_needs_visitor_wallets`.
-- **`llGiveMoney` from a group-owned object** (row 16): debit for a group-deeded object is asked of the group, not a person. Covered by the OpenSim change `b908961a` and `Script_payouts_refuse_group_owned_objects_and_strangers`.
-- **`auto_grant_all_perms`** (row 18): the region option wasn't set for this run. Covered by the OpenSim change `a9db56d3`, which leaves debit out of the permissions granted without asking.
+- **Hypergrid recipient** (row 17): a Local grid has no other grid to visit from. Covered by `Payout_to_visitor_needs_visitor_wallets`, and on the script side by `llTransferLindenDollars_pays_a_visitor_the_money_module_can_pay` and `llTransferLindenDollars_refuses_a_visitor_the_money_module_cannot_pay` (`tests/GridGate.Lsl.Tests`).
+- **`llGiveMoney` from a group-owned object** (row 16): debit for a group-deeded object is asked of the group, not a person. Covered by the OpenSim change `b908961a`, `Script_payouts_refuse_group_owned_objects_and_strangers`, and `llGiveMoney_refuses_group_owned_objects` (`tests/GridGate.Lsl.Tests`).
+- **`auto_grant_all_perms`** (row 18): the region option wasn't set for this run. Covered by the OpenSim change `a9db56d3`, which leaves debit out of the permissions granted without asking, and by `auto_grant_all_perms_does_not_grant_debit` and `auto_grant_all_perms_still_grants_everything_else` (`tests/GridGate.Lsl.Tests`).
 - **UDP upload charge** (row 19): Firestorm uploads through caps. Covered by the OpenSim change `5cf5b706`, which was built but not exercised.
 - **A money service that doesn't answer at all** (row 25): the live run made the service answer `unavailable`. Not answering is covered by `Service_down_is_unavailable_within_timeout`.
+
+## Script changes: automated tests
+
+Plan 2's final review found that the `LSL_Api.cs` changes had no automated tests, which the review gate (design §12) needs.
+`tests/GridGate.Lsl.Tests` now covers them with real `LSL_Api` calls in a test region:
+
+- debit granted by someone other than the owner: `llGiveMoney` pays nothing, `llTransferLindenDollars` answers `MISSING_PERMISSION_DEBIT`;
+- `llGiveMoney` with 0 or −5 pays nothing;
+- `llGiveMoney` from a group-owned object pays nothing;
+- `auto_grant_all_perms` grants everything asked except debit;
+- `llTransferLindenDollars` pays a visitor the money module can pay, and refuses one it can't.
+
+Against `LSL_Api.cs` as it was before plan 2, all 8 tests of the changes fail and the 4 controls pass.
 
 ## Open findings
 
