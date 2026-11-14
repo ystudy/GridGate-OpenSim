@@ -571,6 +571,7 @@ A mode change takes effect when regions restart. The page says so, and offers to
   - The self-check catches a balance changed behind its back.
   - Script payouts are refused without opt-in and above the daily limit.
   - Every group-owned case in §7.3 is refused.
+  - The OpenSim script changes in §7.8 behave as written, tried against a real `LSL_Api` (`tests/GridGate.Lsl.Tests`).
   - Fuzzing of the service's request parsing.
 - **The review (owner):**
   - Separate, independent AI review sessions do it. They didn't write the code, and they get the code and this design, not the
