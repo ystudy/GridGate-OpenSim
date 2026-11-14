@@ -149,7 +149,9 @@ namespace OpenSim.Data.Null
 
         public Dictionary<string, string> GetExtra(UUID regionID)
         {
-            return null;
+            // GridGate: an empty set, not null, so a test region can hold extra settings (auto_grant_all_perms and
+            // the like) in memory; Scene.StoreExtraSetting does nothing while it is null.
+            return new Dictionary<string, string>();
         }
     }
 
@@ -369,7 +371,9 @@ namespace OpenSim.Data.Null
 
         public Dictionary<string, string> GetExtra(UUID regionID)
         {
-            return null;
+            // GridGate: an empty set, not null, so a test region can hold extra settings (auto_grant_all_perms and
+            // the like) in memory; Scene.StoreExtraSetting does nothing while it is null.
+            return new Dictionary<string, string>();
         }
     }
 }

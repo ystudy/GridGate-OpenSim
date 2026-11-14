@@ -1,0 +1,69 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    OpenSim's own test helpers (OpenSim/Tests/Common), built as the library upstream's tests expect. It must be named
+    OpenSim.Tests.Common: SceneHelpers loads its storage plugins from "OpenSim.Tests.Common.dll". Used by
+    GridGate.Lsl.Tests only; it is not shipped and doesn't build into bin/.
+  -->
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <IsPackable>false</IsPackable>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AssemblyName>OpenSim.Tests.Common</AssemblyName>
+    <RootNamespace>OpenSim.Tests.Common</RootNamespace>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <EnableUnsafeBinaryFormatterSerialization>true</EnableUnsafeBinaryFormatterSerialization>
+    <!-- Upstream code with upstream warnings. -->
+    <NoWarn>$(NoWarn);CS0618;CS0612;CS0067;CS0169;CS0414;CS0649;CS0168;CS0219;CS0108;CS1998;CS8632;SYSLIB0011;SYSLIB0014;SYSLIB0039;CA1416</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The UDP client stack doubles are left out: nothing here needs them, and they no longer match LLUDPServer. -->
+    <Compile Include="$(GgRoot)OpenSim/Tests/Common/**/*.cs"
+             Exclude="$(GgRoot)OpenSim/Tests/Common/Mock/TestLLUDPServer.cs;$(GgRoot)OpenSim/Tests/Common/Helpers/ClientStackHelpers.cs"
+             Link="%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- TestsAssetCache uses MemoryCache. -->
+    <PackageReference Include="System.Runtime.Caching" Version="10.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="$(GgRoot)OpenSim/Region/ScriptEngine/Shared/Api/Implementation/OpenSim.Region.ScriptEngine.Shared.Api.csproj" />
+    <ProjectReference Include="$(GgRoot)OpenSim/Region/ScriptEngine/Shared/OpenSim.Region.ScriptEngine.Shared.csproj" />
+    <ProjectReference Include="$(GgRoot)OpenSim/Region/CoreModules/OpenSim.Region.CoreModules.csproj" />
+    <ProjectReference Include="$(GgRoot)OpenSim/Region/OptionalModules/OpenSim.Region.OptionalModules.csproj" />
+    <ProjectReference Include="$(GgRoot)OpenSim/Region/ClientStack/Linden/Caps/OpenSim.Region.ClientStack.LindenCaps.csproj" />
+    <ProjectReference Include="$(GgRoot)OpenSim/Region/ClientStack/Linden/UDP/OpenSim.Region.ClientStack.LindenUDP.csproj" />
+    <ProjectReference Include="$(GgRoot)OpenSim/Region/PhysicsModules/BasicPhysics/OpenSim.Region.PhysicsModule.BasicPhysics.csproj" />
+    <ProjectReference Include="$(GgRoot)OpenSim/Region/PhysicsModules/SharedBase/OpenSim.Region.PhysicsModules.SharedBase.csproj" />
+    <ProjectReference Include="$(GgRoot)OpenSim/Region/Framework/OpenSim.Region.Framework.csproj" />
+    <ProjectReference Include="$(GgRoot)OpenSim/Data/Null/OpenSim.Data.Null.csproj" />
+    <ProjectReference Include="$(GgRoot)OpenSim/Data/OpenSim.Data.csproj" />
+    <ProjectReference Include="$(GgRoot)OpenSim/Framework/OpenSim.Framework.csproj" />
+    <ProjectReference Include="$(GgRoot)OpenSim/Framework/Console/OpenSim.Framework.Console.csproj" />
+    <ProjectReference Include="$(GgRoot)OpenSim/Framework/Servers/OpenSim.Framework.Servers.csproj" />
+    <ProjectReference Include="$(GgRoot)OpenSim/Framework/Servers/HttpServer/OpenSim.Framework.Servers.HttpServer.csproj" />
+    <ProjectReference Include="$(GgRoot)OpenSim/Services/Interfaces/OpenSim.Services.Interfaces.csproj" />
+    <!-- Loaded by name at run time by SceneHelpers. -->
+    <ProjectReference Include="$(GgRoot)OpenSim/Services/InventoryService/OpenSim.Services.InventoryService.csproj" />
+    <ProjectReference Include="$(GgRoot)OpenSim/Services/AssetService/OpenSim.Services.AssetService.csproj" />
+    <ProjectReference Include="$(GgRoot)OpenSim/Services/GridService/OpenSim.Services.GridService.csproj" />
+    <ProjectReference Include="$(GgRoot)OpenSim/Services/UserAccountService/OpenSim.Services.UserAccountService.csproj" />
+    <ProjectReference Include="$(GgRoot)OpenSim/Services/AuthenticationService/OpenSim.Services.AuthenticationService.csproj" />
+    <ProjectReference Include="$(GgRoot)OpenSim/Services/PresenceService/OpenSim.Services.PresenceService.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="nunit.framework"><HintPath>$(GgRoot)bin/nunit.framework.dll</HintPath></Reference>
+    <Reference Include="Mono.Addins"><HintPath>$(GgRoot)bin/Mono.Addins.dll</HintPath></Reference>
+    <Reference Include="Nini"><HintPath>$(GgRoot)bin/Nini.dll</HintPath></Reference>
+    <Reference Include="log4net"><HintPath>$(GgRoot)bin/log4net.dll</HintPath></Reference>
+    <Reference Include="OpenMetaverse"><HintPath>$(GgRoot)bin/OpenMetaverse.dll</HintPath></Reference>
+    <Reference Include="OpenMetaverseTypes"><HintPath>$(GgRoot)bin/OpenMetaverseTypes.dll</HintPath></Reference>
+    <Reference Include="OpenMetaverse.StructuredData"><HintPath>$(GgRoot)bin/OpenMetaverse.StructuredData.dll</HintPath></Reference>
+  </ItemGroup>
+
+</Project>

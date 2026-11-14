@@ -143,6 +143,12 @@ namespace OpenSim.Tests.Common
             return true;
         }
 
+        // GridGate: IScriptEngine gained linkset data events; the mock posts none.
+        public bool PostObjectLinksetDataEvent(uint localID, int action, ReadOnlySpan<char> name, ReadOnlySpan<char> value)
+        {
+            return false;
+        }
+
         public bool PostObjectEvent(uint localID, EventParams evParams)
         {
             return PostObjectEvent(m_scene.GetSceneObjectPart(localID), evParams);
