@@ -88,6 +88,9 @@ jobs:
       - name: Unit tests
         run: dotnet test --project tests/GridGate.Platform.Tests -c Release
 
+      - name: Money module tests
+        run: dotnet test --project tests/GridGate.Money.Tests -c Release
+
       # Both runners are x64, which is the shipped Rapier library (bin/lib64). When an arm64 job is added, skip these
       # three Rapier steps there until librapier-arm64.so and librapier-mt-arm64.so ship from rapier.yml.
       - name: Rapier tests
@@ -170,6 +173,9 @@ jobs:
 
       - name: Unit tests
         run: dotnet test --project tests/GridGate.Platform.Tests -c Release
+
+      - name: Money module tests
+        run: dotnet test --project tests/GridGate.Money.Tests -c Release
 
       # Both runners are x64, which is the shipped Rapier library (bin/lib64). When an arm64 job is added, skip these
       # three Rapier steps there until librapier-arm64.so and librapier-mt-arm64.so ship from rapier.yml.
