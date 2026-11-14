@@ -14,4 +14,10 @@ public static class WebsiteAddress
     public static string Welcome(LauncherSettings s) => Base(s) + "/welcome";
     public static string SignUp(LauncherSettings s) => Base(s) + "/signup";
     public static string ForgotPassword(LauncherSettings s) => Base(s) + "/guest/forgot-password";
+
+    /// <summary>
+    /// The economy helper Firestorm's Buy currency and Buy land windows call (money design §8.1). Always http, and always
+    /// ending in "/": Firestorm appends "currency.php" and "landtool.php" without a separator.
+    /// </summary>
+    public static string Economy(LauncherSettings s) => Base(s) + "/economy/";
 }

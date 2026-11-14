@@ -504,12 +504,30 @@ namespace OpenSim.Region.CoreModules.Agent.AssetTransaction
                 AnimationSet.enforceItemPermitions(item, true);
 
             if (m_Scene.AddInventoryItem(item))
+            {
                 ourClient.SendInventoryItemCreateUpdate(item, m_transactionID, callbackID);
+                ChargeUpload(type);
+            }
             else
                 ourClient.SendAlertMessage("Unable to create inventory item");
 
             m_transactions.RemoveXferUploader(m_transactionID);
             return true;
+        }
+
+        /// <summary>
+        /// GridGate: the UDP upload path checked the upload fee (AssetTransactionModule.HandleUDPUploadRequest) but never
+        /// took it; the caps path does (Scene.Inventory.cs). Charged for the same asset types that check covers.
+        /// </summary>
+        private void ChargeUpload(sbyte assetType)
+        {
+            if (m_asset.Temporary)
+                return;
+            if ((AssetType)assetType is not (AssetType.Texture or AssetType.Sound or AssetType.TextureTGA or AssetType.Animation))
+                return;
+            IMoneyModule mm = m_Scene.RequestModuleInterface<IMoneyModule>();
+            if (mm is not null && mm.UploadCharge > 0)
+                mm.ApplyUploadCharge(ourClient.AgentId, mm.UploadCharge, "Asset upload");
         }
 
         private uint ValidateAssets()

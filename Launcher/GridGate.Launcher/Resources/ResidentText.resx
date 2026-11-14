@@ -564,4 +564,62 @@
   <data name="Iar.Refused.NoRegion" xml:space="preserve"><value>No region is running right now. Try again later.</value></data>
   <data name="Iar.Refused.TakedownsUnreadable" xml:space="preserve"><value>Uploads can't be checked right now. Try again later.</value></data>
   <data name="Iar.Stage.Receiving" xml:space="preserve"><value>Receiving the file…</value></data>
+  <data name="Economy.TooMany" xml:space="preserve"><value>Too many requests. Please wait a minute and try again.</value></data>
+  <data name="Economy.LogInAgain" xml:space="preserve"><value>Please log in to the grid again, then try once more.</value></data>
+  <data name="Economy.Unavailable" xml:space="preserve"><value>Money is unavailable right now. Please try again later.</value></data>
+  <data name="Economy.NoMoney" xml:space="preserve"><value>This grid doesn't use money, so there are no coins to buy.</value></data>
+  <data name="Economy.PlayCoins" xml:space="preserve"><value>This grid uses play coins ({0}). They can't be bought. Press OK to see how to get them.</value></data>
+  <data name="Economy.RealCoins" xml:space="preserve"><value>Coins can't be bought in the viewer. Press OK to see how to buy them.</value></data>
+  <data name="Economy.BuyNotOffered" xml:space="preserve"><value>Buying coins in the viewer isn't offered on this grid.</value></data>
+  <data name="Economy.NoMoneyLand" xml:space="preserve"><value>This grid doesn't use money, so only free land can be bought.</value></data>
+  <data name="Economy.Shortfall" xml:space="preserve"><value>You need {0} more {1} to buy this land.</value></data>
+  <data name="Coins.Title" xml:space="preserve"><value>Coins</value></data>
+  <data name="Coins.Intro" xml:space="preserve"><value>This grid's money is called {0} ({1}).</value></data>
+  <data name="Coins.Play" xml:space="preserve"><value>These are play coins. They can't be bought or cashed out.</value></data>
+  <data name="Coins.HowTo" xml:space="preserve"><value>How to get them</value></data>
+  <data name="Coins.Starting" xml:space="preserve"><value>Every new resident starts with {0}.</value></data>
+  <data name="Coins.Allowance" xml:space="preserve"><value>Every week you get {0}.</value></data>
+  <data name="Coins.Gifts" xml:space="preserve"><value>The grid's staff can give you coins.</value></data>
+  <data name="Coins.Earn" xml:space="preserve"><value>Other residents can pay you, for example for things you make and sell.</value></data>
+  <data name="Coins.Off" xml:space="preserve"><value>This grid doesn't use money.</value></data>
+  <data name="Coins.AskStaff" xml:space="preserve"><value>Ask the grid's staff how to get coins here.</value></data>
+  <data name="MyCoins.Title" xml:space="preserve"><value>My coins</value></data>
+  <data name="MyCoins.Balance" xml:space="preserve"><value>Your balance: {0}</value></data>
+  <data name="MyCoins.Saved" xml:space="preserve"><value>Saved.</value></data>
+  <data name="MyCoins.Unavailable" xml:space="preserve"><value>Your coins can't be shown right now. Please try again later.</value></data>
+  <data name="MyCoins.PayoutsHeading" xml:space="preserve"><value>Scripts that pay out</value></data>
+  <data name="MyCoins.PayoutsExplain" xml:space="preserve"><value>When this is on, your own scripts may pay coins from your balance, up to {0} a day. A script also needs your permission in the viewer.</value></data>
+  <data name="MyCoins.PayoutsAreOn" xml:space="preserve"><value>Your scripts may pay out.</value></data>
+  <data name="MyCoins.PayoutsAreOff" xml:space="preserve"><value>Your scripts may not pay out.</value></data>
+  <data name="MyCoins.PayoutsTurnOn" xml:space="preserve"><value>Let my scripts pay out</value></data>
+  <data name="MyCoins.PayoutsTurnOff" xml:space="preserve"><value>Stop my scripts paying out</value></data>
+  <data name="MyCoins.PayoutsOffGrid" xml:space="preserve"><value>Scripts can't pay out on this grid.</value></data>
+  <data name="MyCoins.History" xml:space="preserve"><value>History</value></data>
+  <data name="MyCoins.NoHistory" xml:space="preserve"><value>Nothing yet.</value></data>
+  <data name="MyCoins.When" xml:space="preserve"><value>When</value></data>
+  <data name="MyCoins.What" xml:space="preserve"><value>What</value></data>
+  <data name="MyCoins.Who" xml:space="preserve"><value>Who</value></data>
+  <data name="MyCoins.Amount" xml:space="preserve"><value>Amount ({0})</value></data>
+  <data name="MyCoins.Visitor" xml:space="preserve"><value>Visitor from {0}</value></data>
+  <data name="MyCoins.Type.starting_balance" xml:space="preserve"><value>Starting balance</value></data>
+  <data name="MyCoins.Type.allowance" xml:space="preserve"><value>Weekly allowance</value></data>
+  <data name="MyCoins.Type.staff_gift" xml:space="preserve"><value>From the grid's staff</value></data>
+  <data name="MyCoins.Type.staff_take" xml:space="preserve"><value>Taken by the grid's staff</value></data>
+  <data name="MyCoins.Type.bought_coins" xml:space="preserve"><value>Coins bought</value></data>
+  <data name="MyCoins.Type.pay_avatar" xml:space="preserve"><value>Payment to or from a person</value></data>
+  <data name="MyCoins.Type.pay_object" xml:space="preserve"><value>Payment to an object</value></data>
+  <data name="MyCoins.Type.object_sale" xml:space="preserve"><value>Object sale</value></data>
+  <data name="MyCoins.Type.land_sale" xml:space="preserve"><value>Land sale</value></data>
+  <data name="MyCoins.Type.parcel_pass" xml:space="preserve"><value>Parcel pass</value></data>
+  <data name="MyCoins.Type.script_payout" xml:space="preserve"><value>Paid by a script</value></data>
+  <data name="MyCoins.Type.upload_fee" xml:space="preserve"><value>Upload fee</value></data>
+  <data name="MyCoins.Type.group_join_fee" xml:space="preserve"><value>Group joining fee</value></data>
+  <data name="MyCoins.Type.classified_fee" xml:space="preserve"><value>Classified ad fee</value></data>
+  <data name="MyCoins.Type.hold" xml:space="preserve"><value>Purchase</value></data>
+  <data name="MyCoins.Type.hold_completed" xml:space="preserve"><value>Sale</value></data>
+  <data name="MyCoins.Type.hold_returned" xml:space="preserve"><value>Purchase returned</value></data>
+  <data name="MyCoins.Type.refund" xml:space="preserve"><value>Refund</value></data>
+  <data name="MyCoins.Type.wallet_merge" xml:space="preserve"><value>Wallets joined</value></data>
+  <data name="MyCoins.Type.fee_moved" xml:space="preserve"><value>From the grid's fees</value></data>
+  <data name="MyCoins.WhatWithObject" xml:space="preserve"><value>{0}: {1}</value></data>
 </root>

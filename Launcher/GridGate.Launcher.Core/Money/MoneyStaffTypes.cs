@@ -20,3 +20,6 @@ public sealed record BalanceMismatch(long AccountId, long Stored, long FromEntri
 
 /// <summary>The books' check (money design §7.1): all balances add up to zero, and each one matches its entries.</summary>
 public sealed record SelfCheckResult(bool Ok, long Sum, IReadOnlyList<BalanceMismatch> Mismatches);
+
+/// <summary>An account's switches: debits refused, and its scripts allowed to pay out (money design §7.2).</summary>
+public sealed record AccountFlags(bool Frozen, bool PayoutsAllowed);

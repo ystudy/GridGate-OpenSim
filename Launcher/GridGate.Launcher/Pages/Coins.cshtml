@@ -1,0 +1,36 @@
+@page "/coins"
+@model GridGate.Launcher.Pages.CoinsModel
+@{
+    Layout = "_GuestLayout";
+    ViewData["Title"] = T["Coins.Title"].Value;
+}
+<h1>@T["Coins.Title"]</h1>
+@if (Model.Mode == GridGate.Launcher.Core.Money.MoneyMode.Off)
+{
+    <p>@T["Coins.Off"]</p>
+}
+else
+{
+    <p>@T["Coins.Intro", Model.Name, Model.Symbol]</p>
+    @if (Model.Mode == GridGate.Launcher.Core.Money.MoneyMode.Play)
+    {
+        <p>@T["Coins.Play"]</p>
+        <h2 class="h5">@T["Coins.HowTo"]</h2>
+        <ul>
+            @if (Model.Starting > 0)
+            {
+                <li>@T["Coins.Starting", Model.Amount(Model.Starting)]</li>
+            }
+            @if (Model.Allowance > 0)
+            {
+                <li>@T["Coins.Allowance", Model.Amount(Model.Allowance)]</li>
+            }
+            <li>@T["Coins.Gifts"]</li>
+            <li>@T["Coins.Earn"]</li>
+        </ul>
+    }
+    else
+    {
+        <p>@T["Coins.AskStaff"]</p>
+    }
+}

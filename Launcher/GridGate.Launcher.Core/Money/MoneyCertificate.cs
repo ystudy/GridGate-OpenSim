@@ -12,9 +12,16 @@ public static class MoneyCertificate
 {
     public const string FileName = "money.pfx";
     private static readonly TimeSpan RenewBefore = TimeSpan.FromDays(30);
+    // The config writer and the service host both load it; two first starts at once must not make two certificates.
+    private static readonly Lock Gate = new();
 
     /// <summary>Loads the certificate, or makes a new one when the file is missing, unreadable or expires within 30 days.</summary>
     public static X509Certificate2 LoadOrCreate(string pfxPath, TimeProvider time)
+    {
+        lock (Gate) return LoadOrCreateLocked(pfxPath, time);
+    }
+
+    private static X509Certificate2 LoadOrCreateLocked(string pfxPath, TimeProvider time)
     {
         var now = time.GetUtcNow();
         if (File.Exists(pfxPath))

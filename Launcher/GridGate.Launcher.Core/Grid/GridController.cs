@@ -38,8 +38,12 @@ public sealed partial class GridController(
     ILoggerFactory? loggers = null,
     Func<LauncherSettings, IRegionStore>? regionStores = null,
     Action<int, IReadOnlyList<int>, CpuPriority>? cpu = null,
-    PlatformSupport? platform = null) : IGridController
+    PlatformSupport? platform = null,
+    Func<MoneySettings, MoneyMode>? moneyEffective = null) : IGridController
 {
+    // The money gate (MoneyRelease unless a test opens it). Not a MoneyGate: that one reads settings through this controller.
+    private readonly Func<MoneySettings, MoneyMode> _money = moneyEffective ?? MoneyRelease.Effective;
+
     private static readonly TimeSpan ConsoleSettle = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan LoginWait = TimeSpan.FromSeconds(300);
 
@@ -1635,9 +1639,18 @@ public sealed partial class GridController(
         return s;
     }
 
+    /// <summary>Writes every INI. Callers hold <see cref="_configGate"/>.</summary>
     private void WriteConfig(LauncherSettings s)
     {
-        new GridConfigWriter(paths).Write(s, _modules.Cast<IIniContributor>().ToList(), _held);
+        // Every program needs its own region key before its INI names the money module (money design §7.2). New keys
+        // are saved first, so the service that reads them and the INI never disagree.
+        if (_money(s.Money) != MoneyMode.Off && MoneyKeys.EnsureProgramKeys(s) is var keyed && !ReferenceEquals(keyed, s))
+        {
+            store.Save(keyed);
+            _settings = keyed;
+            s = keyed;
+        }
+        new GridConfigWriter(paths, _money).Write(s, _modules.Cast<IIniContributor>().ToList(), _held);
         _writtenGridName = s.GridName;
     }
 
@@ -1708,7 +1721,7 @@ public sealed partial class GridController(
         await StartComponentAsync(_db!, ct);
         await new DatabaseProvisioner(s).EnsureAsync(ct);
         // The money database, once money is approved and turned on (money design §7.1); nothing while it is Off.
-        await MoneyStartup.TryPrepareAsync(s, change => UpdateSettings(change, writeConfig: false), MoneyRelease.Effective(s.Money),
+        await MoneyStartup.TryPrepareAsync(s, change => UpdateSettings(change, writeConfig: false), _money(s.Money),
             _log ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance, ct);
     }
 

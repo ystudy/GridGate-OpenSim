@@ -50,6 +50,17 @@ public sealed class PresenceCheckTests(MoneyMariaDb maria) : IClassFixture<Money
     }
 
     [Fact]
+    public async Task Secure_session_alone_is_ok()
+    {
+        var check = await Setup(There); // any region: the helper has no region of its own
+
+        Assert.Equal(PresenceOutcome.Ok, await check.HasSecureSessionAsync(User, Secure, Ct));
+        Assert.Equal(PresenceOutcome.NoSession, await check.HasSecureSessionAsync(User, Guid.NewGuid(), Ct));
+        Assert.Equal(PresenceOutcome.NoSession, await check.HasSecureSessionAsync(User, Guid.Empty, Ct));
+        Assert.Equal(PresenceOutcome.NoSession, await check.HasSecureSessionAsync(Guid.NewGuid(), Secure, Ct));
+    }
+
+    [Fact]
     public async Task Visitor_presence_row_counts()
     {
         var db = await maria.FreshAsync();

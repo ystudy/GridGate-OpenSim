@@ -1,0 +1,58 @@
+@page "/guest/coins"
+@model GridGate.Launcher.Pages.Guest.CoinsModel
+@{
+    ViewData["Title"] = T["MyCoins.Title"].Value;
+}
+<h1>@T["MyCoins.Title"]</h1>
+@if (Model.Unavailable)
+{
+    <div class="error-box error alert alert-danger" role="alert">@T["MyCoins.Unavailable"]</div>
+}
+else
+{
+    @if (Model.Saved)
+    {
+        <div class="ok-box alert alert-success" role="status">@T["MyCoins.Saved"]</div>
+    }
+    <p id="coins-balance" class="fs-4">@T["MyCoins.Balance", Model.Amount(Model.Balance ?? 0)]</p>
+
+    <h2 class="h5">@T["MyCoins.PayoutsHeading"]</h2>
+    @if (Model.ScriptPayoutsOnGrid)
+    {
+        <p>@T["MyCoins.PayoutsExplain", Model.Amount(Model.DailyLimit)]</p>
+        <p id="coins-payouts-state">@(Model.PayoutsAllowed ? T["MyCoins.PayoutsAreOn"] : T["MyCoins.PayoutsAreOff"])</p>
+        <form method="post" action="/guest/coins?handler=Payouts" asp-antiforgery="true">
+            <input type="hidden" name="On" value="@(Model.PayoutsAllowed ? "false" : "true")">
+            <button type="submit" class="btn btn-outline-secondary">@(Model.PayoutsAllowed ? T["MyCoins.PayoutsTurnOff"] : T["MyCoins.PayoutsTurnOn"])</button>
+        </form>
+    }
+    else
+    {
+        <p id="coins-payouts-off">@T["MyCoins.PayoutsOffGrid"]</p>
+    }
+
+    <h2 class="h5 mt-4">@T["MyCoins.History"]</h2>
+    @if (Model.Lines.Count == 0)
+    {
+        <p>@T["MyCoins.NoHistory"]</p>
+    }
+    else
+    {
+        <div class="table-responsive">
+            <table id="coins-history" class="table align-middle">
+                <thead><tr><th>@T["MyCoins.When"]</th><th>@T["MyCoins.What"]</th><th>@T["MyCoins.Who"]</th><th>@T["MyCoins.Amount", Model.Symbol]</th></tr></thead>
+                <tbody>
+                @foreach (var line in Model.Lines)
+                {
+                    <tr>
+                        <td class="when">@line.At.UtcDateTime.ToString("g", System.Globalization.CultureInfo.CurrentCulture)</td>
+                        <td class="what">@line.What</td>
+                        <td class="who">@line.Who</td>
+                        <td class="amount">@GridGate.Launcher.Pages.Guest.CoinsModel.Signed(line.Amount)</td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    }
+}

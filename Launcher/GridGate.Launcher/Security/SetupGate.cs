@@ -123,7 +123,7 @@ public sealed class SetupGate(RequestDelegate next, Func<LauncherSettings> setti
         var path = r.Path;
         if (path.StartsWithSegments("/welcome") || path.StartsWithSegments("/waiting") ||
             path.StartsWithSegments("/setup-done") || path.StartsWithSegments("/api/status") ||
-            path.StartsWithSegments("/gridgate"))
+            path.StartsWithSegments("/gridgate") || path.StartsWithSegments("/economy") || path.StartsWithSegments("/coins"))
             return true;
         return path == "/" && !IsFrontPageRequest(r);
     }

@@ -1,0 +1,227 @@
+using GridGate.Launcher.Core;
+using GridGate.Launcher.Core.Database;
+using GridGate.Launcher.Core.Grid;
+using GridGate.Launcher.Core.Logs;
+using GridGate.Launcher.Core.Money;
+using GridGate.Launcher.Core.OpenSim;
+using GridGate.Launcher.Core.Security;
+using GridGate.Launcher.Core.Settings;
+using GridGate.Launcher.Money;
+using GridGate.Launcher.Security;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.RazorPages;
+
+namespace GridGate.Launcher.Pages.Money;
+
+/// <summary>
+/// The Money page (<c>/money</c>; money design §9.1): the mode and settings, and while money is on the totals, the
+/// self-check, the grid-wide freeze, refunds, moving fees and finding a person. Every staff member may look; only admins
+/// and the owner may change anything (each POST checks), and every change is audited.
+/// </summary>
+public sealed class IndexModel(IGridController grid, MoneyGate gate, IMoneyBooks books, MoneyStatus status, AuditLog audit, IRobustClient robust,
+    IPeopleDirectory people, TimeProvider time)
+    : PageModel
+{
+    public IReadOnlyList<MoneyMode> Offered { get; private set; } = [];
+    public MoneySettings Saved { get; private set; } = new();
+    public bool On { get; private set; }
+    public bool CanChange { get; private set; }
+    public MoneyTotals? Totals { get; private set; }
+    public (bool Frozen, string Reason) Frozen { get; private set; }
+    public (DateTimeOffset At, SelfCheckResult Result)? LastCheck { get; private set; }
+    public bool DatabaseDown { get; private set; }
+    public string? Error { get; private set; }
+    public string? Notice { get; private set; }
+
+    [BindProperty] public string? Reason { get; set; }
+
+    /// <summary>The Find a person box: part of a name.</summary>
+    [BindProperty(SupportsGet = true)] public string? Q { get; set; }
+
+    public IReadOnlyList<PersonRow> Found { get; private set; } = [];
+    public bool SearchDown { get; private set; }
+
+    public static string N(long n) => n.ToString("N0", System.Globalization.CultureInfo.InvariantCulture);
+
+    public Task OnGetAsync(CancellationToken ct) => ShowAsync(ct);
+
+    public async Task<IActionResult> OnPostSettingsAsync(MoneyMode mode, string? currencySymbol, string? currencyName, long startingBalancePlay,
+        long startingBalanceReal, long weeklyAllowance, long uploadFee, long classifiedFee, long dailyPayoutLimit, long maxPayment, bool scriptPayouts,
+        bool visitorWallets, CancellationToken ct)
+    {
+        if (!Admin) return StatusCode(StatusCodes.Status403Forbidden);
+        var before = grid.CurrentSettings().Money;
+        var next = before with
+        {
+            Mode = mode, CurrencySymbol = currencySymbol?.Trim() ?? "", CurrencyName = currencyName?.Trim() ?? "",
+            StartingBalancePlay = startingBalancePlay, StartingBalanceReal = startingBalanceReal, WeeklyAllowance = weeklyAllowance,
+            UploadFee = uploadFee, ClassifiedFee = classifiedFee, DailyPayoutLimit = dailyPayoutLimit, MaxPayment = maxPayment,
+            ScriptPayouts = scriptPayouts, VisitorWallets = visitorWallets,
+        };
+        // The form may only be posted with values the page itself would accept; anything else is refused whole.
+        if (!ModelState.IsValid) Error = "Every number must be a whole number.";
+        else Error = MoneyPageRules.Problem(next, MoneyPageRules.Offered(gate));
+        if (Error is null)
+        {
+            // Only the fields above change: the program keys, and anything another page saved meanwhile, stay.
+            grid.UpdateSettings(s => s with
+            {
+                Money = s.Money with
+                {
+                    Mode = next.Mode, CurrencySymbol = next.CurrencySymbol, CurrencyName = next.CurrencyName,
+                    StartingBalancePlay = next.StartingBalancePlay, StartingBalanceReal = next.StartingBalanceReal, WeeklyAllowance = next.WeeklyAllowance,
+                    UploadFee = next.UploadFee, ClassifiedFee = next.ClassifiedFee, DailyPayoutLimit = next.DailyPayoutLimit,
+                    MaxPayment = next.MaxPayment, ScriptPayouts = next.ScriptPayouts, VisitorWallets = next.VisitorWallets,
+                },
+            }, writeConfig: true);
+            audit.Write(User, Ip, "money-settings", "money", before.Mode == next.Mode ? "ok" : "mode " + next.Mode);
+            Notice = before.Mode == next.Mode ? "Saved." : "Saved. The new mode takes effect when GridGate restarts.";
+        }
+        await ShowAsync(ct);
+        return Page();
+    }
+
+    public async Task<IActionResult> OnPostCheckAsync(CancellationToken ct)
+    {
+        if (!Admin) return StatusCode(StatusCodes.Status403Forbidden);
+        if (!await GuardOnAsync(ct)) return Page();
+        try
+        {
+            var result = await books.SelfCheckAsync(ct);
+            status.LastCheck = (time.GetUtcNow(), result);
+            audit.Write(User, Ip, "money-self-check", "money", result.Ok ? "ok" : "difference");
+            if (result.Ok) Notice = "The books add up.";
+            else Error = "The self-check found a difference and froze all payments.";
+        }
+        catch (MoneyUnavailableException)
+        {
+            audit.Write(User, Ip, "money-self-check", "money", "unavailable");
+            Error = MoneyPageRules.Words(MoneyOutcome.Unavailable);
+        }
+        await ShowAsync(ct);
+        return Page();
+    }
+
+    public Task<IActionResult> OnPostFreezeAsync(CancellationToken ct) => FreezeAsync(true, ct);
+
+    public Task<IActionResult> OnPostUnfreezeAsync(CancellationToken ct) => FreezeAsync(false, ct);
+
+    private async Task<IActionResult> FreezeAsync(bool frozen, CancellationToken ct)
+    {
+        if (!Admin) return StatusCode(StatusCodes.Status403Forbidden);
+        if (!await GuardOnAsync(ct)) return Page();
+        if (CleanReason() is not { } reason)
+        {
+            Error = "Say why.";
+        }
+        else
+        {
+            try
+            {
+                await books.SetFrozenAsync(frozen, reason, ct);
+                audit.Write(User, Ip, frozen ? "money-freeze-all" : "money-unfreeze-all", "money", "ok");
+                Notice = frozen ? "All payments are frozen." : "Payments are running again.";
+            }
+            catch (MoneyUnavailableException)
+            {
+                audit.Write(User, Ip, frozen ? "money-freeze-all" : "money-unfreeze-all", "money", "unavailable");
+                Error = MoneyPageRules.Words(MoneyOutcome.Unavailable);
+            }
+        }
+        await ShowAsync(ct);
+        return Page();
+    }
+
+    public async Task<IActionResult> OnPostRefundAsync(long entryId, CancellationToken ct)
+    {
+        if (!Admin) return StatusCode(StatusCodes.Status403Forbidden);
+        if (!await GuardOnAsync(ct)) return Page();
+        if (CleanReason() is not { } reason || entryId <= 0)
+        {
+            Error = "Give the entry number and say why.";
+        }
+        else
+        {
+            var r = await books.RefundAsync(entryId, Staff(reason), ct);
+            audit.Write(User, Ip, "money-refund", entryId.ToString(System.Globalization.CultureInfo.InvariantCulture), MoneyPageRules.Code(r.Outcome));
+            Done(r.Outcome);
+        }
+        await ShowAsync(ct);
+        return Page();
+    }
+
+    public async Task<IActionResult> OnPostMoveFeesAsync(string? name, long amount, CancellationToken ct)
+    {
+        if (!Admin) return StatusCode(StatusCodes.Status403Forbidden);
+        if (!await GuardOnAsync(ct)) return Page();
+        var parts = (name ?? "").Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        var account = parts.Length == 2 ? await robust.FindAccountAsync(parts[0], parts[1], ct) : null;
+        if (CleanReason() is not { } reason || amount <= 0)
+        {
+            Error = "Give an amount and say why.";
+        }
+        else if (account is null)
+        {
+            Error = "No resident has that name.";
+        }
+        else
+        {
+            var r = await books.MoveFeesAsync(AccountRef.Resident(account.PrincipalId), amount, Staff(reason), ct);
+            audit.Write(User, Ip, "money-move-fees", LogText.Clean(account.FullName()), MoneyPageRules.Code(r.Outcome));
+            Done(r.Outcome);
+        }
+        await ShowAsync(ct);
+        return Page();
+    }
+
+    private bool Admin => StaffSignIn.RoleOf(User) >= StaffRole.Admin;
+
+    private string? Ip => HttpContext.Connection.RemoteIpAddress?.ToString();
+
+    private StaffAction Staff(string reason) => new(User.Identity?.Name ?? "staff", reason);
+
+    private string? CleanReason() => string.IsNullOrWhiteSpace(Reason) ? null : LogText.Clean(Reason.Trim(), MoneyPageRules.MaxReason);
+
+    private void Done(MoneyOutcome o)
+    {
+        if (o == MoneyOutcome.Ok) Notice = MoneyPageRules.Words(o);
+        else Error = MoneyPageRules.Words(o);
+    }
+
+    /// <summary>The ledger's actions exist only while money is on.</summary>
+    private async Task<bool> GuardOnAsync(CancellationToken ct)
+    {
+        if (gate.On) return true;
+        Error = "Money is off.";
+        await ShowAsync(ct);
+        return false;
+    }
+
+    private async Task ShowAsync(CancellationToken ct)
+    {
+        Saved = grid.CurrentSettings().Money;
+        Offered = MoneyPageRules.Offered(gate);
+        On = gate.On;
+        CanChange = Admin;
+        if (!On) return;
+        LastCheck = status.LastCheck;
+        if (!string.IsNullOrWhiteSpace(Q))
+            try
+            {
+                Found = (await people.SearchAsync(Q.Trim(), PeopleFilter.Everyone, [], int.MaxValue, 1, ct)).Rows;
+            }
+            catch (PeopleDirectoryUnavailableException)
+            {
+                SearchDown = true;
+            }
+        try
+        {
+            Totals = await books.TotalsAsync(ct);
+            Frozen = await books.FrozenAsync(ct);
+        }
+        catch (MoneyUnavailableException)
+        {
+            DatabaseDown = true;
+        }
+    }
+}

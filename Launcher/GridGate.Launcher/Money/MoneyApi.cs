@@ -35,7 +35,7 @@ internal static class MoneyApi
 
     // Answers.
     internal sealed record Answer(string Code, long? Balance = null, long? ToBalance = null, long? EntryId = null, long? HoldId = null);
-    internal sealed record EconomyAnswer(string Code, string CurrencySymbol, long UploadFee, long ClassifiedFee);
+    internal sealed record EconomyAnswer(string Code, string CurrencySymbol, long UploadFee, long ClassifiedFee, bool VisitorWallets, bool ScriptPayouts, long MaxPayment);
     internal sealed record HealthAnswer(bool Ok);
 
     private sealed class BadRequest : Exception;
@@ -48,7 +48,7 @@ internal static class MoneyApi
         Post(app, "/money/v1/economy", c, (_, _, _) =>
         {
             var m = c.Settings().Money;
-            return Task.FromResult<object>(new EconomyAnswer("ok", m.CurrencySymbol, m.UploadFee, m.ClassifiedFee));
+            return Task.FromResult<object>(new EconomyAnswer("ok", m.CurrencySymbol, m.UploadFee, m.ClassifiedFee, m.VisitorWallets, m.ScriptPayouts, m.MaxPayment));
         });
         Post(app, "/money/v1/balance", c, async (http, grant, ct) =>
         {
@@ -88,7 +88,8 @@ internal static class MoneyApi
             var region = Need(b.RegionId);
             var request = new HoldRequest(Scoped(grant, b.TxnId), Need(b.Kind), Account(buyer), Account(Need(b.Seller)), Need(b.Amount), region, b.ObjectId, b.ObjectName);
             if (!grant.Regions.Contains(region)) return Code("wrong_region");
-            return await WithSession(c, buyer, grant, ct) ?? Of(await c.Ledger.HoldAsync(request, ct));
+            // Holding's balance (ToBalance) is nobody's balance: it never leaves the service (plan 1 deferred finding).
+            return await WithSession(c, buyer, grant, ct) ?? Of(await c.Ledger.HoldAsync(request, ct)) with { ToBalance = null };
         });
         Post(app, "/money/v1/hold/complete", c, (http, grant, ct) => Settle(http, c, grant, complete: true, ct));
         Post(app, "/money/v1/hold/return", c, (http, grant, ct) => Settle(http, c, grant, complete: false, ct));
@@ -107,7 +108,8 @@ internal static class MoneyApi
         // Only the region that made a hold may settle it.
         if (await c.Ledger.HoldRegionAsync(hold, ct) is not { } region) return Code("unknown_hold");
         if (!grant.Regions.Contains(region)) return Code("wrong_region");
-        return Of(complete ? await c.Ledger.CompleteHoldAsync(txn, hold, ct) : await c.Ledger.ReturnHoldAsync(txn, hold, ct));
+        // Balance would be Holding's; ToBalance is the seller's on complete and the buyer's on return.
+        return Of(complete ? await c.Ledger.CompleteHoldAsync(txn, hold, ct) : await c.Ledger.ReturnHoldAsync(txn, hold, ct)) with { Balance = null };
     }
 
     /// <summary>

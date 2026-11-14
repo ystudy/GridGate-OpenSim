@@ -1,0 +1,166 @@
+@page "/money"
+@model GridGate.Launcher.Pages.Money.IndexModel
+@using GridGate.Launcher.Core.Money
+@using GridGate.Launcher.Core.OpenSim
+@{
+    ViewData["Title"] = "Money";
+    ViewData["Wide"] = true;
+    var m = Model.Saved;
+}
+<div class="page-head">
+    <h1>Money<help-tip class="help-start">The grid's coins: what they're called, what things cost, and the books.</help-tip></h1>
+</div>
+<error-box text="@Model.Error" />
+<ok-box text="@Model.Notice" />
+@if (Model.DatabaseDown)
+{
+    <div id="money-database-down" class="error-box error alert alert-danger" role="alert">The money database can't be reached, so payments are refused and the books can't be shown.</div>
+}
+<div class="list-columns">
+    <section class="work-panel" aria-labelledby="money-settings-title">
+        <h2 id="money-settings-title" class="panel-title">Settings</h2>
+        @if (!Model.Offered.Contains(MoneyMode.Play))
+        {
+            <p id="money-approval">Play coins become available once the money safety review is approved.</p>
+        }
+        @if (Model.CanChange)
+        {
+            <form id="money-settings" method="post" action="/money?handler=Settings" asp-antiforgery="true">
+                <label class="form-label" for="money-mode">Mode</label>
+                <select class="form-select mb-3" id="money-mode" name="Mode">
+                    @foreach (var mode in Model.Offered)
+                    {
+                        <option value="@mode" selected="@(mode == m.Mode)">@(mode == MoneyMode.Off ? "Off" : "Play coins")</option>
+                    }
+                </select>
+                <div class="row g-3">
+                    <div class="col-sm-6"><label class="form-label" for="money-symbol">Currency symbol</label>
+                        <input class="form-control" id="money-symbol" name="CurrencySymbol" value="@m.CurrencySymbol" maxlength="4" required></div>
+                    <div class="col-sm-6"><label class="form-label" for="money-name">Currency name</label>
+                        <input class="form-control" id="money-name" name="CurrencyName" value="@m.CurrencyName" maxlength="20" required></div>
+                    <div class="col-sm-6"><label class="form-label" for="money-start-play">Starting balance (play)</label>
+                        <input class="form-control" id="money-start-play" name="StartingBalancePlay" type="number" min="0" value="@m.StartingBalancePlay"></div>
+                    <div class="col-sm-6"><label class="form-label" for="money-start-real">Starting balance (real)</label>
+                        <input class="form-control" id="money-start-real" name="StartingBalanceReal" type="number" min="0" value="@m.StartingBalanceReal"></div>
+                    <div class="col-sm-6"><label class="form-label" for="money-allowance">Weekly allowance</label>
+                        <input class="form-control" id="money-allowance" name="WeeklyAllowance" type="number" min="0" value="@m.WeeklyAllowance"></div>
+                    <div class="col-sm-6"><label class="form-label" for="money-upload">Upload fee</label>
+                        <input class="form-control" id="money-upload" name="UploadFee" type="number" min="0" value="@m.UploadFee"></div>
+                    <div class="col-sm-6"><label class="form-label" for="money-classified">Classified ad fee</label>
+                        <input class="form-control" id="money-classified" name="ClassifiedFee" type="number" min="0" value="@m.ClassifiedFee"></div>
+                    <div class="col-sm-6"><label class="form-label" for="money-daily">Daily script payout limit</label>
+                        <input class="form-control" id="money-daily" name="DailyPayoutLimit" type="number" min="0" value="@m.DailyPayoutLimit"></div>
+                    <div class="col-sm-6"><label class="form-label" for="money-max">Largest payment</label>
+                        <input class="form-control" id="money-max" name="MaxPayment" type="number" min="1" value="@m.MaxPayment"></div>
+                </div>
+                <div class="form-check mt-3">
+                    <input class="form-check-input" type="checkbox" id="money-scripts" name="ScriptPayouts" value="true" checked="@m.ScriptPayouts">
+                    <label class="form-check-label" for="money-scripts">Scripts may pay out, for residents who allow it</label>
+                </div>
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="money-visitors" name="VisitorWallets" value="true" checked="@m.VisitorWallets">
+                    <label class="form-check-label" for="money-visitors">Hypergrid visitors get wallets</label>
+                </div>
+                <button type="submit" class="btn btn-primary mt-3">Save</button>
+            </form>
+        }
+        else
+        {
+            <dl id="money-settings-view" class="mb-0">
+                <dt>Mode</dt><dd>@(m.Mode == MoneyMode.Off ? "Off" : m.Mode.ToString())</dd>
+                <dt>Currency</dt><dd>@m.CurrencyName (@m.CurrencySymbol)</dd>
+                <dt>Upload fee</dt><dd>@IndexModel.N(m.UploadFee)</dd>
+                <dt>Daily script payout limit</dt><dd>@IndexModel.N(m.DailyPayoutLimit)</dd>
+            </dl>
+        }
+    </section>
+    @if (Model.On && !Model.DatabaseDown && Model.Totals is { } t)
+    {
+        <section class="work-panel" aria-labelledby="money-totals-title">
+            <h2 id="money-totals-title" class="panel-title">Totals</h2>
+            <dl id="money-totals" class="mb-0">
+                <dt>In existence</dt><dd>@m.CurrencySymbol@IndexModel.N(t.InExistence)</dd>
+                <dt>With residents</dt><dd>@m.CurrencySymbol@IndexModel.N(t.Residents)</dd>
+                <dt>With visitors</dt><dd>@m.CurrencySymbol@IndexModel.N(t.Visitors)</dd>
+                <dt>Fees collected</dt><dd>@m.CurrencySymbol@IndexModel.N(t.Fees)</dd>
+                <dt>Waiting in purchases</dt><dd>@m.CurrencySymbol@IndexModel.N(t.Holding)</dd>
+                <dt>Moved today</dt><dd>@m.CurrencySymbol@IndexModel.N(t.MovedToday)</dd>
+            </dl>
+        </section>
+        <section class="work-panel" aria-labelledby="money-check-title">
+            <h2 id="money-check-title" class="panel-title">Self-check</h2>
+            @if (Model.LastCheck is { } last)
+            {
+                <p id="money-last-check">@(last.Result.Ok ? "The books add up." : "The last check found a difference.") Checked @last.At.ToString("yyyy-MM-dd HH:mm 'UTC'").</p>
+            }
+            else
+            {
+                <p id="money-last-check">Not checked since GridGate started.</p>
+            }
+            @if (Model.CanChange)
+            {
+                <form method="post" action="/money?handler=Check" asp-antiforgery="true">
+                    <button type="submit" class="btn btn-outline-secondary">Check now</button>
+                </form>
+            }
+        </section>
+        <section class="work-panel" aria-labelledby="money-freeze-title">
+            <h2 id="money-freeze-title" class="panel-title">Freeze</h2>
+            <p id="money-freeze-state">@(Model.Frozen.Frozen ? $"All payments are frozen: {Model.Frozen.Reason}" : "Payments are running.")</p>
+            @if (Model.CanChange)
+            {
+                <form method="post" action="/money?handler=@(Model.Frozen.Frozen ? "Unfreeze" : "Freeze")" asp-antiforgery="true">
+                    <label class="form-label" for="money-freeze-reason">Reason</label>
+                    <input class="form-control mb-2" id="money-freeze-reason" name="Reason" maxlength="200" required>
+                    <button type="submit" class="btn @(Model.Frozen.Frozen ? "btn-primary" : "btn-outline-danger")">@(Model.Frozen.Frozen ? "Unfreeze payments" : "Freeze all payments")</button>
+                </form>
+            }
+        </section>
+        @if (Model.CanChange)
+        {
+            <section class="work-panel" aria-labelledby="money-refund-title">
+                <h2 id="money-refund-title" class="panel-title">Refund an entry</h2>
+                <form method="post" action="/money?handler=Refund" asp-antiforgery="true">
+                    <label class="form-label" for="money-refund-entry">Entry number</label>
+                    <input class="form-control mb-2" id="money-refund-entry" name="EntryId" type="number" min="1" required>
+                    <label class="form-label" for="money-refund-reason">Reason</label>
+                    <input class="form-control mb-2" id="money-refund-reason" name="Reason" maxlength="200" required>
+                    <button type="submit" class="btn btn-outline-secondary">Refund</button>
+                </form>
+            </section>
+            <section class="work-panel" aria-labelledby="money-fees-title">
+                <h2 id="money-fees-title" class="panel-title">Move fees</h2>
+                <form method="post" action="/money?handler=MoveFees" asp-antiforgery="true">
+                    <label class="form-label" for="money-fees-name">To resident (first and last name)</label>
+                    <input class="form-control mb-2" id="money-fees-name" name="Name" maxlength="64" required>
+                    <label class="form-label" for="money-fees-amount">Amount</label>
+                    <input class="form-control mb-2" id="money-fees-amount" name="Amount" type="number" min="1" required>
+                    <label class="form-label" for="money-fees-reason">Reason</label>
+                    <input class="form-control mb-2" id="money-fees-reason" name="Reason" maxlength="200" required>
+                    <button type="submit" class="btn btn-outline-secondary">Move</button>
+                </form>
+            </section>
+        }
+        <section class="work-panel" aria-labelledby="money-find-title">
+            <h2 id="money-find-title" class="panel-title">Find a person</h2>
+            <form method="get" action="/money" role="search">
+                <label class="form-label" for="money-find">Part of a name</label>
+                <input class="form-control mb-2" id="money-find" name="Q" value="@Model.Q" maxlength="64">
+                <button type="submit" class="btn btn-outline-secondary">Find</button>
+            </form>
+            @if (Model.SearchDown)
+            {
+                <p class="mt-2">The account list can't be read right now.</p>
+            }
+            else if (!string.IsNullOrWhiteSpace(Model.Q))
+            {
+                <ul id="money-found" class="mt-2 mb-0">
+                    @foreach (var p in Model.Found)
+                    {
+                        <li><a href="/money/person?id=@p.Account.PrincipalId">@p.Account.FullName()</a></li>
+                    }
+                </ul>
+            }
+        </section>
+    }
+</div>

@@ -31,6 +31,7 @@ public sealed class MoneyServiceTests(MoneyMariaDb maria) : IClassFixture<MoneyM
     private readonly string _dir = Path.Combine(Path.GetTempPath(), "gg-money-svc-" + Guid.NewGuid().ToString("N"));
     private readonly ConcurrentQueue<string> _logs = new();
     private MoneyServiceHost? _host;
+    private readonly MoneyStatus _status = new();
     private HttpClient? _http;
     private string _fingerprint = "";
     private int _port;
@@ -70,7 +71,7 @@ public sealed class MoneyServiceTests(MoneyMariaDb maria) : IClassFixture<MoneyM
         Directory.CreateDirectory(_dir);
         var cert = MoneyCertificate.LoadOrCreate(Path.Combine(_dir, MoneyCertificate.FileName), time);
         _fingerprint = MoneyCertificate.Fingerprint(cert);
-        _host = new MoneyServiceHost(ledger, presence, () => settings, () => mode, certificate ?? (() => cert), new MoneyAuthFailures(time, loggers.CreateLogger<MoneyAuthFailures>()), loggers);
+        _host = new MoneyServiceHost(ledger, presence, () => settings, () => mode, certificate ?? (() => cert), new MoneyAuthFailures(time, loggers.CreateLogger<MoneyAuthFailures>()), loggers, _status);
         await _host.StartAsync(Ct);
         _http = new HttpClient(new SocketsHttpHandler
         {
@@ -302,6 +303,85 @@ public sealed class MoneyServiceTests(MoneyMariaDb maria) : IClassFixture<MoneyM
         Assert.Equal(125, done["toBalance"]!.GetValue<long>());
     }
 
+    private async Task<long> HoldFortyAsync()
+    {
+        var (_, hold, raw) = await Post("hold", new
+        {
+            txnId = Guid.NewGuid(), kind = "object", buyer = WhoA(), seller = new { agentId = B, home = "" }, amount = 40, regionId = Here,
+            objectId = Guid.NewGuid(), objectName = "dress",
+        });
+        Assert.Equal("ok", (string?)hold!["code"]);
+        return hold["holdId"]!.GetValue<long>();
+    }
+
+    [Fact]
+    public async Task Hold_answer_has_no_holding_balance()
+    {
+        await StartAsync();
+
+        var (_, hold, _) = await Post("hold", new
+        {
+            txnId = Guid.NewGuid(), kind = "object", buyer = WhoA(), seller = new { agentId = B, home = "" }, amount = 40, regionId = Here,
+            objectId = Guid.NewGuid(), objectName = "dress",
+        });
+
+        Assert.Equal(60, hold!["balance"]!.GetValue<long>());
+        Assert.False(hold.AsObject().ContainsKey("toBalance"));
+    }
+
+    [Fact]
+    public async Task Complete_answer_shows_only_the_seller()
+    {
+        await StartAsync();
+        var holdId = await HoldFortyAsync();
+
+        var (_, done, _) = await Post("hold/complete", new { txnId = Guid.NewGuid(), holdId });
+
+        Assert.False(done!.AsObject().ContainsKey("balance"));
+        Assert.Equal(140, done["toBalance"]!.GetValue<long>());
+    }
+
+    [Fact]
+    public async Task Return_answer_shows_only_the_buyer()
+    {
+        await StartAsync();
+        var holdId = await HoldFortyAsync();
+
+        var (_, back, _) = await Post("hold/return", new { txnId = Guid.NewGuid(), holdId });
+
+        Assert.False(back!.AsObject().ContainsKey("balance"));
+        Assert.Equal(100, back["toBalance"]!.GetValue<long>());
+    }
+
+    [Fact]
+    public async Task Economy_answer_carries_the_switches()
+    {
+        await StartAsync();
+
+        var (_, body, _) = await Post("economy", null);
+
+        Assert.True(body!["visitorWallets"]!.GetValue<bool>());
+        Assert.True(body["scriptPayouts"]!.GetValue<bool>());
+        Assert.Equal(1_000_000, body["maxPayment"]!.GetValue<long>());
+    }
+
+    [Fact]
+    public async Task Failed_start_is_recorded()
+    {
+        var busy = new TcpListener(IPAddress.Loopback, 0);
+        busy.Start();
+        try
+        {
+            await StartAsync(port: ((IPEndPoint)busy.LocalEndpoint).Port);
+
+            Assert.Equal("IOException", _status.ServiceError);
+        }
+        finally
+        {
+            busy.Stop();
+        }
+    }
+
     [Fact]
     public async Task Unknown_hold_is_unknown_hold()
     {
@@ -406,6 +486,17 @@ public sealed class MoneyServiceTests(MoneyMariaDb maria) : IClassFixture<MoneyM
 
         using var tcp = new TcpClient();
         await Assert.ThrowsAnyAsync<SocketException>(async () => await tcp.ConnectAsync(lan, _port, Ct));
+    }
+
+    [Fact]
+    public async Task Two_stops_at_once_are_safe()
+    {
+        await StartAsync();
+
+        await Task.WhenAll(_host!.StopAsync(Ct), _host.StopAsync(Ct), _host.StopAsync(Ct));
+
+        using var tcp = new TcpClient();
+        await Assert.ThrowsAnyAsync<SocketException>(async () => await tcp.ConnectAsync(IPAddress.Loopback, _port, Ct));
     }
 
     [Fact]

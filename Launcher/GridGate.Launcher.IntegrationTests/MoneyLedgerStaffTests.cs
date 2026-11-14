@@ -21,6 +21,20 @@ public sealed class MoneyLedgerStaffTests(MoneyMariaDb maria) : IClassFixture<Mo
         new(Guid.NewGuid(), EntryType.PayAvatar, AccountRef.Resident(from), AccountRef.Resident(to), amount);
 
     [Fact]
+    public async Task Account_flags_read_frozen_and_payouts()
+    {
+        var (ledger, _, _) = await MoneyLedgerTransferTests.Setup(maria);
+        Assert.Null(await ledger.AccountFlagsAsync(AccountRef.Resident(A), Ct)); // no wallet yet
+        await ledger.BalanceAsync(AccountRef.Resident(A), Ct);
+        Assert.Equal(new AccountFlags(false, false), await ledger.AccountFlagsAsync(AccountRef.Resident(A), Ct));
+
+        await ledger.SetAccountFrozenAsync(AccountRef.Resident(A), true, Ct);
+        await ledger.SetPayoutsAllowedAsync(A, true, Ct);
+
+        Assert.Equal(new AccountFlags(true, true), await ledger.AccountFlagsAsync(AccountRef.Resident(A), Ct));
+    }
+
+    [Fact]
     public async Task Give_and_take_need_a_reason()
     {
         var (ledger, db, _) = await MoneyLedgerTransferTests.Setup(maria);

@@ -16,7 +16,7 @@ public sealed partial class MoneyLedger(
     Func<MoneySettings> settings,
     Func<MoneyMode> effectiveMode,
     Func<Guid, CancellationToken, Task<bool>> isLocalUser,
-    TimeProvider time)
+    TimeProvider time) : IMoneyBooks
 {
     private const int DeadlockRetries = 3;
     private const int ErDuplicateKey = 1062, ErDeadlock = 1213, ErLockWaitTimeout = 1205, ErCheckRead = 1020;

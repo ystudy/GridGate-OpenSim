@@ -18,8 +18,11 @@ namespace GridGate.Launcher.Pages;
 public sealed class IndexModel(IGridController grid, IOnlineUsers online, GridActions actions, LogReader logs, Func<LauncherSettings> settings,
     IEnumerable<IDashboardSwitch> switches, GridGate.Launcher.Email.EmailSender email, SignUpBoard board, TimeProvider time,
     GridGate.Launcher.Dashboard.DashboardSnapshot dashboard, GridGate.Launcher.Resident.OfferedLanguages offeredLanguages,
-    GridGate.Launcher.Resident.LanguageCatalog catalog) : PageModel
+    GridGate.Launcher.Resident.LanguageCatalog catalog, GridGate.Launcher.Money.MoneyNotices moneyNotices) : PageModel
 {
+    /// <summary>Red money notices (money plan 2): the service down, payments frozen, the money database unreachable. Empty while money is off.</summary>
+    public IReadOnlyList<GridGate.Launcher.Money.MoneyNotice> MoneyNotices { get; private set; } = [];
+
     /// <summary>For the owner only: added languages that are on and miss texts (plan 16b, Task 7). Empty for other staff.</summary>
     public IReadOnlyList<GridGate.Launcher.Resident.NewTexts> NewTexts { get; private set; } = [];
 
@@ -86,6 +89,7 @@ public sealed class IndexModel(IGridController grid, IOnlineUsers online, GridAc
     {
         var raw = grid.GetStatus();
         RunsRobust = raw.RunsRobust;
+        MoneyNotices = await moneyNotices.CurrentAsync(HttpContext.RequestAborted);
         if (AdminRule.HasStaffPages(settings()))
         {
             EmailWarnings = email.Status().Warnings;

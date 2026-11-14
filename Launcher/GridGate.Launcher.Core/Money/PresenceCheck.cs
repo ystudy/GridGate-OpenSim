@@ -5,11 +5,17 @@ namespace GridGate.Launcher.Core.Money;
 /// <summary>What Robust's Presence table says about a session.</summary>
 public enum PresenceOutcome { Ok, NoSession, WrongRegion, Unavailable }
 
+/// <summary>The economy helper's check of a viewer's secure session (money design §8.5); a seam so tests can fake it.</summary>
+public interface ISecureSessionCheck
+{
+    Task<PresenceOutcome> HasSecureSessionAsync(Guid agentId, Guid secureSessionId, CancellationToken ct);
+}
+
 /// <summary>
 /// Checks an avatar's session against Robust's <c>Presence</c> table (money design §7.2). Residents and hypergrid visitors
 /// both have a row: Robust's login writes one, and so does the Gatekeeper for a visitor (GatekeeperService.LoginAgent).
 /// </summary>
-public sealed class PresenceCheck(Func<CancellationToken, Task<MySqlConnection>> openRobust)
+public sealed class PresenceCheck(Func<CancellationToken, Task<MySqlConnection>> openRobust) : ISecureSessionCheck
 {
     /// <summary>
     /// Ok when <paramref name="agentId"/> is logged in with both session ids and is now in one of <paramref name="regions"/>.
@@ -32,6 +38,27 @@ public sealed class PresenceCheck(Func<CancellationToken, Task<MySqlConnection>>
                 string text when Guid.TryParse(text, out var region) => regions.Contains(region) ? PresenceOutcome.Ok : PresenceOutcome.WrongRegion,
                 _ => PresenceOutcome.NoSession,
             };
+        }
+        catch (MySqlException)
+        {
+            return PresenceOutcome.Unavailable;
+        }
+    }
+
+    /// <summary>
+    /// Ok when <paramref name="agentId"/> is logged in with <paramref name="secureSessionId"/>, in any region. The economy
+    /// helper's check (money design §8.5): the viewer sends only the secure session id, and the helper has no region.
+    /// </summary>
+    public async Task<PresenceOutcome> HasSecureSessionAsync(Guid agentId, Guid secureSessionId, CancellationToken ct)
+    {
+        if (agentId == Guid.Empty || secureSessionId == Guid.Empty) return PresenceOutcome.NoSession;
+        try
+        {
+            await using var conn = await openRobust(ct);
+            await using var cmd = new MySqlCommand("SELECT 1 FROM Presence WHERE UserID = @u AND SecureSessionID = @ss", conn);
+            cmd.Parameters.AddWithValue("@u", agentId.ToString());
+            cmd.Parameters.AddWithValue("@ss", secureSessionId.ToString());
+            return await cmd.ExecuteScalarAsync(ct) is null ? PresenceOutcome.NoSession : PresenceOutcome.Ok;
         }
         catch (MySqlException)
         {

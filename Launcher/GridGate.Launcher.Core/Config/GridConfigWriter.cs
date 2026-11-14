@@ -2,15 +2,22 @@ using System.Globalization;
 using System.Text.RegularExpressions;
 using GridGate.Launcher.Core.Grid;
 using GridGate.Launcher.Core.Ini;
+using GridGate.Launcher.Core.Money;
 using GridGate.Launcher.Core.Plans;
 using GridGate.Launcher.Core.Security;
 using GridGate.Launcher.Core.Settings;
 
 namespace GridGate.Launcher.Core.Config;
 
-/// <summary>Turns the prototype INIs in the staged runtime into the Robust and region INIs.</summary>
-public sealed class GridConfigWriter(LauncherPaths paths)
+/// <summary>
+/// Turns the prototype INIs in the staged runtime into the Robust and region INIs. <paramref name="effective"/> is the
+/// money gate (<see cref="MoneyRelease.Effective(MoneySettings)"/> unless a test opens it).
+/// </summary>
+public sealed class GridConfigWriter(LauncherPaths paths, Func<MoneySettings, MoneyMode>? effective = null)
 {
+    /// <summary>The region module's name, as OpenSim's <c>[Economy] EconomyModule</c> chooses it.</summary>
+    public const string MoneyModuleName = "GridGateMoneyModule";
+
     private static readonly string[] ThirdParties = ["outworldz.com", "hyperica.com", "gloebit.com"];
 
     // What a preset grid's own OpenSim.ini decides for the regions: these whole sections, and these single keys.
@@ -39,6 +46,10 @@ public sealed class GridConfigWriter(LauncherPaths paths)
         var rt = paths.RuntimeOpenSim;
         var hypergrid = PlanCatalog.HypergridOn(s);
         var extra = s.Overrides.Concat(contributors.SelectMany(c => c.Contribute(s))).ToList();
+        // Money and its helper belong to the grid that runs Robust; a server joined to another grid gets them by pairing
+        // (money plan 3).
+        var moneyHere = PlanCatalog.RunsRobust(s);
+        var money = moneyHere && (effective ?? MoneyRelease.Effective)(s.Money) != MoneyMode.Off ? MoneyFor(s) : null;
 
         // 1. Robust.HG.ini
         var robust = LoadProto(Path.Combine(rt, "Robust.HG.ini.proto"));
@@ -79,6 +90,9 @@ public sealed class GridConfigWriter(LauncherPaths paths)
         robust.Set("GridInfoService", GridInfoKeys.Hypergrid, Bool(hypergrid));
         robust.Set("GridInfoService", GridInfoKeys.RegionPorts, RegionPorts(s));
         robust.Set("GridInfoService", GridInfoKeys.Plan, s.Plan is { } plan ? PlanCatalog.Get(plan).Id : "");
+        // The economy helper, in every mode: with money Off it still tells Firestorm free land costs nothing (money design §8.4).
+        if (moneyHere) robust.Set("GridInfoService", "economy", WebsiteAddress.Economy(s));
+        if (money is not null) robust.Set("LoginService", "Currency", s.Money.CurrencySymbol);
         Finish(robust, "robust", extra, Path.Combine(rt, "Robust.HG.ini"));
 
         // 2. GridCommon.ini. A preset grid's own names each of its services; every other builds them from [Const].
@@ -88,6 +102,8 @@ public sealed class GridConfigWriter(LauncherPaths paths)
         common.Set("DatabaseService", "ConnectionString", $"\"{DbConn(s, "opensim", "opensimuser", s.Db.OpensimPassword)}\"");
         common.Set("GridService", "AllowHypergridMapSearch", Bool(hypergrid));
         if (preset is null) SetOtherGatekeeper(common, s);
+        // A region advertises this as currency-base-uri when no money module sets one (Scene.AllModulesLoaded).
+        if (moneyHere) common.Set("GridInfo", "economy", WebsiteAddress.Economy(s));
         Finish(common, "region", extra, Path.Combine(rt, "config-include", "GridCommon.ini"), applyExtra: false);
 
         // 3. FlotsamCache.ini
@@ -96,7 +112,7 @@ public sealed class GridConfigWriter(LauncherPaths paths)
         Finish(flotsam, "region", extra, Path.Combine(rt, "config-include", "FlotsamCache.ini"), applyExtra: false);
 
         foreach (var program in s.Programs)
-            WriteProgram(s, program, RegionModel.Loadable(s, program.Instance, held ?? NoRegions).ToList(), host, extra, hypergrid);
+            WriteProgram(s, program, RegionModel.Loadable(s, program.Instance, held ?? NoRegions).ToList(), host, extra, hypergrid, money);
 
         // A deleted region whose program went keeps that folder; its region file goes off too.
         foreach (var r in s.Regions.Where(r => r.DeletedAt is not null && RegionModel.ProgramOf(s, r) is null))
@@ -108,11 +124,38 @@ public sealed class GridConfigWriter(LauncherPaths paths)
 
     private static readonly IReadOnlySet<Guid> NoRegions = new HashSet<Guid>();
 
+    /// <summary>What every program's money section shares: the service's address, its fingerprint and the helper's.</summary>
+    private sealed record MoneyIni(string ServiceUri, string Fingerprint, string HelperUri);
+
+    private MoneyIni MoneyFor(LauncherSettings s)
+    {
+        using var cert = MoneyCertificate.LoadOrCreate(Path.Combine(paths.Security, MoneyCertificate.FileName), TimeProvider.System);
+        return new MoneyIni($"https://127.0.0.1:{s.MoneyPort}/money/v1/", MoneyCertificate.Fingerprint(cert), WebsiteAddress.Economy(s));
+    }
+
+    /// <summary>
+    /// The program's money settings (money plan 2, task 2), written last so the economymodule blanking and the owner's
+    /// overrides can't undo them. A program without a key stays on OpenSim's own module.
+    /// </summary>
+    private static Action<IniDocument>? MoneySection(LauncherSettings s, string instance, MoneyIni? money)
+    {
+        if (money is null || !s.Money.Keys.TryGetValue(instance, out var key) || key.Length == 0) return null;
+        return doc =>
+        {
+            doc.Set("Economy", "EconomyModule", MoneyModuleName);
+            doc.Set("GridGateMoney", "ServiceURI", money.ServiceUri);
+            doc.Set("GridGateMoney", "RegionKey", key);
+            doc.Set("GridGateMoney", "ServiceFingerprint", money.Fingerprint);
+            doc.Set("GridGateMoney", "HelperURI", money.HelperUri);
+        };
+    }
+
     /// <summary>
     /// The program's OpenSim.ini and one region file per loadable region. Any other region file in its Region folder
     /// becomes <c>.off</c>, so OpenSim never loads a region the launcher holds back (parked, stopped or deleted).
     /// </summary>
-    private void WriteProgram(LauncherSettings s, ProgramSettings program, List<RegionSettings> regions, string host, List<IniOverride> extra, bool hypergrid)
+    private void WriteProgram(LauncherSettings s, ProgramSettings program, List<RegionSettings> regions, string host, List<IniOverride> extra, bool hypergrid,
+        MoneyIni? money)
     {
         var rt = paths.RuntimeOpenSim;
         var instance = program.Instance;
@@ -164,7 +207,7 @@ public sealed class GridConfigWriter(LauncherPaths paths)
         os.Set("RegionReady", "alert_uri", $"http://127.0.0.1:{s.WebPort}/gridgate/regionready");
         SetSmartStart(os, s);
         os.Set("YEngine", "ScriptEnginesPath", Fwd(paths.ScriptEngines));
-        Finish(os, "region", extra, Path.Combine(paths.RegionDir(instance), "OpenSim.ini"));
+        Finish(os, "region", extra, Path.Combine(paths.RegionDir(instance), "OpenSim.ini"), last: MoneySection(s, instance, money));
 
         // 5. region definition files. Every other region file goes off first, by its exact name: after a rename that
         // only changes letter case ("home" to "Home") the old file must go off on Linux, and on Windows the new file
@@ -325,7 +368,8 @@ public sealed class GridConfigWriter(LauncherPaths paths)
         doc.Set(section, "SpoolDirectory", Fwd(paths.FsAssetsSpool));
     }
 
-    private static void Finish(IniDocument doc, string target, List<IniOverride> extra, string path, bool applyExtra = true)
+    private static void Finish(IniDocument doc, string target, List<IniOverride> extra, string path, bool applyExtra = true,
+        Action<IniDocument>? last = null)
     {
         foreach (var (section, key, value) in doc.ActiveEntries().ToList())
         {
@@ -337,6 +381,7 @@ public sealed class GridConfigWriter(LauncherPaths paths)
         if (applyExtra)
             foreach (var o in extra.Where(o => o.Target.Equals(target, StringComparison.OrdinalIgnoreCase)))
                 doc.Set(o.Section, o.Key, o.Value);
+        last?.Invoke(doc);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         doc.Save(path);
     }

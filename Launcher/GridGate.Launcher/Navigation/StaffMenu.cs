@@ -78,6 +78,7 @@ public static class StaffMenu
             (admin, new("Network", "/advanced/network", "/advanced/network")),
             (admin, new("Database", "/advanced/database", "/advanced/database")),
             (admin, new("Region defaults", "/advanced/regions", "/advanced/regions")),
+            (staffPlans, new("Money", "/money", "/money")),
             (admin, new("Logs", "/logs", "/logs")))));
 
         groups.Add(new(You, "/profile/sessions", Items(

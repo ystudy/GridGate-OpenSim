@@ -772,7 +772,11 @@ namespace OpenSim.Region.CoreModules.Avatar.UserProfiles
                 money = s.RequestModuleInterface<IMoneyModule>();
                 if (money is not null)
                 {
-                    if (!money.AmountCovered(remoteClient.AgentId, queryclassifiedPrice))
+                    // GridGate: a module with its own fee is asked about that fee, never the price the viewer typed.
+                    bool covered = money is IClassifiedFeeModule fees
+                        ? fees.ClassifiedFeeCovered(remoteClient.AgentId)
+                        : money.AmountCovered(remoteClient.AgentId, queryclassifiedPrice);
+                    if (!covered)
                     {
                         remoteClient.SendAgentAlertMessage("You do not have enough money to create this classified.", false);
                         if(uce is not null && uce.classifiedsLists is not null)
@@ -809,7 +813,8 @@ namespace OpenSim.Region.CoreModules.Avatar.UserProfiles
             }
 
             // only charge if it worked
-            money?.ApplyCharge(remoteClient.AgentId, queryclassifiedPrice, MoneyTransactionType.ClassifiedCharge);
+            money?.ApplyCharge(remoteClient.AgentId, money is IClassifiedFeeModule fee ? fee.ClassifiedFee : queryclassifiedPrice,
+                MoneyTransactionType.ClassifiedCharge);
 
             // just flush cache for now
             lock(m_profilesCache)

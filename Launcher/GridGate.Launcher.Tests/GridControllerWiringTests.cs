@@ -53,12 +53,13 @@ public sealed class GridControllerWiringTests : IAsyncDisposable
     private const string MissingMariaDb = "no-such-dir";
 
     /// <param name="launchStandIns">A program the controller starts is a stand-in serving like a leftover one, instead of OpenSim.</param>
-    private GridController NewGrid(TimeProvider time, Action<int, IReadOnlyList<int>, CpuPriority>? cpu = null, bool launchStandIns = false, PlatformSupport? platform = null)
+    private GridController NewGrid(TimeProvider time, Action<int, IReadOnlyList<int>, CpuPriority>? cpu = null, bool launchStandIns = false, PlatformSupport? platform = null,
+        Func<Core.Money.MoneySettings, Core.Money.MoneyMode>? moneyEffective = null)
     {
         // A MariaDB that cannot start: anything past the port check fails with a non-port error.
         var missing = Path.Combine(_root, MissingMariaDb, "mariadbd");
         var grid = new GridController(_paths, _store, new MariaDbBinaries(missing, missing, null),
-            [new LogLevelModule()], _robust, new FakeGridJoin(), new FakeOtherGrid(), _http, time, regionStores: _ => _regionStore, cpu: cpu ?? ((_, _, _) => { }), platform: platform)
+            [new LogLevelModule()], _robust, new FakeGridJoin(), new FakeOtherGrid(), _http, time, regionStores: _ => _regionStore, cpu: cpu ?? ((_, _, _) => { }), platform: platform, moneyEffective: moneyEffective)
         {
             DatabaseRunningForTests = () => _databaseUp,
             ProgramStartForTests = launchStandIns ? _ => StandIn() : null,
@@ -457,6 +458,38 @@ public sealed class GridControllerWiringTests : IAsyncDisposable
         var e = await Assert.ThrowsAsync<MariaDbNotFoundException>(() => grid.StartAsync(TestContext.Current.CancellationToken));
 
         Assert.Contains("MariaDB server not found; searched: /nowhere/mariadbd", e.Message);
+    }
+
+    [Fact]
+    public void Write_config_gives_new_programs_keys_and_saves_them()
+    {
+        var grid = NewGrid(TimeProvider.System, moneyEffective: Core.Money.MoneyGate.Open);
+        _store.Save(_store.LoadOrCreate() with
+        {
+            Programs = [new ProgramSettings("p1", _ports[3] + 100, _ports[6] + 100)],
+            Money = new Core.Money.MoneySettings(Mode: Core.Money.MoneyMode.Play),
+        });
+
+        grid.RegenerateConfig();
+
+        var key = Assert.Single(_store.LoadOrCreate().Money.Keys);
+        Assert.Equal("p1", key.Key);
+        Assert.Equal(key.Value, grid.CurrentSettings().Money.Keys["p1"]);
+        Assert.Equal(key.Value, Core.Ini.IniDocument.Load(Path.Combine(_paths.RegionDir("p1"), "OpenSim.ini")).Get("GridGateMoney", "RegionKey"));
+    }
+
+    [Fact]
+    public void Write_config_makes_no_keys_while_money_is_off()
+    {
+        _store.Save(_store.LoadOrCreate() with
+        {
+            Programs = [new ProgramSettings("p1", _ports[3] + 100, _ports[6] + 100)],
+            Money = new Core.Money.MoneySettings(Mode: Core.Money.MoneyMode.Play), // chosen, but the gate is closed
+        });
+
+        _grid.RegenerateConfig();
+
+        Assert.Empty(_store.LoadOrCreate().Money.Keys);
     }
 
     [Fact]

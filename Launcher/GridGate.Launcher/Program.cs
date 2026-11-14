@@ -8,6 +8,7 @@ using GridGate.Launcher.Core.Grid;
 using GridGate.Launcher.Core.Groups;
 using GridGate.Launcher.Core.Guests;
 using GridGate.Launcher.Core.Logs;
+using GridGate.Launcher.Economy;
 using GridGate.Launcher.Endpoints;
 using GridGate.Launcher.Core.ModelImport;
 using GridGate.Launcher.Core.Modules;
@@ -184,7 +185,7 @@ builder.Services.AddRazorPages(o =>
     // /Profile and the People page are for every staff member, and the Security and Staff pages are the owner's. (Two folder
     // policies on one page would both have to pass, so those folders are left out of the admin one rather than given a second.)
     // The Staff and People pages do not exist (404) where there are no supervisors, nor do the Guest pages (the guest side).
-    string[] ownFolders = ["/Profile/", "/Security/", "/Staff/", "/People/", "/Guest/", "/Hypergrid/"];
+    string[] ownFolders = ["/Profile/", "/Security/", "/Staff/", "/People/", "/Guest/", "/Hypergrid/", "/Money/"];
     o.Conventions.AddFolderApplicationModelConvention("/", m =>
     {
         if (!ownFolders.Any(f => m.ViewEnginePath.StartsWith(f, StringComparison.OrdinalIgnoreCase)))
@@ -199,6 +200,9 @@ builder.Services.AddRazorPages(o =>
     o.Conventions.AuthorizeFolder("/People", AuthSchemes.StaffPolicy);
     o.Conventions.AddFolderApplicationModelConvention("/Staff", m => m.Filters.Add(new StaffPagesOnly()));
     o.Conventions.AddFolderApplicationModelConvention("/People", m => m.Filters.Add(new StaffPagesOnly()));
+    // The Money pages (money plan 2): every staff member may look, the handlers let only admins change anything.
+    o.Conventions.AuthorizeFolder("/Money", AuthSchemes.StaffPolicy);
+    o.Conventions.AddFolderApplicationModelConvention("/Money", m => m.Filters.Add(new StaffPagesOnly()));
     o.Conventions.AuthorizeFolder("/Guest", AuthSchemes.GuestPolicy);
     o.Conventions.AddFolderApplicationModelConvention("/Guest", m => m.Filters.Add(new GuestSideOnly()));
     // A guest accepts the current Terms before any other guest page (the Terms page, sign-out and sign-in excepted, see TermsGate).
@@ -206,7 +210,8 @@ builder.Services.AddRazorPages(o =>
     // The public front page ("/" shows it to anyone not signed in as staff, see SetupGate); like the guest pages it is not there
     // on a Region Server or a Connected Server.
     // The operator's legal pages and the sign-up page are public in the same way.
-    foreach (var publicPage in new[] { "/Home", "/Legal", "/SignUp" })
+    // The coins page too (money plan 2): where the viewer's Buy currency window sends residents.
+    foreach (var publicPage in new[] { "/Home", "/Legal", "/SignUp", "/Coins" })
         o.Conventions.AddPageApplicationModelConvention(publicPage, m => m.Filters.Add(new GuestSideOnly()));
     // The owner's legal editor: the Security folder's owner policy, and not there where there is no guest side.
     o.Conventions.AddPageApplicationModelConvention("/Security/Legal", m => m.Filters.Add(new GuestSideOnly()));
@@ -230,7 +235,7 @@ builder.Services.AddRazorPages(o =>
     // The same for the Email pages: email is for the guest side's sign-up and password reset.
     foreach (var emailPage in new[] { "/Security/Email", "/Security/EmailWording", "/Security/Wording", "/Security/Languages", "/Security/Translate" })
         o.Conventions.AddPageApplicationModelConvention(emailPage, m => m.Filters.Add(new GuestSideOnly()));
-    foreach (var open in new[] { "/Login", "/Login/Code", "/Logout", "/Welcome", "/Waiting", "/SetupDone", "/Setup", "/Home", "/Legal", "/SignUp", "/Guest/SignIn", "/Guest/SignInCode", "/Guest/ForgotPassword", "/Guest/ResetPassword", "/Guest/Confirm", "/Guest/ConfirmEmail", "/Guest/Connect", "/Language" })
+    foreach (var open in new[] { "/Login", "/Login/Code", "/Logout", "/Welcome", "/Waiting", "/SetupDone", "/Setup", "/Home", "/Legal", "/SignUp", "/Guest/SignIn", "/Guest/SignInCode", "/Guest/ForgotPassword", "/Guest/ResetPassword", "/Guest/Confirm", "/Guest/ConfirmEmail", "/Guest/Connect", "/Language", "/Coins" })
         o.Conventions.AllowAnonymousToPage(open);
     o.Conventions.AllowAnonymousToFolder("/Setup");
     // Support tickets for guests: open to anyone (each page checks the ticket's link or cookie), only where there is a guest side.
@@ -244,7 +249,7 @@ builder.Services.AddRazorPages(o =>
     o.Conventions.AddPageApplicationModelConvention("/Language", m => m.Filters.Add(new GuestSideOnly()));
     foreach (var folder in new[] { "/Guest", "/Support" })
         o.Conventions.AddFolderApplicationModelConvention(folder, m => m.Filters.Add(new ResidentLanguageFilter(welcome: false)));
-    foreach (var page in new[] { "/Home", "/Legal", "/SignUp" })
+    foreach (var page in new[] { "/Home", "/Legal", "/SignUp", "/Coins" })
         o.Conventions.AddPageApplicationModelConvention(page, m => m.Filters.Add(new ResidentLanguageFilter(welcome: false)));
     // The dashboard's forms post here: a POST to "/" belongs to the port-8001 contract (LegacyRootPolicy).
     o.Conventions.AddPageRoute("/Index", "dashboard");
@@ -413,30 +418,33 @@ builder.Services.AddSingleton<Func<long?>>(_ => SystemMemory.AvailableBytes);
 builder.Services.AddSingleton<Func<CpuPriority, string?>>(_ => RegionSettingsRules.PriorityUnavailable);
 // Money (money design §7.2). The service, its certificate and its database only come to life once money is approved
 // (MoneyRelease) and turned on; registered before GridHostedService so it is listening before regions start.
+builder.Services.AddSingleton(sp => new MoneyGate(sp.GetRequiredService<Func<LauncherSettings>>()));
+builder.Services.AddSingleton<MoneyStatus>();
+builder.Services.AddSingleton<ISecureSessionCheck>(sp => sp.GetRequiredService<PresenceCheck>());
+builder.Services.AddSingleton(sp => new EconomyLimits(sp.GetRequiredService<TimeProvider>()));
+builder.Services.AddSingleton<EconomyHelper>();
 builder.Services.AddSingleton(sp => new PresenceCheck(MoneyConnections.Robust(sp.GetRequiredService<Func<LauncherSettings>>())));
 builder.Services.AddSingleton(sp =>
 {
     var current = sp.GetRequiredService<Func<LauncherSettings>>();
-    return new MoneyLedger(MoneyConnections.Money(current), () => current().Money, () => MoneyRelease.Effective(current().Money),
+    return new MoneyLedger(MoneyConnections.Money(current), () => current().Money, sp.GetRequiredService<MoneyGate>().Effective,
         sp.GetRequiredService<PresenceCheck>().IsLocalUserAsync, sp.GetRequiredService<TimeProvider>());
 });
+builder.Services.AddSingleton<IMoneyBooks>(sp => sp.GetRequiredService<MoneyLedger>());
+builder.Services.AddSingleton<MoneyNotices>();
 builder.Services.AddSingleton(sp => new MoneyAuthFailures(sp.GetRequiredService<TimeProvider>(), sp.GetRequiredService<ILogger<MoneyAuthFailures>>()));
 builder.Services.AddSingleton(sp =>
 {
     var current = sp.GetRequiredService<Func<LauncherSettings>>();
     var time = sp.GetRequiredService<TimeProvider>();
     return new MoneyServiceHost(sp.GetRequiredService<MoneyLedger>(), sp.GetRequiredService<PresenceCheck>(), current,
-        () => MoneyRelease.Effective(current().Money),
+        sp.GetRequiredService<MoneyGate>().Effective,
         () => MoneyCertificate.LoadOrCreate(Path.Combine(paths.Security, MoneyCertificate.FileName), time),
-        sp.GetRequiredService<MoneyAuthFailures>(), sp.GetRequiredService<ILoggerFactory>());
+        sp.GetRequiredService<MoneyAuthFailures>(), sp.GetRequiredService<ILoggerFactory>(), sp.GetRequiredService<MoneyStatus>());
 });
 builder.Services.AddHostedService(sp => sp.GetRequiredService<MoneyServiceHost>());
-builder.Services.AddHostedService(sp =>
-{
-    var current = sp.GetRequiredService<Func<LauncherSettings>>();
-    return new MoneyMaintenance(sp.GetRequiredService<MoneyLedger>(), () => MoneyRelease.Effective(current().Money),
-        sp.GetRequiredService<TimeProvider>(), sp.GetRequiredService<ILogger<MoneyMaintenance>>());
-});
+builder.Services.AddHostedService(sp => new MoneyMaintenance(sp.GetRequiredService<MoneyLedger>(), sp.GetRequiredService<MoneyGate>().Effective,
+    sp.GetRequiredService<TimeProvider>(), sp.GetRequiredService<ILogger<MoneyMaintenance>>(), sp.GetRequiredService<MoneyStatus>()));
 builder.Services.AddHostedService<GridHostedService>();
 // Moves regions into their owner's estate and back while they run; registered after GridHostedService, so it stops first.
 builder.Services.AddHostedService<RegionEstateSync>();
@@ -500,6 +508,7 @@ StatusApi.Map(app);
 DashboardApi.Map(app);
 SetupApi.Map(app);
 SplashApi.Map(app);
+EconomyApi.Map(app);
 app.MapRazorPages();
 
 app.Lifetime.ApplicationStarted.Register(() =>

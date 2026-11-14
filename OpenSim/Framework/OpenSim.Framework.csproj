@@ -295,6 +295,12 @@
     <Compile Include="IMoneyModule.cs">
       <SubType>Code</SubType>
     </Compile>
+    <Compile Include="IClassifiedFeeModule.cs">
+      <SubType>Code</SubType>
+    </Compile>
+    <Compile Include="IVisitorMoneyModule.cs">
+      <SubType>Code</SubType>
+    </Compile>
     <Compile Include="InventoryCollection.cs">
       <SubType>Code</SubType>
     </Compile>

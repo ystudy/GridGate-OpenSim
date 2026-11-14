@@ -3223,12 +3223,30 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
 
         public LSL_Integer llGiveMoney(LSL_Key destination, LSL_Integer amount)
         {
+            // GridGate: nothing to give, and no way to take by giving less than nothing.
+            if (amount <= 0)
+                return 0;
+
             if (m_item.PermsGranter.IsZero())
                 return 0;
+
+            // GridGate: a group holds no coins, so a group-owned object has nothing to give (as in llTransferLindenDollars).
+            if (m_host.OwnerID.Equals(m_host.GroupID))
+            {
+                Error("llGiveMoney", "Group-owned objects can't give money");
+                return 0;
+            }
 
             if ((m_item.PermsMask & ScriptBaseClass.PERMISSION_DEBIT) == 0)
             {
                 Error("llGiveMoney", "No permissions to give money");
+                return 0;
+            }
+
+            // GridGate: only the object's owner can let it spend the owner's money.
+            if (m_item.PermsGranter.NotEqual(m_host.OwnerID))
+            {
+                Error("llGiveMoney", "PERMISSION_DEBIT was not granted by the object's owner");
                 return 0;
             }
 
@@ -4520,7 +4538,8 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
                 }
                 if (World.GetExtraSetting("auto_grant_all_perms") == "true")
                 {
-                    implicitPerms = perm;
+                    // GridGate: spending the owner's money always needs the owner's own yes.
+                    implicitPerms = perm & ~ScriptBaseClass.PERMISSION_DEBIT;
                 }
             }
 
@@ -17595,6 +17614,13 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
                     break;
                 }
 
+                // GridGate: only the object's owner can let it spend the owner's money.
+                if (m_item.PermsGranter.NotEqual(m_host.OwnerID))
+                {
+                    replydata = "MISSING_PERMISSION_DEBIT";
+                    break;
+                }
+
                 if (!UUID.TryParse(destination, out toID))
                 {
                     replydata = "INVALID_AGENT";
@@ -17621,7 +17647,8 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
                 try
                 {
                     UserAccount account = m_userAccountService.GetUserAccount(RegionScopeID, toID);
-                    if (account is null)
+                    // GridGate: a hypergrid visitor has no account here, but the money module may still pay them.
+                    if (account is null && !(money is IVisitorMoneyModule visitors && visitors.CanPayVisitor(toID)))
                     {
                         replydata = "LINDENDOLLAR_ENTITYDOESNOTEXIST";
                         return;

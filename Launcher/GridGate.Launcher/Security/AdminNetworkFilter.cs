@@ -31,7 +31,7 @@ public sealed class AdminNetworkFilter(RequestDelegate next, Func<LauncherSettin
     }
 
     private static readonly string[] PublicPaths =
-        ["/home", "/guest", "/terms", "/privacy", "/cookies", "/contact", "/signup", "/api/bots", "/welcome", "/theme", "/support", "/language"];
+        ["/home", "/guest", "/terms", "/privacy", "/cookies", "/contact", "/signup", "/api/bots", "/welcome", "/theme", "/support", "/language", "/economy", "/coins"];
 
     public Task InvokeAsync(HttpContext ctx)
     {
