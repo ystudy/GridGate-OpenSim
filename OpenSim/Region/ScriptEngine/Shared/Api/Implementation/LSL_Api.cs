@@ -3230,6 +3230,13 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
             if (m_item.PermsGranter.IsZero())
                 return 0;
 
+            // GridGate: a group holds no coins, so a group-owned object has nothing to give (as in llTransferLindenDollars).
+            if (m_host.OwnerID.Equals(m_host.GroupID))
+            {
+                Error("llGiveMoney", "Group-owned objects can't give money");
+                return 0;
+            }
+
             if ((m_item.PermsMask & ScriptBaseClass.PERMISSION_DEBIT) == 0)
             {
                 Error("llGiveMoney", "No permissions to give money");
