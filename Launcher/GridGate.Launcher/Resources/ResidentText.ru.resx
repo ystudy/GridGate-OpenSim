@@ -583,4 +583,42 @@
   <data name="Coins.Earn" xml:space="preserve"><value>Другие жители могут платить вам, например за вещи, которые вы делаете и продаёте.</value></data>
   <data name="Coins.Off" xml:space="preserve"><value>В этом гриде нет денег.</value></data>
   <data name="Coins.AskStaff" xml:space="preserve"><value>Спросите администрацию грида, как получить здесь монеты.</value></data>
+  <data name="MyCoins.Title" xml:space="preserve"><value>Мои монеты</value></data>
+  <data name="MyCoins.Balance" xml:space="preserve"><value>Ваш баланс: {0}</value></data>
+  <data name="MyCoins.Saved" xml:space="preserve"><value>Сохранено.</value></data>
+  <data name="MyCoins.Unavailable" xml:space="preserve"><value>Сейчас ваши монеты не удаётся показать. Попробуйте позже.</value></data>
+  <data name="MyCoins.PayoutsHeading" xml:space="preserve"><value>Скрипты, которые платят</value></data>
+  <data name="MyCoins.PayoutsExplain" xml:space="preserve"><value>Когда это включено, ваши собственные скрипты могут платить монеты с вашего баланса, не больше {0} в день. Скрипту также нужно ваше разрешение во вьюере.</value></data>
+  <data name="MyCoins.PayoutsAreOn" xml:space="preserve"><value>Ваши скрипты могут платить.</value></data>
+  <data name="MyCoins.PayoutsAreOff" xml:space="preserve"><value>Ваши скрипты не могут платить.</value></data>
+  <data name="MyCoins.PayoutsTurnOn" xml:space="preserve"><value>Разрешить моим скриптам платить</value></data>
+  <data name="MyCoins.PayoutsTurnOff" xml:space="preserve"><value>Запретить моим скриптам платить</value></data>
+  <data name="MyCoins.PayoutsOffGrid" xml:space="preserve"><value>В этом гриде скрипты не могут платить.</value></data>
+  <data name="MyCoins.History" xml:space="preserve"><value>История</value></data>
+  <data name="MyCoins.NoHistory" xml:space="preserve"><value>Пока ничего.</value></data>
+  <data name="MyCoins.When" xml:space="preserve"><value>Когда</value></data>
+  <data name="MyCoins.What" xml:space="preserve"><value>Что</value></data>
+  <data name="MyCoins.Who" xml:space="preserve"><value>Кто</value></data>
+  <data name="MyCoins.Amount" xml:space="preserve"><value>Сумма ({0})</value></data>
+  <data name="MyCoins.Visitor" xml:space="preserve"><value>Гость из {0}</value></data>
+  <data name="MyCoins.Type.starting_balance" xml:space="preserve"><value>Начальный баланс</value></data>
+  <data name="MyCoins.Type.allowance" xml:space="preserve"><value>Еженедельное пособие</value></data>
+  <data name="MyCoins.Type.staff_gift" xml:space="preserve"><value>От администрации грида</value></data>
+  <data name="MyCoins.Type.staff_take" xml:space="preserve"><value>Списано администрацией грида</value></data>
+  <data name="MyCoins.Type.bought_coins" xml:space="preserve"><value>Купленные монеты</value></data>
+  <data name="MyCoins.Type.pay_avatar" xml:space="preserve"><value>Платёж человеку или от человека</value></data>
+  <data name="MyCoins.Type.pay_object" xml:space="preserve"><value>Платёж объекту</value></data>
+  <data name="MyCoins.Type.object_sale" xml:space="preserve"><value>Продажа объекта</value></data>
+  <data name="MyCoins.Type.land_sale" xml:space="preserve"><value>Продажа земли</value></data>
+  <data name="MyCoins.Type.parcel_pass" xml:space="preserve"><value>Пропуск на участок</value></data>
+  <data name="MyCoins.Type.script_payout" xml:space="preserve"><value>Оплачено скриптом</value></data>
+  <data name="MyCoins.Type.upload_fee" xml:space="preserve"><value>Плата за загрузку</value></data>
+  <data name="MyCoins.Type.group_join_fee" xml:space="preserve"><value>Плата за вступление в группу</value></data>
+  <data name="MyCoins.Type.classified_fee" xml:space="preserve"><value>Плата за объявление</value></data>
+  <data name="MyCoins.Type.hold" xml:space="preserve"><value>Покупка, ждёт доставки</value></data>
+  <data name="MyCoins.Type.hold_completed" xml:space="preserve"><value>Покупка завершена</value></data>
+  <data name="MyCoins.Type.hold_returned" xml:space="preserve"><value>Покупка возвращена</value></data>
+  <data name="MyCoins.Type.refund" xml:space="preserve"><value>Возврат</value></data>
+  <data name="MyCoins.Type.wallet_merge" xml:space="preserve"><value>Кошельки объединены</value></data>
+  <data name="MyCoins.Type.fee_moved" xml:space="preserve"><value>Из сборов грида</value></data>
 </root>

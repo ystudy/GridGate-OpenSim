@@ -583,4 +583,42 @@
   <data name="Coins.Earn" xml:space="preserve"><value>D’autres résidents peuvent vous payer, par exemple pour ce que vous fabriquez et vendez.</value></data>
   <data name="Coins.Off" xml:space="preserve"><value>Cette grille n’utilise pas d’argent.</value></data>
   <data name="Coins.AskStaff" xml:space="preserve"><value>Demandez à l’équipe de la grille comment obtenir des pièces ici.</value></data>
+  <data name="MyCoins.Title" xml:space="preserve"><value>Mes pièces</value></data>
+  <data name="MyCoins.Balance" xml:space="preserve"><value>Votre solde : {0}</value></data>
+  <data name="MyCoins.Saved" xml:space="preserve"><value>Enregistré.</value></data>
+  <data name="MyCoins.Unavailable" xml:space="preserve"><value>Vos pièces ne peuvent pas être affichées pour le moment. Réessayez plus tard.</value></data>
+  <data name="MyCoins.PayoutsHeading" xml:space="preserve"><value>Scripts qui paient</value></data>
+  <data name="MyCoins.PayoutsExplain" xml:space="preserve"><value>Quand cette option est activée, vos propres scripts peuvent payer des pièces depuis votre solde, jusqu’à {0} par jour. Un script a aussi besoin de votre permission dans le viewer.</value></data>
+  <data name="MyCoins.PayoutsAreOn" xml:space="preserve"><value>Vos scripts peuvent payer.</value></data>
+  <data name="MyCoins.PayoutsAreOff" xml:space="preserve"><value>Vos scripts ne peuvent pas payer.</value></data>
+  <data name="MyCoins.PayoutsTurnOn" xml:space="preserve"><value>Autoriser mes scripts à payer</value></data>
+  <data name="MyCoins.PayoutsTurnOff" xml:space="preserve"><value>Empêcher mes scripts de payer</value></data>
+  <data name="MyCoins.PayoutsOffGrid" xml:space="preserve"><value>Sur cette grille, les scripts ne peuvent pas payer.</value></data>
+  <data name="MyCoins.History" xml:space="preserve"><value>Historique</value></data>
+  <data name="MyCoins.NoHistory" xml:space="preserve"><value>Rien pour l’instant.</value></data>
+  <data name="MyCoins.When" xml:space="preserve"><value>Quand</value></data>
+  <data name="MyCoins.What" xml:space="preserve"><value>Quoi</value></data>
+  <data name="MyCoins.Who" xml:space="preserve"><value>Qui</value></data>
+  <data name="MyCoins.Amount" xml:space="preserve"><value>Montant ({0})</value></data>
+  <data name="MyCoins.Visitor" xml:space="preserve"><value>Visiteur de {0}</value></data>
+  <data name="MyCoins.Type.starting_balance" xml:space="preserve"><value>Solde de départ</value></data>
+  <data name="MyCoins.Type.allowance" xml:space="preserve"><value>Allocation hebdomadaire</value></data>
+  <data name="MyCoins.Type.staff_gift" xml:space="preserve"><value>De l’équipe de la grille</value></data>
+  <data name="MyCoins.Type.staff_take" xml:space="preserve"><value>Retiré par l’équipe de la grille</value></data>
+  <data name="MyCoins.Type.bought_coins" xml:space="preserve"><value>Pièces achetées</value></data>
+  <data name="MyCoins.Type.pay_avatar" xml:space="preserve"><value>Paiement vers ou depuis une personne</value></data>
+  <data name="MyCoins.Type.pay_object" xml:space="preserve"><value>Paiement à un objet</value></data>
+  <data name="MyCoins.Type.object_sale" xml:space="preserve"><value>Vente d’objet</value></data>
+  <data name="MyCoins.Type.land_sale" xml:space="preserve"><value>Vente de terrain</value></data>
+  <data name="MyCoins.Type.parcel_pass" xml:space="preserve"><value>Passe de parcelle</value></data>
+  <data name="MyCoins.Type.script_payout" xml:space="preserve"><value>Payé par un script</value></data>
+  <data name="MyCoins.Type.upload_fee" xml:space="preserve"><value>Frais d’envoi</value></data>
+  <data name="MyCoins.Type.group_join_fee" xml:space="preserve"><value>Frais d’adhésion à un groupe</value></data>
+  <data name="MyCoins.Type.classified_fee" xml:space="preserve"><value>Frais de petite annonce</value></data>
+  <data name="MyCoins.Type.hold" xml:space="preserve"><value>Achat, en attente de livraison</value></data>
+  <data name="MyCoins.Type.hold_completed" xml:space="preserve"><value>Achat terminé</value></data>
+  <data name="MyCoins.Type.hold_returned" xml:space="preserve"><value>Achat remboursé</value></data>
+  <data name="MyCoins.Type.refund" xml:space="preserve"><value>Remboursement</value></data>
+  <data name="MyCoins.Type.wallet_merge" xml:space="preserve"><value>Portefeuilles réunis</value></data>
+  <data name="MyCoins.Type.fee_moved" xml:space="preserve"><value>Depuis les frais de la grille</value></data>
 </root>
