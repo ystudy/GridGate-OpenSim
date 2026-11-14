@@ -23,7 +23,7 @@ namespace GridGate.Region.Money;
 /// only while money is on.
 /// </summary>
 [Extension(Path = "/OpenSim/RegionModules", NodeName = "RegionModule", Id = "GridGateMoneyModule")]
-public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVisitorMoneyModule
+public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVisitorMoneyModule, IClassifiedFeeModule
 {
     public const string ModuleName = "GridGateMoneyModule";
     private static readonly ILog Log = LogManager.GetLogger(MethodBase.GetCurrentMethod()!.DeclaringType);
@@ -312,6 +312,13 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
 
     public bool AmountCovered(UUID agentID, int amount) =>
         FindClient(agentID) is { } c && ActionsFor(c) is { } actions && actions.Covered(PayerOf(c), amount);
+
+    // ---- IClassifiedFeeModule: the grid's fee, never the listing price the viewer typed -----------------------
+
+    public int ClassifiedFee => (int)Math.Clamp(Economy().ClassifiedFee, 0, int.MaxValue);
+
+    public bool ClassifiedFeeCovered(UUID agentID) =>
+        FindClient(agentID) is { } c && ActionsFor(c) is { } actions && actions.ClassifiedCovered(PayerOf(c));
 
     public void ApplyUploadCharge(UUID agentID, int amount, string text) => Charge(agentID, "upload_fee", amount, null);
 

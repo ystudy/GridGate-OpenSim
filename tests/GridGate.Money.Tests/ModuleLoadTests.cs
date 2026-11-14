@@ -46,6 +46,19 @@ public sealed class ModuleLoadTests
         module.Close();
     }
 
+    [Fact]
+    public void Profiles_ask_this_module_for_the_classified_fee()
+    {
+        var module = new GridGateMoneyModule();
+        module.Initialise(Config());
+
+        var fees = Assert.IsAssignableFrom<OpenSim.Framework.IClassifiedFeeModule>(module);
+
+        Assert.Equal(0, fees.ClassifiedFee); // no economy answer yet
+        Assert.False(fees.ClassifiedFeeCovered(OpenMetaverse.UUID.Random())); // not in any region here
+        module.Close();
+    }
+
     [Theory]
     [InlineData("ServiceURI")]
     [InlineData("RegionKey")]

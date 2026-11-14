@@ -146,6 +146,24 @@ public sealed class MoneyActionsReviewTests
         Assert.Empty(_service.Calls);
     }
 
+    [Theory]
+    [InlineData(2, false)]
+    [InlineData(3, true)]
+    public void Classified_check_uses_the_grids_fee(long balance, bool covered)
+    {
+        // Review of c11e7626: OpenSim checked the price the viewer typed, so a typed 0 listed for nothing.
+        _service.Queue("balance", new MoneyAnswer("ok", balance));
+
+        Assert.Equal(covered, ActionsWithFee(3).ClassifiedCovered(A));
+    }
+
+    [Fact]
+    public void Free_classifieds_need_no_coins()
+    {
+        Assert.True(ActionsWithFee(0).ClassifiedCovered(A));
+        Assert.Empty(_service.Calls);
+    }
+
     private MoneyActions ActionsWithFee(long fee) =>
         new(_service, Region, () => new EconomyInfo("C$", 0, fee, true, true, 1_000_000), _view);
 }

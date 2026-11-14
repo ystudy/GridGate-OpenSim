@@ -285,8 +285,14 @@ internal sealed class MoneyActions(IMoneyService service, Guid regionId, Func<Ec
     public void ChargeClassified(Payer p, int viewerPrice)
     {
         _ = viewerPrice;
-        Charge(p, "classified_fee", (int)Math.Clamp(economy().ClassifiedFee, 0, int.MaxValue), null);
+        Charge(p, "classified_fee", ClassifiedFee(), null);
     }
+
+    /// <summary>The grid's classified fee, never negative.</summary>
+    public int ClassifiedFee() => (int)Math.Clamp(economy().ClassifiedFee, 0, int.MaxValue);
+
+    /// <summary>Whether <paramref name="p"/> can pay the grid's classified fee: the check before the ad is saved.</summary>
+    public bool ClassifiedCovered(Payer p) => Covered(p, ClassifiedFee());
 
     /// <summary>
     /// The balance shown on arrival. Robust may not have moved the avatar's Presence here yet, so a wrong_region is
