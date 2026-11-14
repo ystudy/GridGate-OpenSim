@@ -17647,7 +17647,8 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
                 try
                 {
                     UserAccount account = m_userAccountService.GetUserAccount(RegionScopeID, toID);
-                    if (account is null)
+                    // GridGate: a hypergrid visitor has no account here, but the money module may still pay them.
+                    if (account is null && !(money is IVisitorMoneyModule visitors && visitors.CanPayVisitor(toID)))
                     {
                         replydata = "LINDENDOLLAR_ENTITYDOESNOTEXIST";
                         return;
