@@ -90,6 +90,22 @@ internal sealed class FakeBooks : IMoneyBooks
     }
 }
 
+/// <summary>Robust's record of hypergrid visitors, faked for the money pages: answers from <see cref="Known"/>.</summary>
+internal sealed class FakeVisitors : IVisitorDirectory
+{
+    public List<VisitorInfo> Known { get; } = [];
+    public List<string> Calls { get; } = [];
+
+    public Task<IReadOnlyList<VisitorInfo>> SearchAsync(string text, int max, CancellationToken ct)
+    {
+        Calls.Add($"search {text} {max}");
+        return Task.FromResult<IReadOnlyList<VisitorInfo>>(Known.Where(v => v.Name.Contains(text, StringComparison.OrdinalIgnoreCase)).Take(max).ToList());
+    }
+
+    public Task<VisitorInfo?> FindAsync(Guid id, string home, CancellationToken ct) =>
+        Task.FromResult(Known.FirstOrDefault(v => v.Id == id && MoneyHomes.Normal(v.Home) == MoneyHomes.Normal(home)));
+}
+
 /// <summary>The Money staff page, the person page and the dashboard's money notices (money plan 2, task 9).</summary>
 public sealed class MoneyPageTests
 {
@@ -97,7 +113,10 @@ public sealed class MoneyPageTests
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
     private static readonly HtmlParser Parser = new();
 
-    private static LauncherFactory Make(FakeBooks books, bool open = true, Func<MoneySettings, MoneySettings>? money = null)
+    private static readonly Guid Hope = Guid.Parse("c0000000-0000-0000-0000-0000000000c1");
+    private const string HopeHome = "http://grid.example:8002/";
+
+    private static LauncherFactory Make(FakeBooks books, bool open = true, Func<MoneySettings, MoneySettings>? money = null, FakeVisitors? visitors = null)
     {
         var f = new LauncherFactory(s => s with
         {
@@ -113,6 +132,8 @@ public sealed class MoneyPageTests
             {
                 services.RemoveAll<IMoneyBooks>();
                 services.AddSingleton<IMoneyBooks>(books);
+                services.RemoveAll<IVisitorDirectory>();
+                services.AddSingleton<IVisitorDirectory>(visitors ?? new FakeVisitors());
                 if (open)
                 {
                     services.RemoveAll<MoneyGate>();
@@ -414,7 +435,138 @@ public sealed class MoneyPageTests
         using var r = await PostAsync(await SignedInAsync(f), $"/money/person?id={Ann}", "Give", new() { ["Amount"] = "25", ["Reason"] = "gift" });
 
         Assert.NotNull((await ParseAsync(r)).QuerySelector(".alert-danger"));
-        Assert.Contains(Audit(f), a => a.GetProperty("action").GetString() == "money-give" && a.GetProperty("result").GetString() == "frozen");
+        Assert.Contains(Audit(f), a => a.GetProperty("action").GetString() == "money-give" && a.GetProperty("result").GetString() == "frozen 25");
+    }
+
+    [Fact]
+    public async Task Opening_a_person_creates_no_wallet()
+    {
+        var books = new FakeBooks();
+        await using var f = Make(books);
+
+        await PageAsync(await SignedInAsync(f), $"/money/person?id={Ann}");
+
+        Assert.Contains($"find {Ann}", books.Calls);
+        Assert.DoesNotContain(books.Calls, c => c.StartsWith("balance"));
+    }
+
+    [Fact]
+    public async Task Resident_without_wallet_says_so()
+    {
+        var books = new FakeBooks { FindOutcome = MoneyOutcome.NoWallet };
+        await using var f = Make(books);
+
+        var text = MainText(await PageAsync(await SignedInAsync(f), $"/money/person?id={Ann}"));
+
+        Assert.Contains("No wallet yet. Giving coins makes one.", text);
+    }
+
+    [Fact]
+    public async Task Made_up_visitor_home_is_404()
+    {
+        var books = new FakeBooks { FindOutcome = MoneyOutcome.NoWallet };
+        await using var f = Make(books);
+        var c = await SignedInAsync(f);
+
+        using var r = await c.GetAsync($"/money/person?id={Hope}&home=" + Uri.EscapeDataString("http://made.up/"), Ct);
+
+        Assert.Equal(HttpStatusCode.NotFound, r.StatusCode);
+        Assert.DoesNotContain(books.Calls, x => x.StartsWith("balance") || x.StartsWith("give"));
+    }
+
+    [Fact]
+    public async Task Known_visitor_without_wallet_is_shown()
+    {
+        var visitors = new FakeVisitors();
+        visitors.Known.Add(new VisitorInfo(Hope, HopeHome, "Hope Visitor"));
+        await using var f = Make(new FakeBooks { FindOutcome = MoneyOutcome.NoWallet }, visitors: visitors);
+
+        var text = MainText(await PageAsync(await SignedInAsync(f), $"/money/person?id={Hope}&home=" + Uri.EscapeDataString("http://GRID.example:8002")));
+
+        Assert.Contains("Hope Visitor (visitor from grid.example)", text);
+        Assert.Contains("No wallet yet. Giving coins makes one.", text);
+    }
+
+    [Fact]
+    public async Task Visitor_with_a_wallet_but_no_record_is_still_shown()
+    {
+        await using var f = Make(new FakeBooks { Balance = 7 });
+
+        var text = MainText(await PageAsync(await SignedInAsync(f), $"/money/person?id={Hope}&home=" + Uri.EscapeDataString(HopeHome)));
+
+        Assert.Contains("Visitor from grid.example", text);
+        Assert.Contains("7", text);
+    }
+
+    [Fact]
+    public async Task Find_shows_visitors()
+    {
+        var visitors = new FakeVisitors();
+        visitors.Known.Add(new VisitorInfo(Hope, HopeHome, "Hope Visitor"));
+        await using var f = Make(new FakeBooks(), visitors: visitors);
+
+        var doc = await PageAsync(await SignedInAsync(f), "/money?Q=Hope");
+
+        var link = Assert.Single(doc.QuerySelectorAll("#money-found a"), a => a.TextContent.Contains("Hope Visitor"));
+        Assert.Equal("Hope Visitor (visitor from grid.example)", link.TextContent.Trim());
+        Assert.Equal($"/money/person?id={Hope}&home=" + Uri.EscapeDataString(HopeHome), link.GetAttribute("href"));
+        Assert.Contains("search Hope 50", visitors.Calls);
+    }
+
+    [Fact]
+    public async Task Merge_is_audited_and_admin_only()
+    {
+        var books = new FakeBooks();
+        var visitors = new FakeVisitors();
+        visitors.Known.Add(new VisitorInfo(Hope, HopeHome, "Hope Visitor"));
+        await using var f = Make(books, visitors: visitors);
+        var page = $"/money/person?id={Hope}&home=" + Uri.EscapeDataString(HopeHome);
+
+        var supervisor = await SignedInAsync(f, "supervisor");
+        using (var r = await supervisor.PostAsync(page + "&handler=Merge", new FormUrlEncodedContent(new Dictionary<string, string>()), Ct))
+            Assert.NotEqual(HttpStatusCode.OK, r.StatusCode);
+        Assert.DoesNotContain(books.Calls, x => x.StartsWith("merge"));
+
+        using var ok = await PostAsync(await SignedInAsync(f), page, "Merge", new() { ["NewHome"] = "http://new.example:8002/", ["Reason"] = "grid moved" });
+
+        Assert.Contains($"merge {Hope} {HopeHome} -> http://new.example:8002/", books.Calls);
+        Assert.Contains(Audit(f), a => a.GetProperty("action").GetString() == "money-merge-wallet"
+            && a.GetProperty("target").GetString() == "Hope Visitor (visitor from grid.example)" && a.GetProperty("result").GetString() == "ok");
+    }
+
+    [Fact]
+    public async Task Merge_needs_a_home_and_a_reason()
+    {
+        var books = new FakeBooks();
+        var visitors = new FakeVisitors();
+        visitors.Known.Add(new VisitorInfo(Hope, HopeHome, "Hope Visitor"));
+        await using var f = Make(books, visitors: visitors);
+
+        using var r = await PostAsync(await SignedInAsync(f), $"/money/person?id={Hope}&home=" + Uri.EscapeDataString(HopeHome), "Merge",
+            new() { ["NewHome"] = "", ["Reason"] = "x" });
+
+        Assert.NotNull((await ParseAsync(r)).QuerySelector(".alert-danger"));
+        Assert.DoesNotContain(books.Calls, x => x.StartsWith("merge"));
+    }
+
+    [Fact]
+    public async Task Residents_get_no_merge_form()
+    {
+        await using var f = Make(new FakeBooks());
+
+        var doc = await PageAsync(await SignedInAsync(f), $"/money/person?id={Ann}");
+
+        Assert.Empty(doc.QuerySelectorAll("form[action*='handler=Merge']"));
+    }
+
+    [Fact]
+    public async Task Audit_lines_carry_the_amount()
+    {
+        await using var f = Make(new FakeBooks());
+
+        using var r = await PostAsync(await SignedInAsync(f), $"/money/person?id={Ann}", "Give", new() { ["Amount"] = "25", ["Reason"] = "gift" });
+
+        Assert.Contains(Audit(f), a => a.GetProperty("action").GetString() == "money-give" && a.GetProperty("result").GetString() == "ok 25");
     }
 
     [Fact]

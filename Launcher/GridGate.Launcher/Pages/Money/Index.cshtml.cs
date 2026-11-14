@@ -19,7 +19,7 @@ namespace GridGate.Launcher.Pages.Money;
 /// and the owner may change anything (each POST checks), and every change is audited.
 /// </summary>
 public sealed class IndexModel(IGridController grid, MoneyGate gate, IMoneyBooks books, MoneyStatus status, AuditLog audit, IRobustClient robust,
-    IPeopleDirectory people, TimeProvider time)
+    IPeopleDirectory people, IVisitorDirectory visitors, TimeProvider time)
     : PageModel
 {
     public IReadOnlyList<MoneyMode> Offered { get; private set; } = [];
@@ -39,6 +39,13 @@ public sealed class IndexModel(IGridController grid, MoneyGate gate, IMoneyBooks
     [BindProperty(SupportsGet = true)] public string? Q { get; set; }
 
     public IReadOnlyList<PersonRow> Found { get; private set; } = [];
+    public IReadOnlyList<VisitorInfo> FoundVisitors { get; private set; } = [];
+
+    /// <summary>The most visitors Find a person shows.</summary>
+    public const int MaxVisitorsFound = 50;
+
+    public static string VisitorLabel(VisitorInfo v) =>
+        $"{v.Name} (visitor from {(Uri.TryCreate(v.Home, UriKind.Absolute, out var u) ? u.Host : v.Home)})";
     public bool SearchDown { get; private set; }
 
     public static string N(long n) => n.ToString("N0", System.Globalization.CultureInfo.InvariantCulture);
@@ -167,7 +174,8 @@ public sealed class IndexModel(IGridController grid, MoneyGate gate, IMoneyBooks
         else
         {
             var r = await books.MoveFeesAsync(AccountRef.Resident(account.PrincipalId), amount, Staff(reason), ct);
-            audit.Write(User, Ip, "money-move-fees", LogText.Clean(account.FullName()), MoneyPageRules.Code(r.Outcome));
+            audit.Write(User, Ip, "money-move-fees", LogText.Clean(account.FullName()),
+                MoneyPageRules.Code(r.Outcome) + " " + amount.ToString(System.Globalization.CultureInfo.InvariantCulture));
             Done(r.Outcome);
         }
         await ShowAsync(ct);
@@ -208,9 +216,11 @@ public sealed class IndexModel(IGridController grid, MoneyGate gate, IMoneyBooks
         if (!string.IsNullOrWhiteSpace(Q))
             try
             {
-                Found = (await people.SearchAsync(Q.Trim(), PeopleFilter.Everyone, [], int.MaxValue, 1, ct)).Rows;
+                // The first page of residents (the directory's page size); the staff level is unused for Everyone.
+                Found = (await people.SearchAsync(Q.Trim(), PeopleFilter.Everyone, [], staffLevel: 0, page: 1, ct)).Rows;
+                FoundVisitors = await visitors.SearchAsync(Q.Trim(), MaxVisitorsFound, ct);
             }
-            catch (PeopleDirectoryUnavailableException)
+            catch (Exception e) when (e is PeopleDirectoryUnavailableException or MoneyUnavailableException)
             {
                 SearchDown = true;
             }

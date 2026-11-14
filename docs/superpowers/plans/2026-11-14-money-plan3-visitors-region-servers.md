@@ -75,7 +75,7 @@ service), §7.6, §7.7, §9.1 (People, Region Servers), §11. This is step 4 of 
 |---|---|
 | Staff person page GET creates a wallet; a made-up `home=` makes a junk visitor wallet | Yes (Tasks 1, 3) |
 | `VisitorsOffText` unused; a visitor payer with visitor wallets off gets "That person can't receive coins" | Yes (Tasks 1, 2) |
-| Find a person asks for `int.MaxValue` rows; visitors can't be found there | Yes (Task 3) |
+| Find a person asks for `int.MaxValue` rows; visitors can't be found there | Yes (Task 3). Building found the first half wasn't a bug: `int.MaxValue` is the unused staff level, and the directory pages at 25. It's now passed by name as 0. |
 | Give, take and move-fees audit lines don't record the amount | Yes (Task 3, same page) |
 | Currency symbol not re-validated at INI write time | Yes (Task 6, the INI writer is changed here) |
 | `account_frozen` shows the grid-wide "paused" text | Yes (Task 2: one text, same file) |
@@ -286,7 +286,7 @@ HelperURI = <the grid's economy helper>
   - `FindAsync` matches the id and the normalized home.
   - A database failure throws `MoneyUnavailableException`.
 - **Find a person** on `/money`:
-  - It asks `people.SearchAsync` for at most 50 rows, not `int.MaxValue`.
+  - It passes the staff level by name (0, unused for Everyone). The directory already returns one page of 25.
   - It also shows up to 50 visitors from `SearchAsync`, each as "Name (visitor from host)", linking to
     `/money/person?id=…&home=…`.
 - **The person page:**
@@ -309,7 +309,6 @@ HelperURI = <the grid's economy helper>
 [Fact] Task Made_up_visitor_home_is_404()                   // directory knows nothing, FindBalance NoWallet → 404
 [Fact] Task Known_visitor_without_wallet_is_shown()         // "No wallet yet"
 [Fact] Task Find_shows_visitors()                           // directory returns Ann Smith @grid.example → "Ann Smith (visitor from grid.example)" link with home
-[Fact] Task Find_asks_for_at_most_fifty()                    // fake people search records max == 50
 [Fact] Task Merge_is_audited_and_admin_only()               // supervisor → 403; admin → MergeWalletsAsync called; audit "money-merge-wallet"
 [Fact] Task Audit_lines_carry_the_amount()                   // give 25 → result "ok 25"
 // VisitorDirectoryTests (Robust test database)

@@ -424,6 +424,7 @@ builder.Services.AddSingleton<ISecureSessionCheck>(sp => sp.GetRequiredService<P
 builder.Services.AddSingleton(sp => new EconomyLimits(sp.GetRequiredService<TimeProvider>()));
 builder.Services.AddSingleton<EconomyHelper>();
 builder.Services.AddSingleton(sp => new PresenceCheck(MoneyConnections.Robust(sp.GetRequiredService<Func<LauncherSettings>>())));
+builder.Services.AddSingleton<IVisitorDirectory>(sp => new VisitorDirectory(MoneyConnections.Robust(sp.GetRequiredService<Func<LauncherSettings>>())));
 builder.Services.AddSingleton(sp =>
 {
     var current = sp.GetRequiredService<Func<LauncherSettings>>();

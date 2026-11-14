@@ -159,6 +159,10 @@
                     {
                         <li><a href="/money/person?id=@p.Account.PrincipalId">@p.Account.FullName()</a></li>
                     }
+                    @foreach (var v in Model.FoundVisitors)
+                    {
+                        <li><a href="/money/person?id=@v.Id&home=@Uri.EscapeDataString(v.Home)">@IndexModel.VisitorLabel(v)</a></li>
+                    }
                 </ul>
             }
         </section>
