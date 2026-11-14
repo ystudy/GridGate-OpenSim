@@ -3232,6 +3232,13 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
                 return 0;
             }
 
+            // GridGate: only the object's owner can let it spend the owner's money.
+            if (m_item.PermsGranter.NotEqual(m_host.OwnerID))
+            {
+                Error("llGiveMoney", "PERMISSION_DEBIT was not granted by the object's owner");
+                return 0;
+            }
+
             if (!UUID.TryParse(destination, out UUID toID))
             {
                 Error("llGiveMoney", "Bad key in llGiveMoney");
@@ -17590,6 +17597,13 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
                 }
 
                 if ((m_item.PermsMask & ScriptBaseClass.PERMISSION_DEBIT) == 0)
+                {
+                    replydata = "MISSING_PERMISSION_DEBIT";
+                    break;
+                }
+
+                // GridGate: only the object's owner can let it spend the owner's money.
+                if (m_item.PermsGranter.NotEqual(m_host.OwnerID))
                 {
                     replydata = "MISSING_PERMISSION_DEBIT";
                     break;
