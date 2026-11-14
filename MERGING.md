@@ -149,5 +149,6 @@ marked in the code with a `GridGate:` comment. When an upstream pick touches the
 | `fix(opensim): llGiveMoney refuses group-owned objects` | `LSL_Api.cs` (`llGiveMoney`) |
 | `feat(opensim): llTransferLindenDollars can pay hypergrid visitors` | `OpenSim/Framework/IVisitorMoneyModule.cs` (new), `OpenSim/Framework/OpenSim.Framework.csproj`, `LSL_Api.cs` (`llTransferLindenDollars`) |
 | `fix(opensim): UDP uploads are charged the upload fee` | `OpenSim/Region/CoreModules/Agent/AssetTransaction/AssetXferUploader.cs` |
+| `fix(opensim): classifieds are checked and charged at the money module's fee` | `OpenSim/Framework/IClassifiedFeeModule.cs` (new), `OpenSim/Framework/OpenSim.Framework.csproj`, `UserProfileModule.cs` (`ClassifiedInfoUpdate`) |
 
 The money module itself is not an OpenSim change: it lives in `addon-modules/GridGateMoney`.
