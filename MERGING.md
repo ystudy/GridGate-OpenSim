@@ -167,6 +167,7 @@ helpers had fallen behind OpenSim's interfaces, so we changed them too:
 | Commit | Files |
 |---|---|
 | `test(opensim): OpenSim's test helpers build again` | `OpenSim/Tests/Common/Mock/MockScriptEngine.cs`, `TestClient.cs`, `TestEventQueueGetModule.cs`, `TestXInventoryDataPlugin.cs` (missing interface members added), `MockRegionDataPlugin.cs` (`GetExtra` returns an empty set, so a test region keeps extra settings) |
+| `test(opensim): a test avatar works on Linux` | `OpenSim/Tests/Common/Mock/TestClient.cs` (its wait handle is unnamed: .NET has no named ones on Linux) |
 
 `Mock/TestLLUDPServer.cs` and `Helpers/ClientStackHelpers.cs` no longer match `LLUDPServer` and aren't built. If upstream
 fixes the helpers, take its version and drop ours.
