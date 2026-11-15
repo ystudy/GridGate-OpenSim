@@ -329,6 +329,10 @@ DLL), §7.7 (Gloebit on a Region Server), §10 (changing mode), §14 step 5. Pla
 - Modify: `MERGING.md`. List both GridGate edits to addon and upstream files: the Gloebit warning fix and the Robust proto
   Currency line.
 - Modify: `tests/GridGate.Smoke/SmokeRun.cs:76`. Its comment names the old mechanism; update it.
+- Found while building it: Gloebit's `LoadConfig` merges `<[Startup] ConfigDirectory>/Gloebit.ini` *over* the
+  program's settings, and when the file is missing it copies `Gloebit.ini.example` there and stops the module. So in
+  Gloebit mode each program's `ConfigDirectory` is its own region folder, where `GridConfigWriter` writes an empty
+  `Gloebit.ini` (deleted in other modes). Test: `GloebitConfigTests.Gloebit_reads_no_addon_file_of_its_own`.
 - Test: `Launcher/GridGate.Launcher.Tests/ShippedFilesTests.cs` (new), or the existing packaging test class if there is
   one (`git grep -n "package.ps1" Launcher/*Tests`).
 

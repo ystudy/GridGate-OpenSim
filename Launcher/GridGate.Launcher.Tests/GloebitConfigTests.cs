@@ -74,6 +74,22 @@ public sealed class GloebitConfigTests : IDisposable
     }
 
     [Fact]
+    public void Gloebit_reads_no_addon_file_of_its_own()
+    {
+        // Gloebit's module merges <ConfigDirectory>/Gloebit.ini over the program's settings, and makes one from its
+        // example (and stops) when there is none. Each program gets its own empty file, so what GridGate wrote counts.
+        Write(Grid(MoneyMode.Gloebit, App));
+
+        foreach (var p in new[] { "p1", "p2" })
+        {
+            var dir = Region(p).Get("Startup", "ConfigDirectory");
+            Assert.Equal(Path.GetFullPath(_paths.RegionDir(p)), Path.GetFullPath(dir!));
+            var addon = IniDocument.Load(Path.Combine(dir!, "Gloebit.ini"));
+            Assert.Empty(addon.ActiveEntries());
+        }
+    }
+
+    [Fact]
     public void Incomplete_gloebit_refuses_payments()
     {
         Write(Grid(MoneyMode.Gloebit, App with { Secret = "" }));

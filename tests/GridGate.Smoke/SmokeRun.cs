@@ -72,9 +72,8 @@ public sealed class SmokeRun
     {
         CopyDirectory(_opt.Bin, _sandboxBin);
 
-        // Gloebit switches itself on whenever Gloebit.dll is present (merging bin/Gloebit.ini, Enabled=True) and then
-        // aborts the boot because it needs MySQL. GridGate enables it by renaming Gloebit.dll.Proto to Gloebit.dll;
-        // version 1 runs with no money module (spec section 4.15), so the sandbox has no Gloebit.dll.
+        // Gloebit switches itself on whenever Gloebit.dll is present and then needs MySQL, which aborts the boot. The
+        // launcher stages it only in Gloebit mode (money plan 4); the smoke run checks a grid with no money module.
         File.Delete(Path.Combine(_sandboxBin, "Gloebit.dll"));
 
         string regions = Path.Combine(_sandboxBin, "Regions");

@@ -3,11 +3,6 @@
 OpenSim/Framework/ClientManager.cs:generic-api-key:46
 # An example in a comment.
 OpenSim/Services/FreeswitchService/FreeswitchService.cs:generic-api-key:138
-# Upstream's Gloebit sandbox app key and secret (GLBEnvironment = sandbox), as shipped by Outworldz.
-bin/Gloebit.ini:generic-api-key:32
-bin/Gloebit.ini:generic-api-key:33
-bin/config-include/Gloebit.ini:generic-api-key:32
-bin/config-include/Gloebit.ini:generic-api-key:33
 # The same SMTP value in Fred's 2c0fcab6, brought in by the fred/V7 merge (it was already in older history here).
 # This tree no longer has that file; only the commit carries it.
 2c0fcab617406f2f3436c508f3afc57d5efdc68c:bin/Robust.HG.ini:gridgate-ini-mail-or-admin-password:1397
