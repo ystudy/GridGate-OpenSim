@@ -44,7 +44,7 @@ public sealed class MoneyServiceHost(
             app = Build(port, cert, lan);
             await app.StartAsync(cancellationToken);
             _app = app;
-            if (status is not null) status.ServiceError = null;
+            if (status is not null) (status.ServiceError, status.ServiceRunning) = (null, true);
             _log.LogInformation("The money service is listening on {Where}.", where);
         }
         catch (Exception e) when (e is not OperationCanceledException)
@@ -86,6 +86,7 @@ public sealed class MoneyServiceHost(
     {
         // Taken once: the host may stop it from two places at once (seen when a test host is disposed).
         if (Interlocked.Exchange(ref _app, null) is not { } app) return;
+        if (status is not null) status.ServiceRunning = false;
         await app.StopAsync(cancellationToken);
         await app.DisposeAsync();
     }

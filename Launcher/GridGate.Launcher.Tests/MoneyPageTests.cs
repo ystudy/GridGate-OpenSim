@@ -698,6 +698,7 @@ public sealed class MoneyPageTests
     public async Task Dashboard_shows_frozen_notice()
     {
         await using var f = Make(new FakeBooks { Frozen = (true, "test") });
+        f.Services.GetRequiredService<MoneyStatus>().ServiceRunning = true;
 
         var doc = await PageAsync(await SignedInAsync(f), "/dashboard");
 
@@ -711,6 +712,7 @@ public sealed class MoneyPageTests
     public async Task Dashboard_shows_service_failure()
     {
         await using var f = Make(new FakeBooks());
+        f.Services.GetRequiredService<MoneyStatus>().ServiceRunning = false;
         f.Services.GetRequiredService<MoneyStatus>().ServiceError = "IOException";
 
         var doc = await PageAsync(await SignedInAsync(f), "/dashboard");
@@ -720,9 +722,31 @@ public sealed class MoneyPageTests
     }
 
     [Fact]
+    public async Task Dashboard_says_money_starts_on_restart()
+    {
+        // Live check, plan 3: Play coins chosen while GridGate runs. The service and the money database start with GridGate,
+        // so until then the dashboard says that, calmly, and doesn't ask a database that doesn't exist yet.
+        var books = new FakeBooks { Down = true };
+        await using var f = Make(books);
+        var status = f.Services.GetRequiredService<MoneyStatus>();
+        status.ServiceRunning = false;
+        status.ServiceError = null;
+
+        var doc = await PageAsync(await SignedInAsync(f), "/dashboard");
+
+        var notice = doc.QuerySelector("#money-restart");
+        Assert.NotNull(notice);
+        Assert.Equal("Money was turned on after GridGate started. Payments start when GridGate restarts.", notice!.TextContent.Trim());
+        Assert.DoesNotContain("alert-danger", notice.ClassName);
+        Assert.Null(doc.QuerySelector("#money-database"));
+        Assert.Empty(books.Calls);
+    }
+
+    [Fact]
     public async Task Dashboard_shows_database_down()
     {
         await using var f = Make(new FakeBooks { Down = true });
+        f.Services.GetRequiredService<MoneyStatus>().ServiceRunning = true;
 
         var doc = await PageAsync(await SignedInAsync(f), "/dashboard");
 
