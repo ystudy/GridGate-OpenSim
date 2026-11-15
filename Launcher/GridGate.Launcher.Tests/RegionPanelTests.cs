@@ -377,6 +377,21 @@ public sealed class RegionPanelTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task On_a_phone_both_menus_open_from_the_left_of_their_row()
+    {
+        var page = await PageAsync(SunsetId);
+        var css = await SiteCss.GetAsync(_f, Ct);
+
+        // Power then OAR, side by side; OAR's menu, opening under its own button, would run off a phone's right edge.
+        var menus = page.QuerySelectorAll(".region-menus > form > details").Select(d => d.ClassName).ToArray();
+        Assert.Equal(["power-menu", "oar-menu"], menus);
+        var phone = SiteCss.Media(css, "(max-width: 575.98px)");
+        Assert.Contains("position: relative", SiteCss.Rule(phone, ".region-menus"));
+        Assert.Contains("position: static", SiteCss.Rule(phone, ".region-menus .power-menu, .region-menus .oar-menu"));
+        Assert.Contains("left: 0", SiteCss.Rule(phone, ".region-menus .power-items"));
+    }
+
+    [Fact]
     public async Task Partial_has_no_layout()
     {
         var full = await PageAsync(SunsetId);

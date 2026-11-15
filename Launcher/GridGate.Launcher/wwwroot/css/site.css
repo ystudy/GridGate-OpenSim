@@ -204,7 +204,8 @@ form[role=search] .btn { flex-shrink: 0; white-space: nowrap; }
 .power-menu, .oar-menu { position: relative; display: inline-block; }
 .power-menu > summary, .oar-menu > summary { list-style: none; }
 .power-menu > summary::-webkit-details-marker, .oar-menu > summary::-webkit-details-marker { display: none; }
-.power-menu .power-items, .oar-menu .power-items { position: absolute; z-index: 10; min-width: 18rem; margin-top: .25rem; }
+/* Never wider than the window, on the narrowest phone. */
+.power-menu .power-items, .oar-menu .power-items { position: absolute; z-index: 10; min-width: min(18rem, calc(100vw - 1.5rem)); margin-top: .25rem; }
 
 /* A work page (the regions map, the splash editor): its title with the main actions at the right, then panels. */
 .page-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .75rem 1rem; margin-bottom: .5rem; }
@@ -239,6 +240,12 @@ th .sort-link .btn-icon { width: .9em; height: .9em; margin: 0; }
 .region-type:hover { background: var(--bs-tertiary-bg); }
 /* The region panel: the Power and OAR menus side by side, then its links as a row of icon buttons. */
 .region-menus { display: flex; flex-wrap: wrap; gap: .5rem; margin-bottom: 1rem; }
+/* On a phone the OAR menu, opening under its own button, would run off the right edge: both menus open from the left of their row. */
+@media (max-width: 575.98px) {
+    .region-menus { position: relative; }
+    .region-menus .power-menu, .region-menus .oar-menu { position: static; }
+    .region-menus .power-items { left: 0; }
+}
 .region-links { display: flex; flex-wrap: wrap; gap: .4rem; }
 .type-swatch { grid-row: span 2; width: 2.5rem; height: 2.5rem; border-radius: .35rem; overflow: hidden; background: var(--bs-secondary-bg); }
 .type-swatch img { width: 100%; height: 100%; object-fit: cover; display: block; }
@@ -341,7 +348,10 @@ header .signout { margin: 0; }
 .ticket-note { border-left: 3px solid var(--bs-warning); background: var(--bs-warning-bg-subtle); }
 
 /* Home: the world's controls in the heading row, then three columns of panels (one under another on narrow screens). */
+/* The Power menu opens to the left of its button, the last control: the controls keep to the right edge even when a narrow window
+   wraps them onto lines of their own, so the menu stays on the screen. */
 .power-menu-end .power-items { right: 0; }
+.home-controls { margin-left: auto; justify-content: flex-end; }
 .home-columns { display: grid; gap: .75rem; grid-template-columns: minmax(0, 1fr); align-items: start; }
 @media (min-width: 768px) { .home-columns { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (min-width: 1200px) { .home-columns { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
