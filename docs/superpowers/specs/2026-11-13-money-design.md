@@ -130,7 +130,10 @@ creates it the first time money is turned on, as it does `robust` and `opensim` 
   - If a real home grid changes its address, staff can merge the old wallet into the new one on the Money page. The merge is an
     entry like any other.
 - **Groups hold no coins (owner).** There are no group accounts in this version (§7.3 lists what that refuses).
-- **Entries:** one row per movement, never edited or deleted. Each holds: a unique transaction id, time, type (§7.4), from
+- **Entries:** one row per movement, never edited or deleted. The database enforces this: triggers refuse any change or
+  removal, even by root, and the ledger's own database user may only add entries (money review 2026-11-15, L-9). Root
+  creates the tables; that user may change only the account columns (balance, frozen, payouts switch, last allowance) and
+  hold columns (state, settled time) the ledger changes, and can't change a table or trigger. Each holds: a unique transaction id, time, type (§7.4), from
   account, to account, amount, both balances after, region, object id and name when there is one, the staff member when staff
   did it, a reason text, a payment reference for bought coins, and the id of the entry it reverses, for refunds.
 - **Rules:**
@@ -138,7 +141,16 @@ creates it the first time money is turned on, as it does `robust` and `opensim` 
   - Only the Grid bank may go below zero. Its negative balance is the number of coins in existence.
   - A balance changes only with a matching entry.
 - **Self-check (call):** on start-up and once a day, the service recomputes every balance from the entries and checks that all
-  balances add up to zero. A mismatch freezes all payments, puts a red notice on the dashboard and writes the difference to the
+  balances add up to zero. It also checks (money review 2026-11-15, L-3):
+  - no account but the Grid bank is below zero, and the three system accounts are the only ones of their kind;
+  - Holding holds exactly the open holds, and each hold still matches the entries that opened and settled it;
+  - each account's entries form an unbroken running balance (each entry's "balance after" follows from the one before), which
+    exposes an edited or deleted entry;
+  - each entry type moves coins only between the accounts it may (§7.4) and carries what it must: a staff name, a hold, the
+    entry a refund reverses. A refund reverses exactly one earlier entry, once.
+
+  Settling a hold also refuses, and freezes payments, when the hold no longer matches its entry or Holding can't cover it.
+  A mismatch freezes all payments, puts a red notice on the dashboard and writes the difference to the
   launcher log. The owner unfreezes after looking.
 - **Backups:** the `money` database is included wherever the launcher backs up or exports the grid's databases (builder: follow
   what exists for `robust`/`opensim`).

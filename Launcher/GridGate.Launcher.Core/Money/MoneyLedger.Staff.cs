@@ -192,36 +192,6 @@ public sealed partial class MoneyLedger
             return lines;
         }, ct);
 
-    /// <summary>
-    /// Checks the books from one consistent snapshot. When they don't balance, freezes every payment with the reason
-    /// "Self-check found a difference" and returns what differs.
-    /// </summary>
-    public async Task<SelfCheckResult> SelfCheckAsync(CancellationToken ct)
-    {
-        var result = await ReadAsync(async conn =>
-        {
-            await using var tx = await conn.BeginTransactionAsync(IsolationLevel.RepeatableRead, ct);
-            var sum = await ScalarAsync(conn, tx, "SELECT COALESCE(SUM(balance), 0) FROM accounts", ct);
-            await using var cmd = new MySqlCommand("""
-                SELECT a.id, a.balance, COALESCE(i.s, 0) - COALESCE(o.s, 0) AS computed
-                FROM accounts a
-                LEFT JOIN (SELECT to_id, SUM(amount) s FROM entries GROUP BY to_id) i ON i.to_id = a.id
-                LEFT JOIN (SELECT from_id, SUM(amount) s FROM entries GROUP BY from_id) o ON o.from_id = a.id
-                HAVING a.balance <> computed
-                ORDER BY a.id
-                """, conn, tx);
-            List<BalanceMismatch> mismatches = [];
-            await using (var r = await cmd.ExecuteReaderAsync(ct))
-                while (await r.ReadAsync(ct))
-                    mismatches.Add(new BalanceMismatch(r.GetInt64(0), r.GetInt64(1), Convert.ToInt64(r.GetValue(2))));
-            await tx.CommitAsync(ct);
-            return new SelfCheckResult(sum == 0 && mismatches.Count == 0, sum, mismatches);
-        }, ct);
-        if (!result.Ok)
-            await SetFrozenAsync(true, "Self-check found a difference", ct);
-        return result;
-    }
-
     private static Entry StaffEntry(string type, StaffAction who) => new(type, Staff: who.StaffName, Reason: who.Reason);
 
     /// <summary>

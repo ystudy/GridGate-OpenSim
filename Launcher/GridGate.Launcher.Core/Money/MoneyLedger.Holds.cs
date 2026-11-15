@@ -60,11 +60,33 @@ public sealed partial class MoneyLedger
 
     /// <summary>Delivery succeeded: Holding pays the seller. Not blocked by freezes.</summary>
     public Task<MoneyResult> CompleteHoldAsync(Guid txnId, long holdId, CancellationToken ct) =>
-        Idempotent(txnId, "hold_complete", holdId, (conn, tx) => SettleAsync(conn, tx, holdId, complete: true, ct), ct);
+        FreezeOnMismatch(Idempotent(txnId, "hold_complete", holdId, (conn, tx) => SettleAsync(conn, tx, holdId, complete: true, ct), ct), ct);
 
     /// <summary>Delivery failed: Holding pays the buyer back. Not blocked by freezes.</summary>
     public Task<MoneyResult> ReturnHoldAsync(Guid txnId, long holdId, CancellationToken ct) =>
-        Idempotent(txnId, "hold_return", holdId, (conn, tx) => SettleAsync(conn, tx, holdId, complete: false, ct), ct);
+        FreezeOnMismatch(Idempotent(txnId, "hold_return", holdId, (conn, tx) => SettleAsync(conn, tx, holdId, complete: false, ct), ct), ct);
+
+    private const string HoldMismatchReason = "A purchase hold didn't match its entry";
+
+    /// <summary>
+    /// A hold that doesn't match its entry means someone changed the books: every payment is frozen, as the self-check would.
+    /// A freeze already on keeps its own reason.
+    /// </summary>
+    private async Task<MoneyResult> FreezeOnMismatch(Task<MoneyResult> settling, CancellationToken ct)
+    {
+        var result = await settling;
+        if (result.Outcome != MoneyOutcome.HoldMismatch) return result;
+        try
+        {
+            if (!(await FrozenAsync(ct)).Frozen)
+                await SetFrozenAsync(true, HoldMismatchReason, ct);
+        }
+        catch (MoneyUnavailableException)
+        {
+            // The hold stays open and the next settle or self-check tries again.
+        }
+        return result;
+    }
 
     /// <summary>Returns every open hold older than <see cref="HoldLifetime"/>; how many were returned.</summary>
     public async Task<int> ReturnExpiredHoldsAsync(CancellationToken ct)
@@ -112,15 +134,38 @@ public sealed partial class MoneyLedger
         var hold = await LockHoldAsync(conn, tx, holdId, ct);
         if (hold is null) return MoneyResult.Of(MoneyOutcome.UnknownHold);
         if (hold.State != "open") return MoneyResult.Of(MoneyOutcome.HoldClosed);
+        // Settling isn't guarded and pays holds.amount, so the hold must still be what its entry moved (money review
+        // 2026-11-15, L-3): exactly one entry for it, the buyer to Holding for that amount.
+        var (entries, matching) = await HoldEntriesAsync(conn, tx, hold, ct);
+        if (entries != 1 || matching != 1) return MoneyResult.Of(MoneyOutcome.HoldMismatch);
 
         var entry = complete
             ? new Entry(EntryType.HoldCompleted, hold.RegionId, hold.ObjectId, hold.ObjectName,
                 Reason: hold.Kind == "land" ? EntryType.LandSale : EntryType.ObjectSale, HoldId: hold.Id)
             : new Entry(EntryType.HoldReturned, hold.RegionId, hold.ObjectId, hold.ObjectName, HoldId: hold.Id);
         var moved = await MoveBetweenAsync(conn, tx, MoneySchema.HoldingId, complete ? hold.SellerId : hold.BuyerId, hold.Amount, entry, guarded: false, ct);
+        // Holding can't go below zero: rolled back with the rest.
+        if (moved.FromBalance < 0) return MoneyResult.Of(MoneyOutcome.HoldMismatch);
         await ExecAsync(conn, tx, "UPDATE holds SET state = @state, settled = @now WHERE id = @id",
             ct, ("@state", complete ? "completed" : "returned"), ("@now", Now), ("@id", hold.Id));
         return moved with { HoldId = hold.Id };
+    }
+
+    /// <summary>How many entries name the hold, and how many of those are its opening entry as the hold now reads.</summary>
+    private static async Task<(long Entries, long Matching)> HoldEntriesAsync(MySqlConnection conn, MySqlTransaction tx, HoldRow hold, CancellationToken ct)
+    {
+        await using var cmd = new MySqlCommand("""
+            SELECT COUNT(*), COALESCE(SUM(type = @type AND from_id = @buyer AND to_id = @holding AND amount = @amt), 0)
+            FROM entries WHERE hold_id = @id
+            """, conn, tx);
+        cmd.Parameters.AddWithValue("@type", EntryType.Hold);
+        cmd.Parameters.AddWithValue("@buyer", hold.BuyerId);
+        cmd.Parameters.AddWithValue("@holding", MoneySchema.HoldingId);
+        cmd.Parameters.AddWithValue("@amt", hold.Amount);
+        cmd.Parameters.AddWithValue("@id", hold.Id);
+        await using var r = await cmd.ExecuteReaderAsync(ct);
+        await r.ReadAsync(ct);
+        return (r.GetInt64(0), Convert.ToInt64(r.GetValue(1)));
     }
 
     private static async Task<HoldRow?> LockHoldAsync(MySqlConnection conn, MySqlTransaction tx, long id, CancellationToken ct)

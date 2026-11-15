@@ -18,8 +18,12 @@ public sealed record HistoryLine(long EntryId, DateTimeOffset At, string Type, A
 /// <summary>An account whose stored balance doesn't match its entries.</summary>
 public sealed record BalanceMismatch(long AccountId, long Stored, long FromEntries);
 
-/// <summary>The books' check (money design §7.1): all balances add up to zero, and each one matches its entries.</summary>
-public sealed record SelfCheckResult(bool Ok, long Sum, IReadOnlyList<BalanceMismatch> Mismatches);
+/// <summary>
+/// The books' check (money design §7.1): all balances add up to zero, and each one matches its entries. <see cref="Problems"/>
+/// says in words what else is wrong (money review 2026-11-15, L-3): an account below zero, Holding against its open holds,
+/// a hold against its entries, a broken running balance, an entry type on the wrong accounts.
+/// </summary>
+public sealed record SelfCheckResult(bool Ok, long Sum, IReadOnlyList<BalanceMismatch> Mismatches, IReadOnlyList<string> Problems);
 
 /// <summary>An account's switches: debits refused, and its scripts allowed to pay out (money design §7.2).</summary>
 public sealed record AccountFlags(bool Frozen, bool PayoutsAllowed);

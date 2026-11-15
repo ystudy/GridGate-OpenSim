@@ -32,6 +32,13 @@ internal static class GridDb
         OpenAsync(MariaDbServer.ConnectionString(s, "money", "moneyuser", s.Db.MoneyPassword, timeoutSeconds), ct);
 
     /// <summary>
+    /// Opens the money database as root, for its schema and moneyuser's grants only (money review 2026-11-15, L-9): moneyuser
+    /// itself may not change tables or triggers.
+    /// </summary>
+    public static Task<MySqlConnection> OpenMoneyAsRootAsync(LauncherSettings s, uint timeoutSeconds, CancellationToken ct) =>
+        OpenAsync(MariaDbServer.ConnectionString(s, "money", "root", s.Db.RootPassword, timeoutSeconds), ct);
+
+    /// <summary>
     /// Opens a connection, runs <paramref name="work"/> and disposes the connection. A database failure is rethrown as
     /// whatever <paramref name="unavailable"/> makes of it; any other exception passes through.
     /// </summary>

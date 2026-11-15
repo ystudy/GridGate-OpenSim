@@ -21,7 +21,8 @@ public static class MoneyStartup
         if (s.Db.MoneyPassword == "")
             s = update(x => x.Db.MoneyPassword == "" ? x with { Db = x.Db with { MoneyPassword = Secrets.NewPassword(PasswordLength) } } : x);
         await new DatabaseProvisioner(s).EnsureAsync(ct);
-        await using var conn = await GridDb.OpenMoneyAsync(s, 10, ct);
+        // As root: moneyuser may not change tables (money review 2026-11-15, L-9).
+        await using var conn = await GridDb.OpenMoneyAsRootAsync(s, 10, ct);
         await MoneySchema.EnsureAsync(conn, ct);
         return s;
     }
