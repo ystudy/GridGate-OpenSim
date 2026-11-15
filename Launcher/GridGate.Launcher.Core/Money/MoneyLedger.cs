@@ -66,7 +66,13 @@ public sealed partial class MoneyLedger(
     private static bool Same(AccountRef a, AccountRef b) => a.AgentId == b.AgentId && NormalHome(a.Home) == NormalHome(b.Home);
 
     /// <summary>A visitor's home as stored: trimmed, without a trailing slash, lower case.</summary>
-    internal static string NormalHome(string home) => MoneyHomes.Normal(home);
+    internal static string NormalHome(string home) => MoneyHomes.Normal(home) ?? UnreadableHome;
+
+    /// <summary>
+    /// A home that can't be written in ASCII: a "system:" home, which <see cref="ResolveAsync"/> refuses and no person's
+    /// wallet has, so it opens and matches nothing.
+    /// </summary>
+    private const string UnreadableHome = "system:unreadable";
 
     /// <summary>Resolves both accounts and moves the coins from <paramref name="from"/> to <paramref name="to"/>, guarded.</summary>
     private async Task<MoneyResult> MoveAsync(MySqlConnection conn, MySqlTransaction tx, AccountRef from, AccountRef to, long amount, Entry entry, CancellationToken ct)

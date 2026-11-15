@@ -11,14 +11,16 @@ public enum AccountKind { Person, Visitor, Bank, Fees, Holding }
 /// </summary>
 public static class MoneySchema
 {
-    public const int Version = 1;
+    /// <summary>2: homes compared byte for byte (money review 2026-11-15, L-2).</summary>
+    public const int Version = 2;
 
     /// <summary>The system accounts' fixed ids.</summary>
     public const long BankId = 1, FeesId = 2, HoldingId = 3;
 
     private const string Ddl = """
         CREATE TABLE IF NOT EXISTS accounts (
-          id BIGINT AUTO_INCREMENT PRIMARY KEY, agent_id CHAR(36) NOT NULL, home VARCHAR(255) NOT NULL DEFAULT '',
+          id BIGINT AUTO_INCREMENT PRIMARY KEY, agent_id CHAR(36) NOT NULL,
+          home VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL DEFAULT '',
           kind VARCHAR(16) NOT NULL, balance BIGINT NOT NULL DEFAULT 0, frozen TINYINT NOT NULL DEFAULT 0,
           payouts_allowed TINYINT NOT NULL DEFAULT 0, last_allowance DATETIME(6) NULL, created DATETIME(6) NOT NULL,
           UNIQUE KEY agent_home (agent_id, home)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
@@ -42,12 +44,27 @@ public static class MoneySchema
           (1, '00000000-0000-0000-0000-000000000000', 'system:bank', 'Bank', UTC_TIMESTAMP(6)),
           (2, '00000000-0000-0000-0000-000000000000', 'system:fees', 'Fees', UTC_TIMESTAMP(6)),
           (3, '00000000-0000-0000-0000-000000000000', 'system:holding', 'Holding', UTC_TIMESTAMP(6));
-        INSERT IGNORE INTO state (name, value) VALUES ('schema_version', '1'), ('frozen', '0'), ('frozen_reason', '');
+        INSERT IGNORE INTO state (name, value) VALUES ('schema_version', '2'), ('frozen', '0'), ('frozen_reason', '');
+        """;
+
+    /// <summary>
+    /// Version 1 to 2: <c>accounts.home</c> took utf8mb4's default collation, which ignores case and accents, so a
+    /// look-alike home grid address found a real visitor's wallet. A binary collation can't make two rows collide.
+    /// </summary>
+    private const string To2 = """
+        ALTER TABLE accounts MODIFY home VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL DEFAULT '';
+        UPDATE state SET value = '2' WHERE name = 'schema_version';
         """;
 
     public static async Task EnsureAsync(MySqlConnection money, CancellationToken ct)
     {
-        await using var cmd = new MySqlCommand(Ddl, money);
-        await cmd.ExecuteNonQueryAsync(ct);
+        await using (var cmd = new MySqlCommand(Ddl, money))
+            await cmd.ExecuteNonQueryAsync(ct);
+        await using (var version = new MySqlCommand("SELECT value FROM state WHERE name = 'schema_version'", money))
+            if (await version.ExecuteScalarAsync(ct) is "1")
+            {
+                await using var cmd = new MySqlCommand(To2, money);
+                await cmd.ExecuteNonQueryAsync(ct);
+            }
     }
 }

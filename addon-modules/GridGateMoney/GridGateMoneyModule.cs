@@ -34,6 +34,8 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
     private readonly List<Scene> _scenes = [];
     private readonly ConcurrentDictionary<UUID, MoneyActions> _actions = new();
     private readonly ConcurrentDictionary<UUID, long> _balances = new();
+    // A visitor's home grid as their own login gave it, from their last arrival in this program (VisitorHomes, R-3).
+    private readonly ConcurrentDictionary<UUID, string> _visitorHomes = new();
     // Land purchases between the hold (validate) and the settle (buy), by region and parcel.
     private readonly ConcurrentDictionary<(UUID Region, int Parcel), LandHold> _landHolds = new();
     private readonly object _economyGate = new();
@@ -189,6 +191,7 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
 
     private void OnNewClient(IClientAPI client)
     {
+        if (CircuitHome(client.AgentId) is { } home) _visitorHomes[client.AgentId] = home;
         client.OnMoneyBalanceRequest += (c, agent, session, _) =>
         {
             if (agent != c.AgentId || session != c.SessionId) return;
@@ -410,7 +413,7 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
     {
         if (!Economy().VisitorWallets) return false;
         var um = UserManagement();
-        return um is not null && !um.IsLocalGridUser(agentID) && !string.IsNullOrEmpty(um.GetUserHomeURL(agentID));
+        return um is not null && !um.IsLocalGridUser(agentID) && WhoOf(agentID).Home.Length > 0;
     }
 
     // ---- helpers ------------------------------------------------------------------------------------
@@ -420,12 +423,29 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
         lock (_scenes) return _scenes.Select(s => s.RequestModuleInterface<IUserManagement>()).FirstOrDefault(u => u is not null);
     }
 
-    /// <summary>An avatar as the ledger keys it: a resident by id, a visitor by id and home grid.</summary>
+    /// <summary>
+    /// An avatar as the ledger keys it: a resident by id, a visitor by id and home grid. A visitor's home comes from their
+    /// own login before OpenSim's name cache, which an object's creator data can plant (<see cref="VisitorHomes"/>).
+    /// </summary>
     private MoneyWho WhoOf(UUID id)
     {
         var um = UserManagement();
         if (um is null || um.IsLocalGridUser(id)) return new MoneyWho(id.Guid, "");
-        return new MoneyWho(id.Guid, um.GetUserHomeURL(id) ?? "");
+        var circuit = CircuitHome(id);
+        if (circuit is not null) _visitorHomes[id] = circuit;
+        var remembered = _visitorHomes.TryGetValue(id, out var r) ? r : null;
+        return new MoneyWho(id.Guid, VisitorHomes.Choose(circuit, remembered, um.GetUserHomeURL(id)));
+    }
+
+    /// <summary>The home grid in the login of an avatar with a circuit in one of this program's regions, or null.</summary>
+    private string? CircuitHome(UUID id)
+    {
+        lock (_scenes)
+            foreach (var s in _scenes)
+                if (s.AuthenticateHandler?.GetAgentCircuitData(id) is { ServiceURLs: { } urls }
+                    && urls.TryGetValue("HomeURI", out var home) && home?.ToString() is { Length: > 0 } h)
+                    return h;
+        return null;
     }
 
     private Payer PayerOf(IClientAPI c) => new(c.AgentId.Guid, WhoOf(c.AgentId).Home, c.SessionId.Guid, c.SecureSessionId.Guid);

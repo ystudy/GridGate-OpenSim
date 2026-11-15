@@ -51,6 +51,42 @@ public sealed class MoneyLedgerVisitorTests(MoneyMariaDb maria) : IClassFixture<
         Assert.Equal(1, await Accounts(db, w));
     }
 
+    [Theory]
+    [InlineData("http://othér.example:8002", "http://other.example:8002/")]
+    [InlineData("HTTP://OTHÉR.EXAMPLE:8002/", "http://other.example:8002/")]
+    [InlineData("http://ôther.example:8002", "http://other.example:8002/")]
+    public async Task A_look_alike_home_never_spends_a_real_visitors_wallet(string lookAlike, string realHome)
+    {
+        // A rogue grid at a different (international) domain sends a visitor with the real visitor's UUID. Its home must
+        // be a different, empty wallet: MariaDB's default collation ignored accents and case (money review 2026-11-15, L-2).
+        var (ledger, db, _) = await MoneyLedgerTransferTests.Setup(maria);
+        var v = Guid.NewGuid();
+        await db.AddVisitor(v, realHome);
+        Assert.Equal(MoneyOutcome.Ok, (await ledger.GiveAsync(new AccountRef(v, realHome), 50, Staff, Ct)).Outcome);
+
+        var r = await ledger.TransferAsync(Pay(new AccountRef(v, lookAlike), AccountRef.Resident(A), 10), Ct);
+
+        Assert.NotEqual(MoneyOutcome.Ok, r.Outcome);
+        Assert.Equal(50, await db.Scalar($"SELECT balance FROM `money`.`accounts` WHERE agent_id = '{v}' AND kind = 'Visitor'"));
+        Assert.Equal(1, await Accounts(db, v));
+    }
+
+    [Fact]
+    public async Task A_visitor_from_an_international_domain_keeps_one_wallet()
+    {
+        var (ledger, db, _) = await MoneyLedgerTransferTests.Setup(maria);
+        var v = Guid.NewGuid();
+        await db.AddVisitor(v, "http://othér.example:8002/");
+
+        Assert.Equal(MoneyOutcome.Ok, (await ledger.GiveAsync(new AccountRef(v, "http://Othér.Example:8002"), 7, Staff, Ct)).Outcome);
+        var r = await ledger.BalanceAsync(new AccountRef(v, "http://othér.example:8002/"), Ct);
+
+        Assert.Equal(MoneyOutcome.Ok, r.Outcome);
+        Assert.Equal(7, r.FromBalance);
+        Assert.Equal(1, await Accounts(db, v));
+        Assert.StartsWith("http://xn--", await db.Text($"SELECT home FROM `money`.`accounts` WHERE agent_id = '{v}'"));
+    }
+
     [Fact]
     public async Task Visitor_wallets_off_refuses_both_sides()
     {
