@@ -51,6 +51,13 @@ public sealed class GridConfigWriter(LauncherPaths paths, Func<MoneySettings, Mo
         var moneyHere = PlanCatalog.RunsRobust(s);
         var gate = effective ?? MoneyRelease.Effective;
         var money = MoneyPlace.ServiceHere(s, gate) ? MoneyFor(s) : RegionServerMoney(s, gate);
+        var mode = MoneyPlace.GridMode(s, gate);
+        // Gloebit (money plan 4): its own module, or, without a complete app on this computer, GridGate's module refusing
+        // payments, so nothing runs free by accident.
+        var gloebit = MoneyPlace.GloebitHere(s, gate) ? s.Money.Gloebit : null;
+        if (gloebit is null && mode == MoneyMode.Gloebit && s.Plan != OwnerPlan.Connected
+            && (moneyHere ? WebsiteAddress.Economy(s) : s.Join?.Economy) is { Length: > 0 } refusingHelper)
+            money = new MoneyIni(null, null, refusingHelper, Paired: false);
 
         // 1. Robust.HG.ini
         var robust = LoadProto(Path.Combine(rt, "Robust.HG.ini.proto"));
@@ -104,8 +111,17 @@ public sealed class GridConfigWriter(LauncherPaths paths, Func<MoneySettings, Mo
             }
         }
         // Re-checked here as well as on the Money page: a hand-edited settings file must not break Robust's INI line.
-        if (moneyHere && money is not null)
-            robust.Set("LoginService", "Currency", MoneySymbolRule.Valid(s.Money.CurrencySymbol) ? s.Money.CurrencySymbol : MoneySymbolRule.Fallback);
+        // The viewer's currency name at login: the owner's symbol for coins, Gloebit's own in Gloebit mode, and nothing in
+        // Off (the prototype's "G$" was an upstream Gloebit leftover, shown even with no money; money plan 4).
+        if (moneyHere)
+        {
+            if (mode is MoneyMode.Play or MoneyMode.Real)
+                robust.Set("LoginService", "Currency", MoneySymbolRule.Valid(s.Money.CurrencySymbol) ? s.Money.CurrencySymbol : MoneySymbolRule.Fallback);
+            else if (mode == MoneyMode.Gloebit)
+                robust.Set("LoginService", "Currency", "G$");
+            else
+                robust.CommentOut("LoginService", "Currency");
+        }
         Finish(robust, "robust", extra, Path.Combine(rt, "Robust.HG.ini"));
 
         // 2. GridCommon.ini. A preset grid's own names each of its services; every other builds them from [Const].
@@ -127,7 +143,7 @@ public sealed class GridConfigWriter(LauncherPaths paths, Func<MoneySettings, Mo
         Finish(flotsam, "region", extra, Path.Combine(rt, "config-include", "FlotsamCache.ini"), applyExtra: false);
 
         foreach (var program in s.Programs)
-            WriteProgram(s, program, RegionModel.Loadable(s, program.Instance, held ?? NoRegions).ToList(), host, extra, hypergrid, money);
+            WriteProgram(s, program, RegionModel.Loadable(s, program.Instance, held ?? NoRegions).ToList(), host, extra, hypergrid, money, gloebit);
 
         // A deleted region whose program went keeps that folder; its region file goes off too.
         foreach (var r in s.Regions.Where(r => r.DeletedAt is not null && RegionModel.ProgramOf(s, r) is null))
@@ -151,6 +167,42 @@ public sealed class GridConfigWriter(LauncherPaths paths, Func<MoneySettings, Mo
         using var cert = MoneyCertificate.LoadOrCreate(Path.Combine(paths.Security, MoneyCertificate.FileName), TimeProvider.System);
         return new MoneyIni($"https://127.0.0.1:{s.MoneyPort}/money/v1/", MoneyCertificate.Fingerprint(cert), WebsiteAddress.Economy(s));
     }
+
+    /// <summary>The file Gloebit's module merges from its config directory (money plan 4).</summary>
+    private const string GloebitAddonFile = "Gloebit.ini";
+
+    /// <summary>
+    /// Gloebit's settings for one program (money plan 4), written last like the money section. GloebitHere already checked
+    /// every value is safe on an INI line (GloebitRules).
+    /// </summary>
+    private static Action<IniDocument> GloebitSection(GloebitSettings g, string addonDir) => doc =>
+    {
+        doc.Set("Economy", "economymodule", "Gloebit");
+        // Gloebit's module reads "economymodule" case-sensitively, which the [Economy] key above ("EconomyModule" in
+        // the proto) isn't; [Startup] has it spelled its way.
+        doc.Set("Startup", "economymodule", "Gloebit");
+        // Gloebit's module merges <ConfigDirectory>/Gloebit.ini over these settings (and makes one from its example, then
+        // stops, when there is none): it reads the program's own empty file instead (GloebitAddonFile).
+        doc.Set("Startup", "ConfigDirectory", Fwd(addonDir));
+        doc.Set("Gloebit", "Enabled", "true");
+        doc.Set("Gloebit", "GLBEnvironment", g.Environment);
+        doc.Set("Gloebit", "GLBKey", g.Key);
+        doc.Set("Gloebit", "GLBSecret", g.Secret);
+        doc.Set("Gloebit", "GLBOwnerName", g.OwnerName);
+        if (g.OwnerEmail.Length > 0) doc.Set("Gloebit", "GLBOwnerEmail", g.OwnerEmail);
+        doc.Set("Gloebit", "GLBShowNewSessionAuthIM", "true");
+        doc.Set("Gloebit", "GLBShowNewSessionPurchaseIM", "false");
+        doc.Set("Gloebit", "GLBShowWelcomeMessage", "true");
+        // Gloebit uses the program's own [DatabaseService]; an old specific connection would point it elsewhere.
+        doc.CommentOut("Gloebit", "GLBSpecificStorageProvider");
+        doc.CommentOut("Gloebit", "GLBSpecificConnectionString");
+    };
+
+    /// <summary>
+    /// Outside Gloebit mode (money plan 4): Gloebit's module starts enabled unless a [Gloebit] section says otherwise, so a
+    /// Gloebit.dll still in the runtime (a running region held it when the mode changed) would run beside the money module.
+    /// </summary>
+    private static void GloebitOff(IniDocument doc) => doc.Set("Gloebit", "Enabled", "false");
 
     /// <summary>
     /// A Region Server's money (money plan 3): its grid's service, when its grid has GridGate coins on. The pairing counts
@@ -198,7 +250,7 @@ public sealed class GridConfigWriter(LauncherPaths paths, Func<MoneySettings, Mo
     /// becomes <c>.off</c>, so OpenSim never loads a region the launcher holds back (parked, stopped or deleted).
     /// </summary>
     private void WriteProgram(LauncherSettings s, ProgramSettings program, List<RegionSettings> regions, string host, List<IniOverride> extra, bool hypergrid,
-        MoneyIni? money)
+        MoneyIni? money, GloebitSettings? gloebit)
     {
         var rt = paths.RuntimeOpenSim;
         var instance = program.Instance;
@@ -250,7 +302,25 @@ public sealed class GridConfigWriter(LauncherPaths paths, Func<MoneySettings, Mo
         os.Set("RegionReady", "alert_uri", $"http://127.0.0.1:{s.WebPort}/gridgate/regionready");
         SetSmartStart(os, s);
         os.Set("YEngine", "ScriptEnginesPath", Fwd(paths.ScriptEngines));
-        Finish(os, "region", extra, Path.Combine(paths.RegionDir(instance), "OpenSim.ini"), last: MoneySection(s, instance, money));
+        var moneySection = MoneySection(s, instance, money);
+        // Gloebit's module merges <ConfigDirectory>/Gloebit.ini over the program's settings before it reads them, and
+        // when there is none it copies its example there and stops the program. Every program has its own file, in every
+        // mode: a Gloebit.dll left in the runtime outside Gloebit mode reads it too.
+        var regionDir = paths.RegionDir(instance);
+        Directory.CreateDirectory(regionDir);
+        var nl = Environment.NewLine;
+        File.WriteAllText(Path.Combine(regionDir, GloebitAddonFile), gloebit is not null
+            ? "; GridGate writes Gloebit's settings in this folder's OpenSim.ini. This file stays empty so Gloebit's" + nl +
+              "; module, which merges it over them, finds nothing to change." + nl
+            : "; Gloebit isn't this grid's money now. GridGate keeps its module off, should its DLL still be here." + nl +
+              "[Gloebit]" + nl + "Enabled=false" + nl);
+        Finish(os, "region", extra, Path.Combine(regionDir, "OpenSim.ini"),
+            last: gloebit is not null ? GloebitSection(gloebit, regionDir) : doc =>
+            {
+                moneySection?.Invoke(doc);
+                GloebitOff(doc);
+                doc.Set("Startup", "ConfigDirectory", Fwd(regionDir));
+            });
 
         // 5. region definition files. Every other region file goes off first, by its exact name: after a rename that
         // only changes letter case ("home" to "Home") the old file must go off on Linux, and on Windows the new file

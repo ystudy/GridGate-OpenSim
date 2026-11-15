@@ -103,7 +103,7 @@ try {
 finally { Pop-Location }
 
 # --- bin/ -------------------------------------------------------------------------------------------------------
-$excludedFiles = @('Gloebit.dll')
+$excludedFiles = @('Gloebit.dll', 'Gloebit.dll.Proto')
 $excludedExtensions = @('.pdb', '.log', '.pid', '.db')
 # Windows-only native binaries, dropped from the linux-x64 package (paths relative to bin/, '/'-separated):
 #   lib32/            32-bit Windows natives
@@ -135,6 +135,9 @@ function Copy-Bin([string]$Source, [string]$Target, [string]$Relative) {
     }
 }
 Copy-Bin (Join-Path $repo 'bin') (Join-Path $pkg 'bin') ''
+# Gloebit's module, built from addon-modules/Gloebit, ships under another name: it switches itself on whenever
+# Gloebit.dll is present, so the launcher puts it in place only in Gloebit mode (money plan 4).
+[IO.File]::Copy((Join-Path $repo 'bin/Gloebit.dll'), (Join-Path $pkg 'bin/Gloebit.dll.Proto'), $true)
 
 # --- content/, runtime, version files, Debian installer files ---------------------------------------------------
 $content = Join-Path $pkg 'content'

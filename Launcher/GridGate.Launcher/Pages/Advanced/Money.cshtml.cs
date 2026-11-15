@@ -23,6 +23,10 @@ public sealed class MoneyModel(IGridController grid, MoneyGate gate, IMoneyPairC
     public PairState State { get; private set; }
     public DateTimeOffset? PairedAt { get; private set; }
     public bool CanPair { get; private set; }
+
+    /// <summary>The grid runs Gloebit: this Region Server enters its own Gloebit app instead of pairing (money plan 4).</summary>
+    public bool Gloebit { get; private set; }
+    public GloebitSettings? App { get; private set; }
     public string? Error { get; private set; }
     public string? Notice { get; private set; }
 
@@ -97,6 +101,25 @@ public sealed class MoneyModel(IGridController grid, MoneyGate gate, IMoneyPairC
         return Page();
     }
 
+    public IActionResult OnPostGloebit(string? environment, string? key, string? secret, string? ownerName, string? ownerEmail)
+    {
+        if (!Show()) return NotFound();
+        if (!Gloebit)
+        {
+            Error = "The grid doesn't use Gloebit.";
+            return Page();
+        }
+        (var app, Error) = GridGate.Launcher.Money.MoneyPageRules.GloebitFromForm(grid.CurrentSettings().Money.Gloebit, environment, key, secret, ownerName, ownerEmail);
+        if (Error is null)
+        {
+            grid.UpdateSettings(s => s with { Money = s.Money with { Gloebit = app } }, writeConfig: true);
+            Notice = "Saved. Restart the regions to start Gloebit.";
+        }
+        audit.Write(User, Ip, "money-gloebit", "money", Error is null ? "ok" : "refused");
+        Show();
+        return Page();
+    }
+
     public IActionResult OnPostUnpair()
     {
         if (!Show()) return NotFound();
@@ -117,7 +140,9 @@ public sealed class MoneyModel(IGridController grid, MoneyGate gate, IMoneyPairC
         GridMode = gate.Effective();
         // The saved join can be older than the grid's money (it's refreshed when the grid service starts); pairing reads
         // the grid fresh and says when there's nothing to pair, so the form is there whenever coins could run at all.
-        CanPair = gate.Approved(MoneyMode.Play);
+        Gloebit = GridMode == MoneyMode.Gloebit;
+        CanPair = gate.Approved(MoneyMode.Play) && !Gloebit;
+        App = s.Money.Gloebit;
         var p = s.Money.Pairing;
         PairedAt = p?.PairedAt;
         State = p is null || s.Join is not { } join || !string.Equals(p.GridHost, join.Host, StringComparison.OrdinalIgnoreCase) ? PairState.NotPaired

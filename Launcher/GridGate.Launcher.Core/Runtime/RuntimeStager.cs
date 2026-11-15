@@ -8,7 +8,9 @@ public sealed class RuntimeStager(LauncherPaths paths)
     private static readonly string[] ExcludedDirectories =
         ["assetcache", "Regions", "ScriptEngines", "fsassets", "MeshCache", "j2kDecodeCache", "maptiles", "bakes"];
 
-    private static readonly string[] ExcludedFiles = ["Gloebit.dll"];
+    // Gloebit's module switches itself on whenever its DLL is present, so it is never staged with the rest: SetGloebit puts
+    // it in place only in Gloebit mode (money plan 4). A package ships it as Gloebit.dll.Proto; a dev build has Gloebit.dll.
+    private static readonly string[] ExcludedFiles = ["Gloebit.dll", "Gloebit.dll.Proto"];
 
     // The program's live OpenSim.ini; config-include/Proto/Robust/OpenSim.ini is the region prototype and is staged.
     private const string TopLevelOnlyExcluded = "OpenSim.ini";
@@ -33,6 +35,26 @@ public sealed class RuntimeStager(LauncherPaths paths)
         return true;
     }
 
+    /// <summary>
+    /// Puts Gloebit's DLL in the runtime (<paramref name="on"/>) or takes it out. The package's <c>Gloebit.dll.Proto</c> is
+    /// preferred to a dev build's <c>Gloebit.dll</c>. A DLL a running region holds can't be replaced or removed on Windows:
+    /// that IOException is the caller's, who retries once the regions stop.
+    /// </summary>
+    public void SetGloebit(bool on)
+    {
+        var target = Path.Combine(paths.RuntimeOpenSim, "Gloebit.dll");
+        if (!on)
+        {
+            if (File.Exists(target)) File.Delete(target);
+            return;
+        }
+        var source = new[] { "Gloebit.dll.Proto", "Gloebit.dll" }.Select(n => Path.Combine(paths.OpenSimProgram, n)).FirstOrDefault(File.Exists)
+            ?? throw new FileNotFoundException("Gloebit's module isn't in this install (Gloebit.dll.Proto).");
+        Directory.CreateDirectory(paths.RuntimeOpenSim);
+        if (File.Exists(target) && File.ReadAllBytes(target).AsSpan().SequenceEqual(File.ReadAllBytes(source))) return;
+        File.Copy(source, target, overwrite: true);
+    }
+
     /// <summary>True when the program dir changed since the last staging (or nothing is staged yet).</summary>
     public bool NeedsStaging() => !(File.Exists(StampFile) && File.ReadAllText(StampFile) == ComputeStamp());
 
@@ -45,7 +67,7 @@ public sealed class RuntimeStager(LauncherPaths paths)
             Path.Combine(paths.Logs, "robust.log"), level);
         foreach (var instance in instances)
             WriteLogConfig(Path.Combine(paths.RuntimeOpenSim, $"gridgate-region-{instance}.log4net.xml"),
-                Path.Combine(paths.Logs, $"region-{instance}.log"), level);
+                Path.Combine(paths.Logs, $"region-{instance}.log"), level, region: true);
     }
 
     private string ComputeStamp()
@@ -95,7 +117,7 @@ public sealed class RuntimeStager(LauncherPaths paths)
         }
     }
 
-    private static void WriteLogConfig(string file, string logPath, string level)
+    private static void WriteLogConfig(string file, string logPath, string level, bool region = false)
     {
         using var w = XmlWriter.Create(file, new XmlWriterSettings { Indent = true });
         w.WriteStartDocument();
@@ -114,6 +136,15 @@ public sealed class RuntimeStager(LauncherPaths paths)
         Value(w, "conversionPattern", "%date{HH:mm:ss} - [%level] %message%newline");
         w.WriteEndElement(); // layout
         w.WriteEndElement(); // appender
+        if (region)
+        {
+            // Gloebit's API logs its request parameters, the app secret among them, at DEBUG (money plan 4): its loggers
+            // never go below INFO, whatever the owner picks.
+            w.WriteStartElement("logger");
+            w.WriteAttributeString("name", "Gloebit");
+            Value(w, "level", level.ToUpperInvariant() is "DEBUG" or "ALL" or "TRACE" or "VERBOSE" ? "INFO" : level);
+            w.WriteEndElement();
+        }
         w.WriteStartElement("root");
         Value(w, "level", level);
         w.WriteStartElement("appender-ref");

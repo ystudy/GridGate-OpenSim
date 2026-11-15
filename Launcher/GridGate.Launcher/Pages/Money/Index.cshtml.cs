@@ -23,7 +23,21 @@ public sealed class IndexModel(IGridController grid, MoneyGate gate, IMoneyBooks
     : PageModel
 {
     public IReadOnlyList<MoneyMode> Offered { get; private set; } = [];
+
+    /// <summary>Gloebit's section: shown when the gate lets Gloebit run (money plan 4).</summary>
+    public bool ShowGloebit { get; private set; }
+    public bool GloebitMode { get; private set; }
+
+    /// <summary>Gloebit calls back into the regions: say so where nobody outside can reach them.</summary>
+    public bool GloebitUnreachable { get; private set; }
+
+    [BindProperty] public bool ConfirmSwitch { get; set; }
     public MoneySettings Saved { get; private set; } = new();
+
+    /// <summary>What the settings form shows: what was posted when it was refused, so nothing has to be chosen again.</summary>
+    public MoneySettings Form => _refused ?? Saved;
+
+    private MoneySettings? _refused;
     public bool On { get; private set; }
     public bool CanChange { get; private set; }
     public MoneyTotals? Totals { get; private set; }
@@ -76,6 +90,10 @@ public sealed class IndexModel(IGridController grid, MoneyGate gate, IMoneyBooks
         // The form may only be posted with values the page itself would accept; anything else is refused whole.
         if (!ModelState.IsValid) Error = "Every number must be a whole number.";
         else Error = MoneyPageRules.Problem(next, MoneyPageRules.Offered(gate));
+        // Coins and Gloebit are separate books (design §10): the owner confirms that before switching.
+        if (Error is null && MoneyPageRules.CrossesGloebit(before.Mode, next.Mode) && !ConfirmSwitch)
+            Error = MoneyPageRules.SwitchWarning + " Tick the box to switch.";
+        if (Error is not null) _refused = next;
         if (Error is null)
         {
             // Only the fields above change: the program keys, and anything another page saved meanwhile, stay.
@@ -90,8 +108,30 @@ public sealed class IndexModel(IGridController grid, MoneyGate gate, IMoneyBooks
                 },
             }, writeConfig: true);
             audit.Write(User, Ip, "money-settings", "money", before.Mode == next.Mode ? "ok" : "mode " + next.Mode);
-            Notice = before.Mode == next.Mode ? "Saved." : "Saved. The new mode takes effect when GridGate restarts.";
+            Notice = before.Mode == next.Mode ? "Saved." : "Saved. " + MoneyPageRules.RestartWorld;
         }
+        await ShowAsync(ct);
+        return Page();
+    }
+
+    /// <summary>This computer's Gloebit app. An empty secret keeps the stored one; nothing posted is ever echoed or audited.</summary>
+    public async Task<IActionResult> OnPostGloebitAsync(string? environment, string? key, string? secret, string? ownerName, string? ownerEmail,
+        CancellationToken ct)
+    {
+        if (!Admin) return StatusCode(StatusCodes.Status403Forbidden);
+        if (!gate.Approved(MoneyMode.Gloebit))
+        {
+            Error = "Gloebit becomes available once the money safety review is approved.";
+            await ShowAsync(ct);
+            return Page();
+        }
+        (var app, Error) = MoneyPageRules.GloebitFromForm(grid.CurrentSettings().Money.Gloebit, environment, key, secret, ownerName, ownerEmail);
+        if (Error is null)
+        {
+            grid.UpdateSettings(s => s with { Money = s.Money with { Gloebit = app } }, writeConfig: true);
+            Notice = "Saved this computer's Gloebit app. " + MoneyPageRules.RestartWorld;
+        }
+        audit.Write(User, Ip, "money-gloebit", "money", Error is null ? "ok" : "refused");
         await ShowAsync(ct);
         return Page();
     }
@@ -267,6 +307,11 @@ public sealed class IndexModel(IGridController grid, MoneyGate gate, IMoneyBooks
     {
         Saved = grid.CurrentSettings().Money;
         Offered = MoneyPageRules.Offered(gate);
+        ShowGloebit = gate.Approved(MoneyMode.Gloebit);
+        GloebitMode = gate.Effective() == MoneyMode.Gloebit;
+        var current = grid.CurrentSettings();
+        GloebitUnreachable = GloebitMode && (current.Plan == OwnerPlan.Local
+            || current.Plan == OwnerPlan.GridAsset && !Core.Config.HostAddress.IsPublic(current.Hostname));
         On = gate.ServiceHere;
         CanChange = Admin;
         if (!On) return;

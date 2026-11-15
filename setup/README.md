@@ -5,7 +5,8 @@
 ```
 gridgate/
   launcher/        GridGate.Launcher, published framework-dependent
-  bin/             the built OpenSim runtime (no *.pdb, *.log, *.pid, *.db, runtime-only folders, Gloebit.dll)
+  bin/             the built OpenSim runtime (no *.pdb, *.log, *.pid, *.db, runtime-only folders, Gloebit.dll;
+                   Gloebit's module ships as Gloebit.dll.Proto, built from addon-modules/Gloebit)
   content/         README.md and starter-region.oar (when present)
   dotnet/          private ASP.NET Core runtime for the RID
   VERSION          the package version, one line

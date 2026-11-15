@@ -9,6 +9,12 @@ description = "Launcher tests' fake access token"
 regexes = ['''^tok-1234567890abcdefghijklmnopqrstuv$''']
 
 [[allowlists]]
+description = "Launcher tests' made-up Gloebit app keys and secrets (money plan 4)"
+condition = "AND"
+paths = ['''^Launcher/GridGate\.Launcher\.(Integration)?Tests/''']
+regexes = ['''^(0b9e3c2a-1111-4c5d-8e9f-0123456789ab|7d3f9a10-2222-4b6c-9d8e-fedcba987654|7d3f9a1022224b6c9d8efedcba987654|1c2d3e4f-5555-4a6b-8c7d-0123456789ff)$''']
+
+[[allowlists]]
 description = "Object and avatar UUIDs in the sample LSL scripts"
 condition = "AND"
 paths = ['''^bin/assets/.*\.lsl$''']

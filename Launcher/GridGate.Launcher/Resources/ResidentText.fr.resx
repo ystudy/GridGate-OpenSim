@@ -576,6 +576,8 @@
   <data name="Coins.Title" xml:space="preserve"><value>Pièces</value></data>
   <data name="Coins.Intro" xml:space="preserve"><value>L’argent de cette grille s’appelle {0} ({1}).</value></data>
   <data name="Coins.Play" xml:space="preserve"><value>Ce sont des pièces de jeu. Elles ne peuvent être ni achetées ni encaissées.</value></data>
+  <data name="Economy.Gloebit" xml:space="preserve"><value>Cette grille utilise Gloebit. Achetez des gloebits sur le site de Gloebit.</value></data>
+  <data name="Coins.Gloebit" xml:space="preserve"><value>Cette grille utilise Gloebit, un service externe, pour les paiements. Achetez des gloebits et encaissez-les sur le site de Gloebit : {0}</value></data>
   <data name="Coins.HowTo" xml:space="preserve"><value>Comment en obtenir</value></data>
   <data name="Coins.Starting" xml:space="preserve"><value>Chaque nouveau résident commence avec {0}.</value></data>
   <data name="Coins.Allowance" xml:space="preserve"><value>Chaque semaine, vous recevez {0}.</value></data>

@@ -9,6 +9,10 @@
 {
     <p>@T["Coins.Off"]</p>
 }
+else if (Model.Mode == GridGate.Launcher.Core.Money.MoneyMode.Gloebit)
+{
+    <p id="coins-gloebit">@T["Coins.Gloebit", ""]<a href="@Model.GloebitSite" rel="noopener">@Model.GloebitSite</a></p>
+}
 else
 {
     <p>@T["Coins.Intro", Model.Name, Model.Symbol]</p>

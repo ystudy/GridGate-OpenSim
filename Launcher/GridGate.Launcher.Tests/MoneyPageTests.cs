@@ -203,13 +203,13 @@ public sealed class MoneyPageTests
     }
 
     [Fact]
-    public async Task Open_gate_offers_off_and_play_only()
+    public async Task Open_gate_offers_off_play_and_gloebit()
     {
         await using var f = Make(new FakeBooks());
 
         var doc = await PageAsync(await SignedInAsync(f), "/money");
 
-        Assert.Equal(["Off", "Play"], doc.QuerySelectorAll("select[name=Mode] option").Select(o => o.GetAttribute("value")));
+        Assert.Equal(["Off", "Play", "Gloebit"], doc.QuerySelectorAll("select[name=Mode] option").Select(o => o.GetAttribute("value")));
     }
 
     [Fact]
@@ -234,7 +234,7 @@ public sealed class MoneyPageTests
         using var r = await PostAsync(c, "/money", "Settings", Settings(mode: "Play"));
 
         Assert.Equal(MoneyMode.Play, f.Store.LoadOrCreate().Money.Mode);
-        Assert.Contains("The new mode takes effect when GridGate restarts.", MainText(await ParseAsync(r)));
+        Assert.Contains("Takes effect after you restart GridGate and then the world (Power → Restart on the dashboard).", MainText(await ParseAsync(r)));
     }
 
     [Theory]
@@ -631,6 +631,177 @@ public sealed class MoneyPageTests
         Assert.Contains(Audit(f), a => a.GetProperty("action").GetString() == "money-pairing-remove" && a.GetProperty("target").GetString() == "192.168.1.20");
     }
 
+    // ---- Gloebit (money plan 4, task 1) ----
+
+    private const string GKey = "0b9e3c2a-1111-4c5d-8e9f-0123456789ab";
+    private const string GSecret = "7d3f9a10-2222-4b6c-9d8e-fedcba987654";
+    private static readonly GloebitSettings GApp = new("sandbox", GKey, GSecret, "Grid Owner", "owner@example.org");
+
+    private static Dictionary<string, string> GloebitForm(string secret = GSecret) => new()
+    {
+        ["Environment"] = "sandbox", ["Key"] = GKey, ["Secret"] = secret, ["OwnerName"] = "Grid Owner", ["OwnerEmail"] = "owner@example.org",
+    };
+
+    [Fact]
+    public async Task Gloebit_is_offered_when_the_gate_allows()
+    {
+        await using var f = Make(new FakeBooks());
+
+        var doc = await PageAsync(await SignedInAsync(f), "/money");
+
+        Assert.Equal(["Off", "Play", "Gloebit"], doc.QuerySelectorAll("select[name=Mode] option").Select(o => o.GetAttribute("value")));
+    }
+
+    [Fact]
+    public async Task Closed_gate_offers_no_gloebit()
+    {
+        await using var f = Make(new FakeBooks(), open: false);
+
+        var doc = await PageAsync(await SignedInAsync(f), "/money");
+
+        Assert.DoesNotContain(doc.QuerySelectorAll("select[name=Mode] option"), o => o.GetAttribute("value") == "Gloebit");
+        Assert.Null(doc.QuerySelector("#money-gloebit"));
+    }
+
+    [Fact]
+    public async Task Gloebit_settings_save_and_audit_without_values()
+    {
+        await using var f = Make(new FakeBooks());
+
+        using var r = await PostAsync(await SignedInAsync(f), "/money", "Gloebit", GloebitForm());
+
+        Assert.Equal(GApp, f.Grid.CurrentSettings().Money.Gloebit);
+        var line = Assert.Single(Audit(f), a => a.GetProperty("action").GetString() == "money-gloebit");
+        Assert.Equal("ok", line.GetProperty("result").GetString());
+        Assert.DoesNotContain(GKey, line.GetRawText());
+        Assert.DoesNotContain(GSecret, line.GetRawText());
+    }
+
+    [Fact]
+    public async Task Saving_the_app_says_restart_the_world()
+    {
+        await using var f = Make(new FakeBooks());
+
+        using var r = await PostAsync(await SignedInAsync(f), "/money", "Gloebit", GloebitForm());
+
+        Assert.Contains("Saved this computer's Gloebit app. " + MoneyPageRules.RestartWorld, MainText(await ParseAsync(r)));
+    }
+
+    [Fact]
+    public async Task A_new_key_needs_its_own_secret()
+    {
+        // An empty secret keeps the saved one only for the same app (review, money plan 4).
+        await using var f = Make(new FakeBooks(), money: m => m with { Gloebit = GApp });
+        var form = GloebitForm(secret: "");
+        form["Key"] = "1c2d3e4f-5555-4a6b-8c7d-0123456789ff";
+
+        using var r = await PostAsync(await SignedInAsync(f), "/money", "Gloebit", form);
+
+        Assert.Equal(GApp, f.Grid.CurrentSettings().Money.Gloebit);
+        Assert.Contains("Type the secret that goes with the new key.", (await ParseAsync(r)).QuerySelector(".alert-danger")!.TextContent);
+    }
+
+    [Fact]
+    public async Task Supervisor_cannot_save_a_gloebit_app()
+    {
+        await using var f = Make(new FakeBooks());
+
+        using var r = await PostAsync(await SignedInAsync(f, "supervisor"), "/money", "Gloebit", GloebitForm());
+
+        Assert.Equal(HttpStatusCode.Forbidden, r.StatusCode);
+        Assert.Null(f.Grid.CurrentSettings().Money.Gloebit);
+    }
+
+    [Fact]
+    public async Task Secret_is_never_shown_back()
+    {
+        await using var f = Make(new FakeBooks(), money: m => m with { Gloebit = GApp });
+
+        var html = (await PageAsync(await SignedInAsync(f), "/money")).DocumentElement.OuterHtml;
+
+        Assert.DoesNotContain(GSecret, html);
+        Assert.DoesNotContain(GKey, html);
+        Assert.Contains("••••89ab", html);
+    }
+
+    [Fact]
+    public async Task Empty_secret_keeps_the_stored_one()
+    {
+        await using var f = Make(new FakeBooks(), money: m => m with { Gloebit = GApp });
+
+        using var r = await PostAsync(await SignedInAsync(f), "/money", "Gloebit", GloebitForm(secret: ""));
+
+        Assert.Equal(GSecret, f.Grid.CurrentSettings().Money.Gloebit!.Secret);
+    }
+
+    [Fact]
+    public async Task Bad_gloebit_values_are_refused()
+    {
+        await using var f = Make(new FakeBooks());
+        var form = GloebitForm();
+        form["Key"] = "not-a-key";
+
+        using var r = await PostAsync(await SignedInAsync(f), "/money", "Gloebit", form);
+
+        Assert.NotNull((await ParseAsync(r)).QuerySelector(".alert-danger"));
+        Assert.Null(f.Grid.CurrentSettings().Money.Gloebit);
+    }
+
+    [Fact]
+    public async Task Gloebit_mode_needs_a_complete_app()
+    {
+        await using var f = Make(new FakeBooks());
+
+        using var r = await PostAsync(await SignedInAsync(f), "/money", "Settings", Settings(mode: "Gloebit"));
+
+        Assert.NotNull((await ParseAsync(r)).QuerySelector(".alert-danger"));
+        Assert.Equal(MoneyMode.Play, f.Grid.CurrentSettings().Money.Mode);
+    }
+
+    [Fact]
+    public async Task Switching_coins_and_gloebit_needs_the_tick()
+    {
+        await using var f = Make(new FakeBooks(), money: m => m with { Gloebit = GApp });
+        var c = await SignedInAsync(f);
+
+        using (var refused = await PostAsync(c, "/money", "Settings", Settings(mode: "Gloebit")))
+        {
+            var doc = await ParseAsync(refused);
+            Assert.Contains("GridGate coin balances don't move to Gloebit", doc.QuerySelector(".alert-danger")!.TextContent);
+            Assert.Equal(MoneyMode.Play, f.Grid.CurrentSettings().Money.Mode);
+            // The form keeps what the owner chose, so ticking the box is all that's left to do (live check, plan 4).
+            Assert.Equal("Gloebit", doc.QuerySelector("#money-mode option[selected]")?.GetAttribute("value"));
+        }
+
+        var ticked = Settings(mode: "Gloebit");
+        ticked["ConfirmSwitch"] = "true";
+        using var ok = await PostAsync(c, "/money", "Settings", ticked);
+
+        Assert.Equal(MoneyMode.Gloebit, f.Grid.CurrentSettings().Money.Mode);
+    }
+
+    [Fact]
+    public async Task Mode_change_says_restart_the_world()
+    {
+        await using var f = Make(new FakeBooks(), money: m => m with { Mode = MoneyMode.Off });
+
+        using var r = await PostAsync(await SignedInAsync(f), "/money", "Settings", Settings(mode: "Play"));
+
+        Assert.Contains("Takes effect after you restart GridGate and then the world (Power → Restart on the dashboard).",
+            MainText(await ParseAsync(r)));
+    }
+
+    [Fact]
+    public async Task Network_only_gloebit_warns_about_reachability()
+    {
+        await using var f = Make(new FakeBooks(), money: m => m with { Mode = MoneyMode.Gloebit, Gloebit = GApp });
+
+        var text = MainText(await PageAsync(await SignedInAsync(f), "/money"));
+
+        Assert.Contains("Gloebit handles payments on this grid.", text);
+        Assert.Contains("Gloebit needs your regions reachable from the internet: purchases and payments call back to them.", text);
+    }
+
     [Fact]
     public async Task Person_page_shows_balance_and_history()
     {
@@ -736,7 +907,7 @@ public sealed class MoneyPageTests
 
         var notice = doc.QuerySelector("#money-restart");
         Assert.NotNull(notice);
-        Assert.Equal("Money was turned on after GridGate started. Payments start when GridGate restarts.", notice!.TextContent.Trim());
+        Assert.Equal("Money was turned on after GridGate started. Restart GridGate and then the world (Power → Restart) for money to start.", notice!.TextContent.Trim());
         Assert.DoesNotContain("alert-danger", notice.ClassName);
         Assert.Null(doc.QuerySelector("#money-database"));
         Assert.Empty(books.Calls);

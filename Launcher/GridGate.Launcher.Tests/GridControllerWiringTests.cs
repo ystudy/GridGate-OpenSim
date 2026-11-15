@@ -479,6 +479,28 @@ public sealed class GridControllerWiringTests : IAsyncDisposable
     }
 
     [Fact]
+    public void Write_config_stages_gloebit_only_in_gloebit_mode()
+    {
+        // Gloebit's module switches itself on whenever its DLL is present (money plan 4).
+        Directory.CreateDirectory(_paths.OpenSimProgram);
+        File.WriteAllBytes(Path.Combine(_paths.OpenSimProgram, "Gloebit.dll.Proto"), [7]);
+        var grid = NewGrid(TimeProvider.System, moneyEffective: Core.Money.MoneyGate.Open);
+        var app = new Core.Money.GloebitSettings("sandbox", "0b9e3c2a-1111-4c5d-8e9f-0123456789ab", "7d3f9a10-2222-4b6c-9d8e-fedcba987654", "Grid Owner");
+        var dll = Path.Combine(_paths.RuntimeOpenSim, "Gloebit.dll");
+        _store.Save(_store.LoadOrCreate() with
+        {
+            Programs = [new ProgramSettings("p1", _ports[3] + 100, _ports[6] + 100)],
+            Money = new Core.Money.MoneySettings(Mode: Core.Money.MoneyMode.Gloebit, Gloebit: app),
+        });
+
+        grid.RegenerateConfig();
+        Assert.True(File.Exists(dll));
+
+        grid.UpdateSettings(s => s with { Money = s.Money with { Mode = Core.Money.MoneyMode.Play } });
+        Assert.False(File.Exists(dll));
+    }
+
+    [Fact]
     public void Region_server_makes_no_program_keys()
     {
         var grid = NewGrid(TimeProvider.System, moneyEffective: Core.Money.MoneyGate.Open);

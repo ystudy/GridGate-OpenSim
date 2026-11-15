@@ -543,7 +543,7 @@ HGInventoryServicePlugin="HGInventoryService@OpenSim.Services.HypergridService.d
 ;; end hypergrid
 ; Ask co-operative viewers to use a different currency name
 ;; Set by GridGate
-Currency="G$"
+;Currency="G$" ; GridGate writes the currency from the money settings (money plan 4)
 
 ;; Set minimum fee to publish classified
 ClassifiedFee=0

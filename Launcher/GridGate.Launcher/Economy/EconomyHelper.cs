@@ -61,6 +61,9 @@ public sealed class EconomyHelper(
         var shortfall = call.Params.GetValueOrDefault("currencyBuy") is int n ? n : 0;
         return call.Method switch
         {
+            // Gloebit sells its own currency (money plan 4): the viewer is sent to Gloebit's purchase page.
+            "getCurrencyQuote" or "preflightBuyLandPrep" or "buyLandPrep" when mode == MoneyMode.Gloebit && (call.Method == "getCurrencyQuote" || shortfall > 0) =>
+                XmlRpc.Response([("success", false), ("errorMessage", t["Economy.Gloebit"].Value), ("errorURI", GloebitSite(s) + "purchase/")]),
             "getCurrencyQuote" => Refuse(s, mode switch
             {
                 MoneyMode.Off => t["Economy.NoMoney"],
@@ -93,6 +96,10 @@ public sealed class EconomyHelper(
         mode == MoneyMode.Off ? t["Economy.NoMoneyLand"] : t["Economy.Shortfall", shortfall.ToString("N0", CultureInfo.CurrentCulture), symbol];
 
     private static string? Text(XmlRpc.Call call, string name) => call.Params.GetValueOrDefault(name) as string;
+
+    /// <summary>Gloebit's site for this grid's app: its sandbox for a sandbox app, otherwise the real one.</summary>
+    public static string GloebitSite(LauncherSettings s) =>
+        s.Money.Gloebit?.Environment == "sandbox" ? "https://sandbox.gloebit.com/" : "https://www.gloebit.com/";
 
     /// <summary>Where the viewer's OK button goes: the page that says how coins work here.</summary>
     private static string HelpUri(LauncherSettings s) => WebsiteAddress.Base(s) + "/coins";

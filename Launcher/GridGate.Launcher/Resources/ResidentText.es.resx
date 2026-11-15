@@ -576,6 +576,8 @@
   <data name="Coins.Title" xml:space="preserve"><value>Monedas</value></data>
   <data name="Coins.Intro" xml:space="preserve"><value>El dinero de este grid se llama {0} ({1}).</value></data>
   <data name="Coins.Play" xml:space="preserve"><value>Son monedas de juego. No se pueden comprar ni canjear por dinero.</value></data>
+  <data name="Economy.Gloebit" xml:space="preserve"><value>Este grid usa Gloebit. Compre gloebits en el sitio web de Gloebit.</value></data>
+  <data name="Coins.Gloebit" xml:space="preserve"><value>Este grid usa Gloebit, un servicio externo, para los pagos. Compre gloebits y cobre en el sitio web de Gloebit: {0}</value></data>
   <data name="Coins.HowTo" xml:space="preserve"><value>Cómo conseguirlas</value></data>
   <data name="Coins.Starting" xml:space="preserve"><value>Cada nuevo residente empieza con {0}.</value></data>
   <data name="Coins.Allowance" xml:space="preserve"><value>Cada semana recibe {0}.</value></data>

@@ -143,3 +143,5 @@ bin/config-addon-*/*.ini
 
 # glTF test models fetched by tests/GridGate.ModelImport.Tests/fetch-models.sh
 tests/GridGate.ModelImport.Tests/Models/downloaded/
+# Gloebit's module as the package ships it, made from bin/Gloebit.dll by setup/package.ps1 (money plan 4).
+bin/Gloebit.dll.Proto

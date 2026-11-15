@@ -4,12 +4,25 @@
     ViewData["Title"] = "Money";
 }
 <nav aria-label="breadcrumb"><ol class="breadcrumb"><li class="breadcrumb-item"><a href="/advanced">Settings</a></li><li class="breadcrumb-item active" aria-current="page">@ViewData["Title"]</li></ol></nav>
-<h1>Money<help-tip class="help-start">This Region Server's regions take the grid's coins once it is paired with the Grid Asset Server's money.</help-tip></h1>
+<h1>Money<help-tip class="help-start">@(Model.Gloebit ? "This Region Server's regions take Gloebit with this computer's own Gloebit app." : "This Region Server's regions take the grid's coins once it is paired with the Grid Asset Server's money.")</help-tip></h1>
 <error-box text="@Model.Error" />
 <ok-box text="@Model.Notice" />
 <section class="work-panel" aria-labelledby="rs-money-title">
     <h2 id="rs-money-title" class="panel-title">The grid's money</h2>
     <p id="rs-money-mode">@Model.ModeText</p>
+    @if (Model.Gloebit)
+    {
+        @if (Model.App?.Complete != true)
+        {
+            <p id="rs-gloebit-missing">These regions refuse payments until this computer's Gloebit app is saved.</p>
+        }
+        else
+        {
+            <p id="rs-gloebit-app">This computer's Gloebit app: @Model.App.Environment, key @GridGate.Launcher.Core.Money.GloebitRules.Masked(Model.App.Key).</p>
+        }
+        <p>Gloebit runs inside each region, so this computer needs its own app from Gloebit's merchant tools. There is nothing to pair.</p>
+        @await Html.PartialAsync("_GloebitForm", new GridGate.Launcher.Money.GloebitFormModel(Model.App, "/advanced/money?handler=Gloebit"))
+    }
     @if (Model.CanPair)
     {
         <p id="rs-money-state">
