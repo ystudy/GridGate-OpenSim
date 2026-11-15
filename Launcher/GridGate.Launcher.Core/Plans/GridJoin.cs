@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Xml;
 using System.Xml.Linq;
+using GridGate.Launcher.Core.Ini;
 using GridGate.Launcher.Core.Money;
 using GridGate.Launcher.Core.Settings;
 
@@ -158,15 +159,15 @@ public static class GridJoin
             (from, to) = (a, b);
         }
 
-        var gridName = Get("gridname") ?? host;
-        var login = Get("login") ?? $"http://{host}:{publicPort}/";
+        // Plain-HTTP grid information goes into this computer's INIs, which OpenSim reads with ${Section|Key} expansion:
+        // a name or address it would read as more than text is dropped (IniSafe; money review 2026-11-15, H-1).
+        var gridName = IniSafe.Name(Get("gridname")) ?? host;
+        var login = IniSafe.Address(Get("login")) ?? $"http://{host}:{publicPort}/";
         // Money (money plan 3): missing from an older Grid Asset Server (null); a mode this launcher can't read is Off.
         MoneyMode? money = Get(GridInfoKeys.Money) is { } m ? Enum.TryParse<MoneyMode>(m, ignoreCase: true, out var mode) && Enum.IsDefined(mode) ? mode : MoneyMode.Off : null;
         int? moneyPort = int.TryParse(Get(GridInfoKeys.MoneyPort), NumberStyles.None, CultureInfo.InvariantCulture, out var mp) && mp is > 0 and <= 65535 ? mp : null;
-        var fingerprint = Get(GridInfoKeys.MoneyFingerprint) is { Length: > 0 } fp ? fp : null;
-        // Plain-HTTP grid info: only an http(s) address with no control characters goes into a region's INI.
-        var economy = Get("economy") is { Length: > 0 } e && !e.Any(char.IsControl) && Uri.TryCreate(e, UriKind.Absolute, out var eu)
-                      && eu.Scheme is "http" or "https" ? e : null;
+        var fingerprint = Get(GridInfoKeys.MoneyFingerprint) is { Length: > 0 } fp && fp.All(char.IsAsciiHexDigit) ? fp : null;
+        var economy = IniSafe.Address(Get("economy"));
         return new JoinedGrid(host, publicPort, privatePort, gridName, login, Get(GridInfoKeys.Version)!, hypergrid, from, to,
             money, moneyPort, fingerprint, economy);
     }

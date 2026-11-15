@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using GridGate.Launcher.Core.Ini;
 using GridGate.Launcher.Core.Modules;
 
 namespace GridGate.Launcher.Core.Settings;
@@ -115,7 +116,7 @@ public static partial class SettingsValidator
     }
 
     // Nini (which OpenSim reads the INIs with) treats ; and # as comments and expands ${Section|Key}.
-    private const string ForbiddenInGridName = "\";#$[]{}=\\";
+    private const string ForbiddenInGridName = IniSafe.Forbidden;
 
     /// <summary>Null when the trimmed name is 1–64 characters with no control characters and none of <c>" ; # $ [ ] { } = \</c>.</summary>
     public static string? GridNameError(string? name)

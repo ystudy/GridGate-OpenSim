@@ -9,7 +9,9 @@ public static class MoneySymbolRule
 {
     public const string Fallback = "C$";
 
-    private static readonly char[] Forbidden = [';', '"', '=', '[', ']', '<', '>', '&', '\\'];
+    // A lone '$' is fine (C$, L$). '{' and '}' would let OpenSim's INI reader expand "${...}" (money review 2026-11-15,
+    // H-3: "${x}" stops Robust starting), and '#' starts a comment.
+    private static readonly char[] Forbidden = [';', '#', '"', '=', '[', ']', '{', '}', '<', '>', '&', '\\'];
 
     public static bool Valid(string? symbol) =>
         symbol is { Length: >= 1 and <= 4 } && !symbol.Any(c => char.IsWhiteSpace(c) || char.IsControl(c) || Forbidden.Contains(c));
