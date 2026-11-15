@@ -116,7 +116,8 @@ public sealed class MoneyLedgerGapTests(MoneyMariaDb maria) : IClassFixture<Mone
         // Every debit that stuck took 3; a returned purchase gave its 3 back.
         var stuck = results.Count(r => r.Result.Outcome == MoneyOutcome.Ok && r.Kind != "returned");
         Assert.Equal(100 - 3 * stuck, await Of(db, A));
-        Assert.InRange(await Of(db, A), 0, 2);
+        // Not "0 to 2": a returned purchase gives its coins back after other debits may have been refused for want of them.
+        Assert.True(await Of(db, A) >= 0);
         Assert.Equal(0, await db.Scalar($"SELECT COUNT(*) FROM `money`.`holds` WHERE state = 'open'"));
         await AssertSound(ledger, db);
     }
