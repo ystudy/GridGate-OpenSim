@@ -271,6 +271,7 @@ public sealed class RegionServerMoneyPageTests
         var doc = await PageAsync(await SignedInAsync(f), "/advanced/money");
 
         Assert.Contains("The grid uses Gloebit.", MainText(doc));
+        Assert.DoesNotContain("paired", doc.QuerySelector("h1")!.TextContent);
         Assert.NotNull(doc.QuerySelector("form[action*='handler=Gloebit']"));
         Assert.Null(doc.QuerySelector("form[action*='handler=Pair']"));
         Assert.Contains("These regions refuse payments until this computer's Gloebit app is saved.", MainText(doc));

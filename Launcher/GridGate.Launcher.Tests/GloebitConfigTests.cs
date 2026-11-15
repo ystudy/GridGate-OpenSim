@@ -73,6 +73,24 @@ public sealed class GloebitConfigTests : IDisposable
         }
     }
 
+    /// <summary>
+    /// Outside Gloebit mode a region may still find Gloebit's DLL (one a running region held when the mode changed).
+    /// Gloebit's module starts enabled unless a [Gloebit] section says otherwise, so every such INI says Enabled=false,
+    /// and nothing more (live check, money plan 4).
+    /// </summary>
+    internal static void AssertGloebitOff(IniDocument r) =>
+        Assert.Equal([("Enabled", "false")], r.ActiveEntries().Where(e => e.Section == "Gloebit").Select(e => (e.Key, e.Value)));
+
+    [Fact]
+    public void Gloebit_mode_names_gloebit_where_its_module_looks()
+    {
+        // Gloebit reads [Startup] and [Economy] "economymodule" case-sensitively; GridGate's [Economy] key is
+        // "EconomyModule", so without this Gloebit only "defaults to Gloebit since dll is present" (live check).
+        Write(Grid(MoneyMode.Gloebit, App));
+
+        Assert.Contains(Region("p1").ActiveEntries(), e => e is ("Startup", "economymodule", "Gloebit"));
+    }
+
     [Fact]
     public void Gloebit_reads_no_addon_file_of_its_own()
     {
@@ -97,7 +115,7 @@ public sealed class GloebitConfigTests : IDisposable
         var r = Region("p1");
         Assert.Equal(GridConfigWriter.MoneyModuleName, r.Get("Economy", "EconomyModule"));
         Assert.Equal("false", r.Get("GridGateMoney", "Paired"));
-        Assert.DoesNotContain(r.ActiveEntries(), e => e.Section == "Gloebit");
+        AssertGloebitOff(r);
         Assert.NotEqual("Gloebit", r.Get("Economy", "economymodule"));
     }
 
@@ -108,7 +126,7 @@ public sealed class GloebitConfigTests : IDisposable
         {
             Write(Grid(mode, App));
             var r = Region("p1");
-            Assert.DoesNotContain(r.ActiveEntries(), e => e.Section == "Gloebit");
+            AssertGloebitOff(r);
             Assert.DoesNotContain(r.ActiveEntries(), e => e.Value.Contains("Gloebit", StringComparison.OrdinalIgnoreCase) && e.Section == "Economy");
         }
     }
@@ -119,7 +137,8 @@ public sealed class GloebitConfigTests : IDisposable
         Write(Grid(MoneyMode.Gloebit, App), open: false);
 
         var r = Region("p1");
-        Assert.DoesNotContain(r.ActiveEntries(), e => e.Section is "Gloebit" or "GridGateMoney");
+        Assert.DoesNotContain(r.ActiveEntries(), e => e.Section == "GridGateMoney");
+        AssertGloebitOff(r);
         Assert.Equal("", r.Get("Economy", "EconomyModule"));
     }
 
@@ -142,7 +161,7 @@ public sealed class GloebitConfigTests : IDisposable
         Write(Grid(MoneyMode.Gloebit, App with { OwnerName = "Grid; Owner" })); // a hand-edited settings file
 
         var r = Region("p1");
-        Assert.DoesNotContain(r.ActiveEntries(), e => e.Section == "Gloebit");
+        AssertGloebitOff(r);
         Assert.Equal("false", r.Get("GridGateMoney", "Paired"));
     }
 

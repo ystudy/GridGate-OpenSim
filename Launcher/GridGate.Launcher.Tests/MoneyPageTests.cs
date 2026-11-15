@@ -731,8 +731,11 @@ public sealed class MoneyPageTests
 
         using (var refused = await PostAsync(c, "/money", "Settings", Settings(mode: "Gloebit")))
         {
-            Assert.Contains("GridGate coin balances don't move to Gloebit", (await ParseAsync(refused)).QuerySelector(".alert-danger")!.TextContent);
+            var doc = await ParseAsync(refused);
+            Assert.Contains("GridGate coin balances don't move to Gloebit", doc.QuerySelector(".alert-danger")!.TextContent);
             Assert.Equal(MoneyMode.Play, f.Grid.CurrentSettings().Money.Mode);
+            // The form keeps what the owner chose, so ticking the box is all that's left to do (live check, plan 4).
+            Assert.Equal("Gloebit", doc.QuerySelector("#money-mode option[selected]")?.GetAttribute("value"));
         }
 
         var ticked = Settings(mode: "Gloebit");

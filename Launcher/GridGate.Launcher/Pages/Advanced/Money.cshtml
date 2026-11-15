@@ -4,7 +4,7 @@
     ViewData["Title"] = "Money";
 }
 <nav aria-label="breadcrumb"><ol class="breadcrumb"><li class="breadcrumb-item"><a href="/advanced">Settings</a></li><li class="breadcrumb-item active" aria-current="page">@ViewData["Title"]</li></ol></nav>
-<h1>Money<help-tip class="help-start">This Region Server's regions take the grid's coins once it is paired with the Grid Asset Server's money.</help-tip></h1>
+<h1>Money<help-tip class="help-start">@(Model.Gloebit ? "This Region Server's regions take Gloebit with this computer's own Gloebit app." : "This Region Server's regions take the grid's coins once it is paired with the Grid Asset Server's money.")</help-tip></h1>
 <error-box text="@Model.Error" />
 <ok-box text="@Model.Notice" />
 <section class="work-panel" aria-labelledby="rs-money-title">

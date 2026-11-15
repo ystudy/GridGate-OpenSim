@@ -178,6 +178,9 @@ public sealed class GridConfigWriter(LauncherPaths paths, Func<MoneySettings, Mo
     private static Action<IniDocument> GloebitSection(GloebitSettings g, string addonDir) => doc =>
     {
         doc.Set("Economy", "economymodule", "Gloebit");
+        // Gloebit's module reads "economymodule" case-sensitively, which the [Economy] key above ("EconomyModule" in
+        // the proto) isn't; [Startup] has it spelled its way.
+        doc.Set("Startup", "economymodule", "Gloebit");
         // Gloebit's module merges <ConfigDirectory>/Gloebit.ini over these settings (and makes one from its example, then
         // stops, when there is none): it reads the program's own empty file instead (GloebitAddonFile).
         doc.Set("Startup", "ConfigDirectory", Fwd(addonDir));
@@ -194,6 +197,12 @@ public sealed class GridConfigWriter(LauncherPaths paths, Func<MoneySettings, Mo
         doc.CommentOut("Gloebit", "GLBSpecificStorageProvider");
         doc.CommentOut("Gloebit", "GLBSpecificConnectionString");
     };
+
+    /// <summary>
+    /// Outside Gloebit mode (money plan 4): Gloebit's module starts enabled unless a [Gloebit] section says otherwise, so a
+    /// Gloebit.dll still in the runtime (a running region held it when the mode changed) would run beside the money module.
+    /// </summary>
+    private static void GloebitOff(IniDocument doc) => doc.Set("Gloebit", "Enabled", "false");
 
     /// <summary>
     /// A Region Server's money (money plan 3): its grid's service, when its grid has GridGate coins on. The pairing counts
@@ -303,7 +312,7 @@ public sealed class GridConfigWriter(LauncherPaths paths, Func<MoneySettings, Mo
         }
         else if (File.Exists(addonFile)) File.Delete(addonFile);
         Finish(os, "region", extra, Path.Combine(paths.RegionDir(instance), "OpenSim.ini"),
-            last: gloebit is not null ? GloebitSection(gloebit, paths.RegionDir(instance)) : moneySection);
+            last: gloebit is not null ? GloebitSection(gloebit, paths.RegionDir(instance)) : doc => { moneySection?.Invoke(doc); GloebitOff(doc); });
 
         // 5. region definition files. Every other region file goes off first, by its exact name: after a rename that
         // only changes letter case ("home" to "Home") the old file must go off on Linux, and on Windows the new file

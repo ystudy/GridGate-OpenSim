@@ -33,6 +33,11 @@ public sealed class IndexModel(IGridController grid, MoneyGate gate, IMoneyBooks
 
     [BindProperty] public bool ConfirmSwitch { get; set; }
     public MoneySettings Saved { get; private set; } = new();
+
+    /// <summary>What the settings form shows: what was posted when it was refused, so nothing has to be chosen again.</summary>
+    public MoneySettings Form => _refused ?? Saved;
+
+    private MoneySettings? _refused;
     public bool On { get; private set; }
     public bool CanChange { get; private set; }
     public MoneyTotals? Totals { get; private set; }
@@ -88,6 +93,7 @@ public sealed class IndexModel(IGridController grid, MoneyGate gate, IMoneyBooks
         // Coins and Gloebit are separate books (design §10): the owner confirms that before switching.
         if (Error is null && MoneyPageRules.CrossesGloebit(before.Mode, next.Mode) && !ConfirmSwitch)
             Error = MoneyPageRules.SwitchWarning + " Tick the box to switch.";
+        if (Error is not null) _refused = next;
         if (Error is null)
         {
             // Only the fields above change: the program keys, and anything another page saved meanwhile, stay.

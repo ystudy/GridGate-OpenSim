@@ -179,7 +179,7 @@ public sealed class MoneyServerConfigTests : IDisposable
 
         var r = Region("p1");
         Assert.Equal("false", r.Get("GridGateMoney", "Paired"));
-        Assert.DoesNotContain(r.ActiveEntries(), e => e.Section == "Gloebit");
+        GloebitConfigTests.AssertGloebitOff(r);
     }
 
     [Fact]
@@ -207,7 +207,8 @@ public sealed class MoneyServerConfigTests : IDisposable
 
         Write(s);
 
-        Assert.DoesNotContain(Region("p1").ActiveEntries(), e => e.Section is "Gloebit" or "GridGateMoney");
+        Assert.DoesNotContain(Region("p1").ActiveEntries(), e => e.Section == "GridGateMoney");
+        GloebitConfigTests.AssertGloebitOff(Region("p1"));
     }
 
     [Fact]

@@ -6,6 +6,7 @@
     ViewData["Title"] = "Money";
     ViewData["Wide"] = true;
     var m = Model.Saved;
+    var f = Model.Form;
 }
 <div class="page-head">
     <h1>Money<help-tip class="help-start">The grid's coins: what they're called, what things cost, and the books.</help-tip></h1>
@@ -30,35 +31,35 @@
                 <select class="form-select mb-3" id="money-mode" name="Mode">
                     @foreach (var mode in Model.Offered)
                     {
-                        <option value="@mode" selected="@(mode == m.Mode)">@(mode switch { MoneyMode.Off => "Off", MoneyMode.Gloebit => "Gloebit", _ => "Play coins" })</option>
+                        <option value="@mode" selected="@(mode == f.Mode)">@(mode switch { MoneyMode.Off => "Off", MoneyMode.Gloebit => "Gloebit", _ => "Play coins" })</option>
                     }
                 </select>
                 <div class="row g-3">
                     <div class="col-sm-6"><label class="form-label" for="money-symbol">Currency symbol</label>
-                        <input class="form-control" id="money-symbol" name="CurrencySymbol" value="@m.CurrencySymbol" maxlength="4" required></div>
+                        <input class="form-control" id="money-symbol" name="CurrencySymbol" value="@f.CurrencySymbol" maxlength="4" required></div>
                     <div class="col-sm-6"><label class="form-label" for="money-name">Currency name</label>
-                        <input class="form-control" id="money-name" name="CurrencyName" value="@m.CurrencyName" maxlength="20" required></div>
+                        <input class="form-control" id="money-name" name="CurrencyName" value="@f.CurrencyName" maxlength="20" required></div>
                     <div class="col-sm-6"><label class="form-label" for="money-start-play">Starting balance (play)</label>
-                        <input class="form-control" id="money-start-play" name="StartingBalancePlay" type="number" min="0" value="@m.StartingBalancePlay"></div>
+                        <input class="form-control" id="money-start-play" name="StartingBalancePlay" type="number" min="0" value="@f.StartingBalancePlay"></div>
                     <div class="col-sm-6"><label class="form-label" for="money-start-real">Starting balance (real)</label>
-                        <input class="form-control" id="money-start-real" name="StartingBalanceReal" type="number" min="0" value="@m.StartingBalanceReal"></div>
+                        <input class="form-control" id="money-start-real" name="StartingBalanceReal" type="number" min="0" value="@f.StartingBalanceReal"></div>
                     <div class="col-sm-6"><label class="form-label" for="money-allowance">Weekly allowance</label>
-                        <input class="form-control" id="money-allowance" name="WeeklyAllowance" type="number" min="0" value="@m.WeeklyAllowance"></div>
+                        <input class="form-control" id="money-allowance" name="WeeklyAllowance" type="number" min="0" value="@f.WeeklyAllowance"></div>
                     <div class="col-sm-6"><label class="form-label" for="money-upload">Upload fee</label>
-                        <input class="form-control" id="money-upload" name="UploadFee" type="number" min="0" value="@m.UploadFee"></div>
+                        <input class="form-control" id="money-upload" name="UploadFee" type="number" min="0" value="@f.UploadFee"></div>
                     <div class="col-sm-6"><label class="form-label" for="money-classified">Classified ad fee</label>
-                        <input class="form-control" id="money-classified" name="ClassifiedFee" type="number" min="0" value="@m.ClassifiedFee"></div>
+                        <input class="form-control" id="money-classified" name="ClassifiedFee" type="number" min="0" value="@f.ClassifiedFee"></div>
                     <div class="col-sm-6"><label class="form-label" for="money-daily">Daily script payout limit</label>
-                        <input class="form-control" id="money-daily" name="DailyPayoutLimit" type="number" min="0" value="@m.DailyPayoutLimit"></div>
+                        <input class="form-control" id="money-daily" name="DailyPayoutLimit" type="number" min="0" value="@f.DailyPayoutLimit"></div>
                     <div class="col-sm-6"><label class="form-label" for="money-max">Largest payment</label>
-                        <input class="form-control" id="money-max" name="MaxPayment" type="number" min="1" value="@m.MaxPayment"></div>
+                        <input class="form-control" id="money-max" name="MaxPayment" type="number" min="1" value="@f.MaxPayment"></div>
                 </div>
                 <div class="form-check mt-3">
-                    <input class="form-check-input" type="checkbox" id="money-scripts" name="ScriptPayouts" value="true" checked="@m.ScriptPayouts">
+                    <input class="form-check-input" type="checkbox" id="money-scripts" name="ScriptPayouts" value="true" checked="@f.ScriptPayouts">
                     <label class="form-check-label" for="money-scripts">Scripts may pay out, for residents who allow it</label>
                 </div>
                 <div class="form-check">
-                    <input class="form-check-input" type="checkbox" id="money-visitors" name="VisitorWallets" value="true" checked="@m.VisitorWallets">
+                    <input class="form-check-input" type="checkbox" id="money-visitors" name="VisitorWallets" value="true" checked="@f.VisitorWallets">
                     <label class="form-check-label" for="money-visitors">Hypergrid visitors get wallets</label>
                 </div>
                 @if (Model.Offered.Contains(MoneyMode.Gloebit))
