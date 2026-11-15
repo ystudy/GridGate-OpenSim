@@ -148,12 +148,13 @@ marked in the code with a `GridGate:` comment. When an upstream pick touches the
 | `fix(opensim): llGiveMoney refuses amounts of 0 or less` | `LSL_Api.cs` (`llGiveMoney`) |
 | `fix(opensim): llGiveMoney refuses group-owned objects` | `LSL_Api.cs` (`llGiveMoney`) |
 | `feat(opensim): llTransferLindenDollars can pay hypergrid visitors` | `OpenSim/Framework/IVisitorMoneyModule.cs` (new), `OpenSim/Framework/OpenSim.Framework.csproj`, `LSL_Api.cs` (`llTransferLindenDollars`) |
+| `fix(opensim): only the owner can grant PERMISSION_DEBIT, and a script answer grants only what its script asked` | `LSL_Api.cs` (`llRequestPermissions`, `handleScriptAnswer`, `llAttachToAvatarTemp`), `OpenSim/Region/ScriptEngine/Shared/Api/Implementation/DebitPermission.cs` (new), `OpenSim/Region/ScriptEngine/YEngine/XMRInstCtor.cs` (both state restores) |
 | `fix(opensim): UDP uploads are charged the upload fee` | `OpenSim/Region/CoreModules/Agent/AssetTransaction/AssetXferUploader.cs` |
 | `fix(opensim): classifieds are checked and charged at the money module's fee` | `OpenSim/Framework/IClassifiedFeeModule.cs` (new), `OpenSim/Framework/OpenSim.Framework.csproj`, `UserProfileModule.cs` (`ClassifiedInfoUpdate`) |
 | `feat(money): Gloebit's DLL and INI only in Gloebit mode; no leftover G$ currency` | `bin/Robust.HG.ini.proto` (`[LoginService] Currency="G$"` commented out: GridGate writes the currency), `bin/config-include/Proto/Robust/OpenSim.ini` (the upstream launcher's `[Gloebit]` section with placeholder values and a Robust connection string removed: GridGate writes `[Gloebit]` in Gloebit mode) |
 | `fix(money): no upstream Gloebit credentials in the tree; ship the built Gloebit DLL; Gloebit build warnings` | `bin/Gloebit.ini`, `bin/config-include/Gloebit.ini`, `bin/config-addon-opensim/Gloebit.ini` (Outworldz's Gloebit apps and contact details) and the committed `bin/Gloebit.dll.Proto` (an old upstream build) removed: GridGate writes `[Gloebit]` and the package builds the Proto from `addon-modules/Gloebit`. `addon-modules/Gloebit/GloebitMoneyModule/GloebitMoneyModule.cs`: obsolete `RegionInfo.originRegionID` replaced with `RegionID` (the getter returns it) |
 
-The script changes (the five `LSL_Api.cs` rows) are tried against a real `LSL_Api` in a test region by
+The script changes (the six `LSL_Api.cs` rows) are tried against a real `LSL_Api` in a test region by
 `tests/GridGate.Lsl.Tests`, which CI runs on Linux and Windows. After an upstream pick that touches `LSL_Api.cs`, run it:
 
 ```bash
