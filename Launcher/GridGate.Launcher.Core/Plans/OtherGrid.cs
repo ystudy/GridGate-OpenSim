@@ -1,5 +1,6 @@
 using System.Xml;
 using System.Xml.Linq;
+using GridGate.Launcher.Core.Ini;
 using GridGate.Launcher.Core.Settings;
 
 namespace GridGate.Launcher.Core.Plans;
@@ -69,15 +70,17 @@ public static class OtherGridInfoParser
 
         string? Get(string key) => info.Element(key)?.Value.Trim() is { Length: > 0 } v ? v : null;
 
-        var login = Get("login") ?? address.ToString();
+        // The other grid's answer goes into this computer's INIs, which OpenSim reads with ${Section|Key} expansion: a name
+        // or address it would read as more than text is dropped (IniSafe; money review 2026-11-15, H-1).
+        var login = IniSafe.Address(Get("login")) ?? address.ToString();
         // Robust publishes a gatekeeper whenever one is configured, even with hypergrid off, so a GridGate's own
         // gridgate_hypergrid decides when it is there; otherwise a published gatekeeper means hypergrid is on.
-        var gatekeeper = Get("gatekeeper");
+        var gatekeeper = IniSafe.Address(Get("gatekeeper"));
         if (bool.TryParse(Get(GridInfoKeys.Hypergrid), out var hypergrid))
             gatekeeper = hypergrid ? gatekeeper ?? login : null;
 
         return new OtherGridInfo(
-            Get("gridname") ?? address.Host,
+            IniSafe.Name(Get("gridname")) ?? address.Host,
             login,
             gatekeeper,
             Get(GridInfoKeys.Plan) == PlanCatalog.Get(OwnerPlan.GridAsset).Id);

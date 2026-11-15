@@ -56,12 +56,12 @@ public sealed class GridConfigWriter(LauncherPaths paths, Func<MoneySettings, Mo
         // payments, so nothing runs free by accident.
         var gloebit = MoneyPlace.GloebitHere(s, gate) ? s.Money.Gloebit : null;
         if (gloebit is null && mode == MoneyMode.Gloebit && s.Plan != OwnerPlan.Connected
-            && (moneyHere ? WebsiteAddress.Economy(s) : s.Join?.Economy) is { Length: > 0 } refusingHelper)
+            && (moneyHere ? WebsiteAddress.Economy(s) : JoinedHelper(s)) is { Length: > 0 } refusingHelper)
             money = new MoneyIni(null, null, refusingHelper, Paired: false);
 
         // 1. Robust.HG.ini
         var robust = LoadProto(Path.Combine(rt, "Robust.HG.ini.proto"));
-        robust.Set("Const", "GridName", s.GridName);
+        robust.Set("Const", "GridName", GridNameFor(s));
         robust.Set("Const", "http_listener_port", s.RobustPublicPort.ToString());
         robust.Set("Const", "BaseURL", $"http://{host}");
         robust.Set("Const", "PrivURL", "http://127.0.0.1");
@@ -91,7 +91,7 @@ public sealed class GridConfigWriter(LauncherPaths paths, Func<MoneySettings, Mo
         // Where people land when their home or last region can't take them (2.14). A Region Server's grid decides that.
         if (PlanCatalog.RunsRobust(s))
             robust.ReplaceBlock(Landing.Section, Landing.SlotStart, Landing.SlotEnd, Landing.Lines(s));
-        robust.Set("GridInfoService", "gridname", s.GridName);
+        robust.Set("GridInfoService", "gridname", GridNameFor(s));
         // What a Region Server reads to join this grid.
         robust.Set("GridInfoService", GridInfoKeys.Version, LauncherVersion.Current);
         robust.Set("GridInfoService", GridInfoKeys.PrivatePort, s.RobustPrivatePort.ToString());
@@ -134,7 +134,7 @@ public sealed class GridConfigWriter(LauncherPaths paths, Func<MoneySettings, Mo
         // A region advertises this as currency-base-uri when no money module sets one (Scene.AllModulesLoaded).
         if (moneyHere) common.Set("GridInfo", "economy", WebsiteAddress.Economy(s));
         // A Region Server's regions advertise its grid's helper, so visitors' Buy windows reach the right grid (money plan 3).
-        else if (s.Plan == OwnerPlan.RegionServer && s.Join?.Economy is { Length: > 0 } gridHelper) common.Set("GridInfo", "economy", gridHelper);
+        else if (s.Plan == OwnerPlan.RegionServer && JoinedHelper(s) is { } gridHelper) common.Set("GridInfo", "economy", gridHelper);
         Finish(common, "region", extra, Path.Combine(rt, "config-include", "GridCommon.ini"), applyExtra: false);
 
         // 3. FlotsamCache.ini
@@ -211,7 +211,7 @@ public sealed class GridConfigWriter(LauncherPaths paths, Func<MoneySettings, Mo
     /// </summary>
     private static MoneyIni? RegionServerMoney(LauncherSettings s, Func<MoneySettings, MoneyMode> gate)
     {
-        if (s.Plan != OwnerPlan.RegionServer || s.Join is not { Economy: { Length: > 0 } helper } join) return null;
+        if (s.Plan != OwnerPlan.RegionServer || s.Join is not { } join || JoinedHelper(s) is not { } helper) return null;
         if (MoneyPlace.GridMode(s, gate) is not (MoneyMode.Play or MoneyMode.Real)) return null;
         return s.Money.Pairing is { } p && p.Key.Length > 0 && string.Equals(p.GridHost, join.Host, StringComparison.OrdinalIgnoreCase)
                && join.MoneyPort is { } port && join.MoneyFingerprint is { } published && string.Equals(p.Fingerprint, published, StringComparison.OrdinalIgnoreCase)
@@ -286,7 +286,7 @@ public sealed class GridConfigWriter(LauncherPaths paths, Func<MoneySettings, Mo
         SetNetwork(os, s, "console_port", program.ConsolePort);
         if (s.Setup.OwnerCreated && s.Setup.Owner is { } owner)
         {
-            os.Set("Estates", "DefaultEstateName", $"{s.GridName} Estate");
+            os.Set("Estates", "DefaultEstateName", $"{GridNameFor(s)} Estate");
             os.Set("Estates", "DefaultEstateOwnerName", $"{owner.FirstName} {owner.LastName}");
             // The owner's id is the grid's to know; only an install running its own Robust carries it.
             if (!PlanCatalog.RunsRobust(s)) os.CommentOut("Estates", "DefaultEstateOwnerUUID");
@@ -374,12 +374,24 @@ public sealed class GridConfigWriter(LauncherPaths paths, Func<MoneySettings, Mo
     }
 
     /// <summary>
+    /// The grid's name as an INI value. On a Region Server or Connected Server it is the other grid's, and an older GridGate
+    /// saved it unchecked, so it is checked again here (<see cref="IniSafe"/>; money review 2026-11-15, H-1).
+    /// </summary>
+    private static string GridNameFor(LauncherSettings s) => IniSafe.Name(s.GridName) ?? "GridGate";
+
+    /// <summary>
+    /// A Region Server's grid helper address, from its grid's plain-HTTP grid information. Checked again here because an
+    /// older GridGate saved it unchecked, and OpenSim would expand <c>${Section|Key}</c> in it (money review 2026-11-15, H-1).
+    /// </summary>
+    private static string? JoinedHelper(LauncherSettings s) => IniSafe.Address(s.Join?.Economy);
+
+    /// <summary>
     /// On a Connected Server whose grid's gatekeeper is not its login address, points the hypergrid keys at that
     /// gatekeeper instead of <c>BaseURL:PublicPort</c>.
     /// </summary>
     private static void SetOtherGatekeeper(IniDocument common, LauncherSettings s)
     {
-        if (s.Plan != OwnerPlan.Connected || s.Connected?.GatekeeperUri is not { } uri) return;
+        if (s.Plan != OwnerPlan.Connected || IniSafe.Address(s.Connected?.GatekeeperUri) is not { } uri) return;
         var gatekeeper = uri.TrimEnd('/');
         var (baseUrl, publicPort) = GridEndpoints.Advertised(s);
         if (SameAddress(gatekeeper, $"{baseUrl}:{publicPort}")) return;

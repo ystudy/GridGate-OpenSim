@@ -170,7 +170,20 @@ public sealed class MoneyServerConfigTests : IDisposable
         Assert.Equal(Economy, Grid().Get("GridInfo", "economy"));
     }
 
-    private static readonly GloebitSettings GApp = new("sandbox", "0b9e3c2a-1111-4c5d-8e9f-0123456789ab", "7d3f9a10-2222-4b6c-9d8e-fedcba987654", "RS Owner");
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void Region_server_never_writes_a_saved_helper_the_ini_reader_would_expand(bool open)
+    {
+        // Settings an older GridGate saved before the join read refused such an address (money review 2026-11-15, H-1).
+        Write(RegionServer(join: Joined with { Economy = "http://attacker.example/${Network|ConsolePass}/" }, pairing: Paired()), open);
+
+        Assert.Null(Grid().Get("GridInfo", "economy"));
+        foreach (var p in new[] { "p1", "p2" })
+            Assert.DoesNotContain("attacker", Region(p).Get("GridGateMoney", "HelperURI") ?? "");
+    }
+
+    private static readonly GloebitSettings GApp =new("sandbox", "0b9e3c2a-1111-4c5d-8e9f-0123456789ab", "7d3f9a10-2222-4b6c-9d8e-fedcba987654", "RS Owner");
 
     [Fact]
     public void Region_server_without_its_own_app_refuses()

@@ -902,6 +902,25 @@ public sealed class GridConfigWriterTests : IDisposable
     }
 
     [Fact]
+    public void Connected_never_writes_a_saved_gatekeeper_the_ini_reader_would_expand()
+    {
+        // Settings an older GridGate saved before the grid read refused it (money review 2026-11-15, H-1).
+        Write(Connected(Elsewhere with { GatekeeperUri = "http://hg.example.org/${Network|ConsolePass}" }));
+
+        Assert.Equal("${Const|BaseURL}:${Const|PublicPort}", Grid().Get("Hypergrid", "GatekeeperURI"));
+        Assert.DoesNotContain("hg.example.org", Grid().Get("GridService", "Gatekeeper") ?? "");
+    }
+
+    [Fact]
+    public void A_saved_grid_name_the_ini_reader_would_expand_is_never_written()
+    {
+        // A Connected or Region Server saves the other grid's name; an older GridGate saved it unchecked (H-1).
+        Write(Connected(Elsewhere) with { GridName = "${Network|ConsolePass}" });
+
+        Assert.DoesNotContain("${", Region().Get("Estates", "DefaultEstateName") ?? "");
+    }
+
+    [Fact]
     public void Connected_to_osgrid_uses_the_osgrid_proto()
     {
         var s = Connected(OsGrid);
