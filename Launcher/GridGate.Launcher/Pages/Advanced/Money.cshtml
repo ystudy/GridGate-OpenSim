@@ -10,6 +10,19 @@
 <section class="work-panel" aria-labelledby="rs-money-title">
     <h2 id="rs-money-title" class="panel-title">The grid's money</h2>
     <p id="rs-money-mode">@Model.ModeText</p>
+    @if (Model.Gloebit)
+    {
+        @if (Model.App?.Complete != true)
+        {
+            <p id="rs-gloebit-missing">These regions refuse payments until this computer's Gloebit app is saved.</p>
+        }
+        else
+        {
+            <p id="rs-gloebit-app">This computer's Gloebit app: @Model.App.Environment, key @GridGate.Launcher.Core.Money.GloebitRules.Masked(Model.App.Key).</p>
+        }
+        <p>Gloebit runs inside each region, so this computer needs its own app from Gloebit's merchant tools. There is nothing to pair.</p>
+        @await Html.PartialAsync("_GloebitForm", new GridGate.Launcher.Money.GloebitFormModel(Model.App, "/advanced/money?handler=Gloebit"))
+    }
     @if (Model.CanPair)
     {
         <p id="rs-money-state">

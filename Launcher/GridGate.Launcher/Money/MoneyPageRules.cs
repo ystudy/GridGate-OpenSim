@@ -3,6 +3,9 @@ using GridGate.Launcher.Core.Money;
 
 namespace GridGate.Launcher.Money;
 
+/// <summary>What the shared Gloebit app form shows: the saved app (never its secret) and where it posts (money plan 4).</summary>
+public sealed record GloebitFormModel(GloebitSettings? App, string Action);
+
 /// <summary>What the Money staff pages check before anything is saved or moved (money plan 2, task 9).</summary>
 public static class MoneyPageRules
 {
@@ -44,6 +47,18 @@ public static class MoneyPageRules
         if (m.DailyPayoutLimit is < 0 or > MaxDailyPayoutLimit)
             return $"The daily payout limit must be 0 to {MaxDailyPayoutLimit.ToString("N0", CultureInfo.InvariantCulture)}.";
         return null;
+    }
+
+    /// <summary>
+    /// A Gloebit app from a posted form: an empty secret keeps the stored one. Returns the app and its problem, if any, in
+    /// words for the page. Nothing posted is ever echoed back or audited.
+    /// </summary>
+    public static (GloebitSettings App, string? Problem) GloebitFromForm(GloebitSettings? stored, string? environment, string? key, string? secret,
+        string? ownerName, string? ownerEmail)
+    {
+        var app = new GloebitSettings((environment ?? "").Trim(), (key ?? "").Trim(),
+            string.IsNullOrWhiteSpace(secret) ? stored?.Secret ?? "" : secret.Trim(), (ownerName ?? "").Trim(), (ownerEmail ?? "").Trim());
+        return (app, GloebitRules.Problem(app));
     }
 
     /// <summary>A ledger outcome as the audit log and the page show it: snake case ("not_enough").</summary>

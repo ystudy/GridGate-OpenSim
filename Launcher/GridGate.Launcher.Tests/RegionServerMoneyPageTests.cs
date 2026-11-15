@@ -252,6 +252,58 @@ public sealed class RegionServerMoneyPageTests
         Assert.Contains("The grid accepts this server's key, but sees none of its regions yet.", MainText(doc));
     }
 
+    // ---- Gloebit on a Region Server (money plan 4, task 5) ----
+
+    private static readonly GloebitSettings GApp = new("sandbox", "0b9e3c2a-1111-4c5d-8e9f-0123456789ab", "7d3f9a10-2222-4b6c-9d8e-fedcba987654", "RS Owner");
+
+    private static LauncherFactory GloebitGrid(GloebitSettings? app = null)
+    {
+        var f = Make(new FakePairClient());
+        f.Grid.UpdateSettings(s => s with { Join = s.Join! with { Money = MoneyMode.Gloebit }, Money = s.Money with { Gloebit = app } }, writeConfig: false);
+        return f;
+    }
+
+    [Fact]
+    public async Task Gloebit_grid_shows_the_app_form_not_pairing()
+    {
+        await using var f = GloebitGrid();
+
+        var doc = await PageAsync(await SignedInAsync(f), "/advanced/money");
+
+        Assert.Contains("The grid uses Gloebit.", MainText(doc));
+        Assert.NotNull(doc.QuerySelector("form[action*='handler=Gloebit']"));
+        Assert.Null(doc.QuerySelector("form[action*='handler=Pair']"));
+        Assert.Contains("These regions refuse payments until this computer's Gloebit app is saved.", MainText(doc));
+    }
+
+    [Fact]
+    public async Task Region_server_saves_its_own_gloebit_app()
+    {
+        await using var f = GloebitGrid();
+        var c = await SignedInAsync(f);
+
+        var doc = await PostAsync(c, "Gloebit", new()
+        {
+            ["Environment"] = "sandbox", ["Key"] = GApp.Key, ["Secret"] = GApp.Secret, ["OwnerName"] = "RS Owner", ["OwnerEmail"] = "",
+        });
+
+        Assert.Equal(GApp, f.Grid.CurrentSettings().Money.Gloebit);
+        Assert.Contains("Saved. Restart the regions to start Gloebit.", MainText(doc));
+        var html = (await PageAsync(c, "/advanced/money")).DocumentElement.OuterHtml;
+        Assert.DoesNotContain(GApp.Secret, html);
+        Assert.DoesNotContain(GApp.Key, html);
+        var line = Assert.Single(Audit(f), a => a.GetProperty("action").GetString() == "money-gloebit");
+        Assert.DoesNotContain(GApp.Secret, line.GetRawText());
+    }
+
+    [Fact]
+    public async Task Coins_grid_has_no_gloebit_form()
+    {
+        await using var f = Make(new FakePairClient());
+
+        Assert.Null((await PageAsync(await SignedInAsync(f), "/advanced/money")).QuerySelector("form[action*='handler=Gloebit']"));
+    }
+
     [Fact]
     public async Task Closed_gate_offers_no_pairing()
     {

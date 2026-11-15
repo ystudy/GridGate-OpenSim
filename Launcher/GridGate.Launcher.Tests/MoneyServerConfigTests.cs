@@ -170,6 +170,46 @@ public sealed class MoneyServerConfigTests : IDisposable
         Assert.Equal(Economy, Grid().Get("GridInfo", "economy"));
     }
 
+    private static readonly GloebitSettings GApp = new("sandbox", "0b9e3c2a-1111-4c5d-8e9f-0123456789ab", "7d3f9a10-2222-4b6c-9d8e-fedcba987654", "RS Owner");
+
+    [Fact]
+    public void Region_server_without_its_own_app_refuses()
+    {
+        Write(RegionServer(join: Joined with { Money = MoneyMode.Gloebit }));
+
+        var r = Region("p1");
+        Assert.Equal("false", r.Get("GridGateMoney", "Paired"));
+        Assert.DoesNotContain(r.ActiveEntries(), e => e.Section == "Gloebit");
+    }
+
+    [Fact]
+    public void Region_server_with_its_app_runs_gloebit()
+    {
+        var s = RegionServer(join: Joined with { Money = MoneyMode.Gloebit });
+        Write(s with { Money = s.Money with { Gloebit = GApp } });
+
+        var r = Region("p1");
+        Assert.Equal("Gloebit", r.Get("Economy", "economymodule"));
+        Assert.Equal(GApp.Key, r.Get("Gloebit", "GLBKey"));
+        Assert.DoesNotContain(r.ActiveEntries(), e => e.Section == "GridGateMoney");
+    }
+
+    [Fact]
+    public void Connected_server_never_runs_gloebit()
+    {
+        var s = RegionServer() with
+        {
+            Plan = OwnerPlan.Connected,
+            Join = null,
+            Connected = new ConnectedGrid(null, "Other", "http://login.other.example:8002/", "http://login.other.example:8002/", "http://services.other.example:8003/", null),
+            Money = new MoneySettings(Mode: MoneyMode.Gloebit, Gloebit: GApp),
+        };
+
+        Write(s);
+
+        Assert.DoesNotContain(Region("p1").ActiveEntries(), e => e.Section is "Gloebit" or "GridGateMoney");
+    }
+
     [Fact]
     public void Connected_server_writes_no_money()
     {

@@ -99,22 +99,7 @@
             }
             @if (Model.CanChange)
             {
-                <form method="post" action="/money?handler=Gloebit" asp-antiforgery="true" autocomplete="off">
-                    <label class="form-label" for="gloebit-env">Environment</label>
-                    <select class="form-select mb-2" id="gloebit-env" name="Environment">
-                        <option value="sandbox" selected="@(m.Gloebit?.Environment != "production")">Sandbox (test payments)</option>
-                        <option value="production" selected="@(m.Gloebit?.Environment == "production")">Production (real payments)</option>
-                    </select>
-                    <label class="form-label" for="gloebit-key">App key</label>
-                    <input class="form-control mb-2" id="gloebit-key" name="Key" maxlength="64" spellcheck="false" placeholder="@(m.Gloebit is { Key.Length: > 0 } k ? "Saved: " + GridGate.Launcher.Core.Money.GloebitRules.Masked(k.Key) + ". Type it again to save changes." : "From Gloebit's merchant tools")" required>
-                    <label class="form-label" for="gloebit-secret">App secret</label>
-                    <input class="form-control mb-2" id="gloebit-secret" name="Secret" type="password" maxlength="64" autocomplete="new-password" placeholder="@(m.Gloebit?.Secret.Length > 0 ? "Saved. Leave empty to keep it." : "")">
-                    <label class="form-label" for="gloebit-owner">Contact name for residents</label>
-                    <input class="form-control mb-2" id="gloebit-owner" name="OwnerName" maxlength="64" value="@m.Gloebit?.OwnerName" required>
-                    <label class="form-label" for="gloebit-email">Contact email (optional)</label>
-                    <input class="form-control mb-2" id="gloebit-email" name="OwnerEmail" type="email" maxlength="128" value="@m.Gloebit?.OwnerEmail">
-                    <button type="submit" class="btn btn-outline-primary">Save Gloebit app</button>
-                </form>
+                @await Html.PartialAsync("_GloebitForm", new GridGate.Launcher.Money.GloebitFormModel(m.Gloebit, "/money?handler=Gloebit"))
             }
         </section>
     }

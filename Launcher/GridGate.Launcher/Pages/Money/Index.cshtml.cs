@@ -119,10 +119,7 @@ public sealed class IndexModel(IGridController grid, MoneyGate gate, IMoneyBooks
             await ShowAsync(ct);
             return Page();
         }
-        var stored = grid.CurrentSettings().Money.Gloebit;
-        var app = new GloebitSettings((environment ?? "").Trim(), (key ?? "").Trim(),
-            string.IsNullOrWhiteSpace(secret) ? stored?.Secret ?? "" : secret.Trim(), (ownerName ?? "").Trim(), (ownerEmail ?? "").Trim());
-        Error = GloebitRules.Problem(app);
+        (var app, Error) = MoneyPageRules.GloebitFromForm(grid.CurrentSettings().Money.Gloebit, environment, key, secret, ownerName, ownerEmail);
         if (Error is null)
         {
             grid.UpdateSettings(s => s with { Money = s.Money with { Gloebit = app } }, writeConfig: true);

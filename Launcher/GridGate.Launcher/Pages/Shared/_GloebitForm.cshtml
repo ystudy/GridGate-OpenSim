@@ -1,0 +1,22 @@
+@model GridGate.Launcher.Money.GloebitFormModel
+@using GridGate.Launcher.Core.Money
+@{
+    var app = Model.App;
+}
+@* This computer's Gloebit app (money plan 4): the Money page on a grid that runs Robust, and a Region Server's own. The secret is never written back into the page. *@
+<form method="post" action="@Model.Action" asp-antiforgery="true" autocomplete="off">
+    <label class="form-label" for="gloebit-env">Environment</label>
+    <select class="form-select mb-2" id="gloebit-env" name="Environment">
+        <option value="sandbox" selected="@(app?.Environment != "production")">Sandbox (test payments)</option>
+        <option value="production" selected="@(app?.Environment == "production")">Production (real payments)</option>
+    </select>
+    <label class="form-label" for="gloebit-key">App key</label>
+    <input class="form-control mb-2" id="gloebit-key" name="Key" maxlength="64" spellcheck="false" placeholder="@(app is { Key.Length: > 0 } k ? "Saved: " + GloebitRules.Masked(k.Key) + ". Type it again to save changes." : "From Gloebit's merchant tools")" required>
+    <label class="form-label" for="gloebit-secret">App secret</label>
+    <input class="form-control mb-2" id="gloebit-secret" name="Secret" type="password" maxlength="64" autocomplete="new-password" placeholder="@(app?.Secret.Length > 0 ? "Saved. Leave empty to keep it." : "")">
+    <label class="form-label" for="gloebit-owner">Contact name for residents</label>
+    <input class="form-control mb-2" id="gloebit-owner" name="OwnerName" maxlength="64" value="@app?.OwnerName" required>
+    <label class="form-label" for="gloebit-email">Contact email (optional)</label>
+    <input class="form-control mb-2" id="gloebit-email" name="OwnerEmail" type="email" maxlength="128" value="@app?.OwnerEmail">
+    <button type="submit" class="btn btn-outline-primary">Save Gloebit app</button>
+</form>
