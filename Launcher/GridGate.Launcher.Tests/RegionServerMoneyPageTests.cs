@@ -192,6 +192,38 @@ public sealed class RegionServerMoneyPageTests
     }
 
     [Fact]
+    public async Task Stale_join_still_offers_pairing_and_saves_the_fresh_grid_info()
+    {
+        var fresh = Avalon() with { MoneyFingerprint = new string('B', 64) };
+        var pair = new FakePairClient
+        {
+            Next = new(new ServerPairing("192.168.1.5", new string('B', 64), "the-key", DateTimeOffset.UtcNow), null, fresh),
+        };
+        await using var f = Make(pair);
+        f.Grid.UpdateSettings(s => s with { Join = s.Join! with { Money = MoneyMode.Off, MoneyFingerprint = null } }, writeConfig: false);
+        var c = await SignedInAsync(f);
+
+        Assert.NotNull((await PageAsync(c, "/advanced/money")).QuerySelector("form[action*='handler=Pair']"));
+        await PostAsync(c, "Pair", new() { ["Code"] = Code });
+
+        var join = f.Grid.CurrentSettings().Join!;
+        Assert.Equal(MoneyMode.Play, join.Money);
+        Assert.Equal(new string('B', 64), join.MoneyFingerprint);
+        Assert.Equal("192.168.1.5", join.Host);
+    }
+
+    [Fact]
+    public async Task No_regions_seen_is_said()
+    {
+        var pair = new FakePairClient { Health = PairingHealth.NoRegions };
+        await using var f = Make(pair, pairing: new ServerPairing("192.168.1.5", new string('A', 64), "k", DateTimeOffset.UtcNow));
+
+        var doc = await PostAsync(await SignedInAsync(f), "Check", []);
+
+        Assert.Contains("The grid accepts this server's key, but sees none of its regions yet.", MainText(doc));
+    }
+
+    [Fact]
     public async Task Closed_gate_offers_no_pairing()
     {
         var pair = new FakePairClient();

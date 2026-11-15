@@ -4,18 +4,21 @@ namespace GridGate.Launcher.Core.Money;
 
 /// <summary>
 /// Which regions Robust lists at an address (money plan 3): a paired Region Server's key covers the regions its programs
-/// registered with that address as their <c>serverIP</c> (their ExternalHostName). A database failure is
-/// <see cref="MoneyUnavailableException"/>.
+/// registered with that address as their <c>serverIP</c> (their ExternalHostName) and a UDP port (<c>serverPort</c>) in its
+/// range. A database failure is <see cref="MoneyUnavailableException"/>.
 /// </summary>
 public sealed class RegionHosts(Func<CancellationToken, Task<MySqlConnection>> openRobust)
 {
-    public async Task<IReadOnlySet<Guid>> RegionsAtAsync(string host, CancellationToken ct)
+    public async Task<IReadOnlySet<Guid>> RegionsAtAsync(string host, int fromPort, int toPort, CancellationToken ct)
     {
         try
         {
             await using var conn = await openRobust(ct);
-            await using var cmd = new MySqlCommand("SELECT uuid FROM regions WHERE serverIP = @host", conn);
+            await using var cmd = new MySqlCommand(
+                "SELECT uuid FROM regions WHERE serverIP = @host AND serverPort >= @from AND serverPort < @to", conn);
             cmd.Parameters.AddWithValue("@host", host);
+            cmd.Parameters.AddWithValue("@from", fromPort);
+            cmd.Parameters.AddWithValue("@to", toPort);
             await using var r = await cmd.ExecuteReaderAsync(ct);
             var found = new HashSet<Guid>();
             while (await r.ReadAsync(ct))

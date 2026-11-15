@@ -74,6 +74,7 @@ public sealed class MoneyMariaDb : IAsyncLifetime
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
             CREATE TABLE `robust`.`regions` (
               `uuid` VARCHAR(36) NOT NULL, `regionName` VARCHAR(128) NOT NULL DEFAULT '', `serverIP` VARCHAR(64) NOT NULL DEFAULT '',
+              `serverPort` INT(10) UNSIGNED DEFAULT NULL,
               PRIMARY KEY (`uuid`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
             CREATE TABLE `robust`.`GridUser` (
@@ -182,9 +183,9 @@ public sealed class MoneyTestDatabase(LauncherSettings settings)
     public Task AddPresence(Guid user, Guid region, Guid session, Guid secure) =>
         Sql($"INSERT INTO `robust`.`Presence` (`UserID`, `RegionID`, `SessionID`, `SecureSessionID`) VALUES ('{user}', '{region}', '{session}', '{secure}')");
 
-    /// <summary>Registers a region with Robust the way a region does: its id and the address it reports (serverIP).</summary>
-    public Task AddRegion(Guid id, string serverIp) =>
-        Sql($"INSERT INTO `robust`.`regions` (`uuid`, `regionName`, `serverIP`) VALUES ('{id}', 'R{id.ToString()[..4]}', '{serverIp}')");
+    /// <summary>Registers a region with Robust the way a region does: its id, the address it reports (serverIP) and its UDP port (serverPort).</summary>
+    public Task AddRegion(Guid id, string serverIp, int port = 9000) =>
+        Sql($"INSERT INTO `robust`.`regions` (`uuid`, `regionName`, `serverIP`, `serverPort`) VALUES ('{id}', 'R{id.ToString()[..4]}', '{serverIp}', {port})");
 
     /// <summary>
     /// Records a hypergrid visitor the way the Gatekeeper does: GridUser.UserID = "uuid;HomeURI;First Last". Like OpenSim's

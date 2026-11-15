@@ -73,6 +73,66 @@ public sealed class MoneyPlaceTests
         Assert.Equal(MoneyMode.Play, new MoneyGate(() => On(OwnerPlan.Local), MoneyGate.Open).ServiceMode());
     }
 
+    [Fact]
+    public void Dropped_addresses_are_logged_once_per_window()
+    {
+        var time = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(DateTimeOffset.UtcNow);
+        var failures = new MoneyAuthFailures(time, Microsoft.Extensions.Logging.Abstractions.NullLogger<MoneyAuthFailures>.Instance);
+        var ip = IPAddress.Parse("203.0.113.5");
+
+        Assert.True(failures.FirstDropInWindow(ip));
+        Assert.False(failures.FirstDropInWindow(ip));
+        time.Advance(MoneyAuthFailures.Window + TimeSpan.FromSeconds(1));
+        Assert.True(failures.FirstDropInWindow(ip));
+    }
+
+    [Fact]
+    public void Old_tallies_are_pruned()
+    {
+        var time = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(DateTimeOffset.UtcNow);
+        var failures = new MoneyAuthFailures(time, Microsoft.Extensions.Logging.Abstractions.NullLogger<MoneyAuthFailures>.Instance);
+        for (var i = 0; i < MoneyAuthFailures.MaxTallies; i++)
+            failures.RecordFailure(new IPAddress(BitConverter.GetBytes(0x0A000000 + i)));
+        time.Advance(MoneyAuthFailures.Window + TimeSpan.FromSeconds(1));
+
+        failures.RecordFailure(IPAddress.Parse("203.0.113.9"));
+
+        Assert.True(failures.Tracked <= 1, $"{failures.Tracked} tallies kept");
+    }
+
+    // Minor 5: the middleware itself, with a fake connection.
+    private sealed class FakeConnection(IPAddress remote) : Microsoft.AspNetCore.Connections.ConnectionContext
+    {
+        public bool Aborted { get; private set; }
+        public override string ConnectionId { get; set; } = "c1";
+        public override Microsoft.AspNetCore.Http.Features.IFeatureCollection Features { get; } = new Microsoft.AspNetCore.Http.Features.FeatureCollection();
+        public override IDictionary<object, object?> Items { get; set; } = new Dictionary<object, object?>();
+        public override System.IO.Pipelines.IDuplexPipe Transport { get; set; } = null!;
+        public override EndPoint? RemoteEndPoint { get; set; } = new IPEndPoint(remote, 50000);
+        public override void Abort(Microsoft.AspNetCore.Connections.ConnectionAbortedException abortReason) => Aborted = true;
+    }
+
+    [Theory]
+    [InlineData("203.0.113.5", false)]
+    [InlineData("192.168.1.9", true)]
+    public async Task Middleware_drops_outsiders_before_anything_else(string address, bool passes)
+    {
+        var failures = new MoneyAuthFailures(TimeProvider.System, Microsoft.Extensions.Logging.Abstractions.NullLogger<MoneyAuthFailures>.Instance);
+        var reached = false;
+        var app = MoneyNetworkFilter.Middleware(failures, Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance)(_ =>
+        {
+            reached = true;
+            return Task.CompletedTask;
+        });
+        var connection = new FakeConnection(IPAddress.Parse(address));
+
+        await app(connection);
+
+        Assert.Equal(passes, reached);
+        Assert.Equal(!passes, connection.Aborted);
+        Assert.Equal(passes ? 0 : 1, failures.Tracked);
+    }
+
     [Theory]
     [InlineData("127.0.0.1", true)]
     [InlineData("::1", true)]

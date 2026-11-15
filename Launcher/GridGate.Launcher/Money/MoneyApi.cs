@@ -37,8 +37,8 @@ internal static class MoneyApi
     // Answers.
     internal sealed record Answer(string Code, long? Balance = null, long? ToBalance = null, long? EntryId = null, long? HoldId = null);
     internal sealed record EconomyAnswer(string Code, string CurrencySymbol, long UploadFee, long ClassifiedFee, bool VisitorWallets, bool ScriptPayouts, long MaxPayment);
-    internal sealed record HealthAnswer(bool Ok);
-    internal sealed record PairBody(string? Host, string? Nonce, string? Proof);
+    internal sealed record HealthAnswer(bool Ok, int Regions);
+    internal sealed record PairBody(string? Host, int? FirstPort, string? Nonce, string? Proof);
     internal sealed record PairAnswer(string Code, string Key, string Proof);
 
     private sealed class BadRequest : Exception;
@@ -50,12 +50,13 @@ internal static class MoneyApi
     /// </summary>
     internal sealed record Context(MoneyLedger Ledger, PresenceCheck Presence, Func<LauncherSettings> Settings, MoneyAuthFailures Failures, ILogger Log,
         MoneyPairing? Pairing = null, Func<Func<LauncherSettings, LauncherSettings>, LauncherSettings>? Update = null, RegionHosts? Hosts = null,
-        string Fingerprint = "");
+        string Fingerprint = "", Func<MoneyMode>? Mode = null);
 
     public static void Map(IEndpointRouteBuilder app, Context c)
     {
         app.MapPost("/money/v1/pair", (RequestDelegate)(http => PairAsync(http, c)));
-        Post(app, "/money/v1/health", c, (_, _, _) => Task.FromResult<object>(new HealthAnswer(true)));
+        // How many regions the key covers now: a Region Server's page says when the grid sees none of its regions.
+        Post(app, "/money/v1/health", c, (_, grant, _) => Task.FromResult<object>(new HealthAnswer(true, grant.Regions.Count)));
         Post(app, "/money/v1/economy", c, (_, _, _) =>
         {
             var m = c.Settings().Money;
@@ -119,23 +120,39 @@ internal static class MoneyApi
         {
             var b = await Read<PairBody>(http, ct);
             var (host, nonce, proof) = ((b.Host ?? "").Trim(), b.Nonce ?? "", b.Proof ?? "");
-            if (c.Pairing is { } pairing && c.Update is { } update && c.Settings().Plan == OwnerPlan.GridAsset && c.Fingerprint.Length > 0
-                && host.Length is > 0 and <= 255 && SettingsValidator.HostnameError(host) is null && IsNonce(nonce) && proof.Length == 64)
+            // Money still on (it may have been turned off since the service started), on a Grid Asset Server.
+            if (c.Pairing is { } pairing && c.Update is { } update && c.Mode?.Invoke() is MoneyMode.Play or MoneyMode.Real
+                && c.Settings().Plan == OwnerPlan.GridAsset && c.Fingerprint.Length > 0
+                && host.Length is > 0 and <= 255 && SettingsValidator.HostnameError(host) is null && IsNonce(nonce) && proof.Length == 64
+                && b.FirstPort is { } firstPort and >= 1 and <= 65535)
             {
                 if (pairing.Redeem(code => PairingProof.Same(PairingProof.Client(code, c.Fingerprint, nonce, host), proof)) is { } code)
                 {
                     var key = Secrets.NewPassword(MoneyKeys.KeyLength);
-                    var server = new PairedServer(Guid.NewGuid(), host, PairedServer.HashOf(key), DateTimeOffset.UtcNow);
-                    update(s => s with
+                    var server = new PairedServer(Guid.NewGuid(), host, PairedServer.HashOf(key), DateTimeOffset.UtcNow, firstPort);
+                    try
                     {
-                        Money = s.Money with
+                        update(s => s with
                         {
-                            // One address, one server: pairing the same address again replaces its key.
-                            PairedServers = [.. (s.Money.PairedServers ?? []).Where(p => !string.Equals(p.Host, host, StringComparison.OrdinalIgnoreCase)), server],
-                        },
-                    });
-                    c.Log.LogInformation("Paired a Region Server at {Host}.", LogText.Clean(host));
-                    answer = new PairAnswer("ok", key, PairingProof.Server(code, c.Fingerprint, nonce, key));
+                            Money = s.Money with
+                            {
+                                // One address and first port, one server: pairing it again replaces its key. Servers behind
+                                // one router share the address and differ by port (final review, Important 2).
+                                PairedServers =
+                                [
+                                    .. (s.Money.PairedServers ?? []).Where(p => !(string.Equals(p.Host, host, StringComparison.OrdinalIgnoreCase) && p.FirstPort == firstPort)),
+                                    server,
+                                ],
+                            },
+                        });
+                        c.Log.LogInformation("Paired a Region Server at {Host}.", LogText.Clean(host));
+                        answer = new PairAnswer("ok", key, PairingProof.Server(code, c.Fingerprint, nonce, key));
+                    }
+                    catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidOperationException)
+                    {
+                        // The code is used up; the owner makes a new one. Never a 500 with the key nowhere saved.
+                        c.Log.LogError("A Region Server's pairing couldn't be saved ({Error}); make a new pairing code.", e.GetType().Name);
+                    }
                 }
             }
         }
@@ -201,7 +218,10 @@ internal static class MoneyApi
             {
                 if (c.Hosts is null) throw new MoneyUnavailableException(new InvalidOperationException("no region lookup"));
                 var own = c.Settings().Regions.Select(r => r.Uuid).ToHashSet();
-                grant = grant with { Regions = (await c.Hosts.RegionsAtAsync(serverHost, ct)).Where(r => !own.Contains(r)).ToHashSet() };
+                grant = grant with
+                {
+                    Regions = (await c.Hosts.RegionsAtAsync(serverHost, grant.FromPort, grant.ToPort, ct)).Where(r => !own.Contains(r)).ToHashSet(),
+                };
             }
             answer = await endpoint(http, grant, ct);
         }

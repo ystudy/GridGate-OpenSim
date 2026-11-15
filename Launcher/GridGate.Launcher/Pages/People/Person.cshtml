@@ -72,7 +72,7 @@ else
         </form>
     }
 </div>
-@if (Model.Person is { } coinsFor && MoneyGate.On)
+@if (Model.Person is { } coinsFor && MoneyGate.ServiceHere)
 {
     <p id="person-coins" class="mb-3"><a href="/money/person?id=@coinsFor.Row.Account.PrincipalId">Coins</a>: balance, history and changes.</p>
 }

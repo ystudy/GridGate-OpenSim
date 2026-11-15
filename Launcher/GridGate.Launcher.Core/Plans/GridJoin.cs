@@ -164,7 +164,9 @@ public static class GridJoin
         MoneyMode? money = Get(GridInfoKeys.Money) is { } m ? Enum.TryParse<MoneyMode>(m, ignoreCase: true, out var mode) && Enum.IsDefined(mode) ? mode : MoneyMode.Off : null;
         int? moneyPort = int.TryParse(Get(GridInfoKeys.MoneyPort), NumberStyles.None, CultureInfo.InvariantCulture, out var mp) && mp is > 0 and <= 65535 ? mp : null;
         var fingerprint = Get(GridInfoKeys.MoneyFingerprint) is { Length: > 0 } fp ? fp : null;
-        var economy = Get("economy") is { Length: > 0 } e ? e : null;
+        // Plain-HTTP grid info: only an http(s) address with no control characters goes into a region's INI.
+        var economy = Get("economy") is { Length: > 0 } e && !e.Any(char.IsControl) && Uri.TryCreate(e, UriKind.Absolute, out var eu)
+                      && eu.Scheme is "http" or "https" ? e : null;
         return new JoinedGrid(host, publicPort, privatePort, gridName, login, Get(GridInfoKeys.Version)!, hypergrid, from, to,
             money, moneyPort, fingerprint, economy);
     }

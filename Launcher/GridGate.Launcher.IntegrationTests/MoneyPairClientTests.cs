@@ -35,7 +35,7 @@ public sealed class MoneyPairClientTests(MoneyMariaDb maria) : IClassFixture<Mon
     }
 
     /// <summary>The Grid Asset Server's money service on loopback, Play coins on.</summary>
-    private async Task StartGridAsync()
+    private async Task<MoneyTestDatabase> StartGridAsync()
     {
         var db = await maria.FreshAsync();
         await db.EnsureSchemaAsync();
@@ -53,6 +53,7 @@ public sealed class MoneyPairClientTests(MoneyMariaDb maria) : IClassFixture<Mon
             new MoneyAuthFailures(TimeProvider.System, NullLogger<MoneyAuthFailures>.Instance), NullLoggerFactory.Instance, new MoneyStatus(), _pairing,
             change => _grid = change(_grid), new RegionHosts(MoneyConnections.Robust(() => dbSettings)));
         await _host.StartAsync(Ct);
+        return db;
     }
 
     /// <summary>The Region Server's settings, joined to a grid that publishes <paramref name="fingerprint"/> on <paramref name="port"/>.</summary>
@@ -77,7 +78,8 @@ public sealed class MoneyPairClientTests(MoneyMariaDb maria) : IClassFixture<Mon
     [Fact]
     public async Task Pairs_with_the_real_service()
     {
-        await StartGridAsync();
+        var db = await StartGridAsync();
+        await db.AddRegion(Guid.NewGuid(), "192.168.1.20", port: 8004); // the Region Server's region, at its first port
         var (code, _) = _pairing.Issue();
         var rs = RegionServer(_port, _fingerprint);
         var client = new MoneyPairClient(new FakeJoin(rs.Join!), TimeProvider.System);
@@ -93,6 +95,20 @@ public sealed class MoneyPairClientTests(MoneyMariaDb maria) : IClassFixture<Mon
 
         var paired = rs with { Money = rs.Money with { Pairing = pairing } };
         Assert.Equal(PairingHealth.Ok, await client.CheckAsync(paired, Ct));
+        Assert.Equal(8004, _grid.Money.PairedServers![0].FirstPort);
+        Assert.Equal(MoneyMode.Play, outcome.Grid?.Money);
+    }
+
+    [Fact]
+    public async Task Paired_but_no_regions_seen_checks_as_no_regions()
+    {
+        await StartGridAsync();
+        var (code, _) = _pairing.Issue();
+        var rs = RegionServer(_port, _fingerprint);
+        var client = new MoneyPairClient(new FakeJoin(rs.Join!), TimeProvider.System);
+        var pairing = (await client.PairAsync(rs, code, Ct)).Pairing!;
+
+        Assert.Equal(PairingHealth.NoRegions, await client.CheckAsync(rs with { Money = rs.Money with { Pairing = pairing } }, Ct));
     }
 
     [Fact]

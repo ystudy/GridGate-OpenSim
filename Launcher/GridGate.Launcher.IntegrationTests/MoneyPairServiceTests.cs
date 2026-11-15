@@ -33,6 +33,8 @@ public sealed class MoneyPairServiceTests(MoneyMariaDb maria) : IClassFixture<Mo
     private MoneyServiceHost? _host;
     private HttpClient? _http;
     private LauncherSettings _settings = null!;
+    private MoneyMode _mode = MoneyMode.Play;
+    private bool _saveFails;
     private MoneyPairing _pairing = null!;
     private string _fingerprint = "";
 
@@ -72,9 +74,10 @@ public sealed class MoneyPairServiceTests(MoneyMariaDb maria) : IClassFixture<Mo
         var cert = MoneyCertificate.LoadOrCreate(Path.Combine(_dir, MoneyCertificate.FileName), time);
         _fingerprint = MoneyCertificate.Fingerprint(cert);
         _pairing = new MoneyPairing(time);
-        _host = new MoneyServiceHost(ledger, presence, () => _settings, () => MoneyMode.Play, () => cert,
+        _host = new MoneyServiceHost(ledger, presence, () => _settings, () => _mode, () => cert,
             new MoneyAuthFailures(time, loggers.CreateLogger<MoneyAuthFailures>()), loggers, new MoneyStatus(), _pairing,
-            change => _settings = change(_settings), new RegionHosts(MoneyConnections.Robust(() => dbSettings)));
+            change => _saveFails ? throw new IOException("disk full") : _settings = change(_settings),
+            new RegionHosts(MoneyConnections.Robust(() => dbSettings)));
         await _host.StartAsync(Ct);
         _http = new HttpClient(new SocketsHttpHandler
         {
@@ -95,11 +98,11 @@ public sealed class MoneyPairServiceTests(MoneyMariaDb maria) : IClassFixture<Mo
     private static string NewNonce() => Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
 
     /// <summary>Pairs as a Region Server at <paramref name="host"/> would, with a fresh code; returns the key.</summary>
-    private async Task<string> PairAsync(string host = ServerHost)
+    private async Task<string> PairAsync(string host = ServerHost, int firstPort = 9000)
     {
         var (code, _) = _pairing.Issue();
         var nonce = NewNonce();
-        var (status, body, _) = await Post("pair", new { host, nonce, proof = PairingProof.Client(code, _fingerprint, nonce, host) });
+        var (status, body, _) = await Post("pair", new { host, firstPort, nonce, proof = PairingProof.Client(code, _fingerprint, nonce, host) });
         Assert.Equal(HttpStatusCode.OK, status);
         Assert.Equal("ok", (string?)body!["code"]);
         var key = (string)body["key"]!;
@@ -130,7 +133,7 @@ public sealed class MoneyPairServiceTests(MoneyMariaDb maria) : IClassFixture<Mo
         var (code, _) = _pairing.Issue();
         var nonce = NewNonce();
 
-        var (status, body, _) = await Post("pair", new { host = ServerHost, nonce, proof = PairingProof.Client(code, new string('0', 64), nonce, ServerHost) });
+        var (status, body, _) = await Post("pair", new { host = ServerHost, firstPort = 9000, nonce, proof = PairingProof.Client(code, new string('0', 64), nonce, ServerHost) });
 
         Assert.Equal(HttpStatusCode.OK, status);
         Assert.Equal("refused", (string?)body!["code"]);
@@ -143,11 +146,11 @@ public sealed class MoneyPairServiceTests(MoneyMariaDb maria) : IClassFixture<Mo
     {
         await StartAsync();
         var nonce = NewNonce();
-        var noCode = (await Post("pair", new { host = ServerHost, nonce, proof = new string('A', 64) })).Raw;
+        var noCode = (await Post("pair", new { host = ServerHost, firstPort = 9000, nonce, proof = new string('A', 64) })).Raw;
         var (code, _) = _pairing.Issue();
-        var wrong = (await Post("pair", new { host = ServerHost, nonce, proof = PairingProof.Client(code, _fingerprint, nonce, "192.168.1.99") })).Raw;
+        var wrong = (await Post("pair", new { host = ServerHost, firstPort = 9000, nonce, proof = PairingProof.Client(code, _fingerprint, nonce, "192.168.1.99") })).Raw;
         _pairing.Cancel();
-        var cancelled = (await Post("pair", new { host = ServerHost, nonce, proof = PairingProof.Client(code, _fingerprint, nonce, ServerHost) })).Raw;
+        var cancelled = (await Post("pair", new { host = ServerHost, firstPort = 9000, nonce, proof = PairingProof.Client(code, _fingerprint, nonce, ServerHost) })).Raw;
 
         Assert.Equal("""{"code":"refused"}""", noCode);
         Assert.Equal(noCode, wrong);
@@ -162,9 +165,10 @@ public sealed class MoneyPairServiceTests(MoneyMariaDb maria) : IClassFixture<Mo
 
         foreach (var body in new object[]
                  {
-                     new { host = "a b", nonce = NewNonce(), proof = new string('A', 64) },
-                     new { host = ServerHost, nonce = "short", proof = new string('A', 64) },
-                     new { host = ServerHost, nonce = NewNonce(), proof = "nothex" },
+                     new { host = "a b", firstPort = 9000, nonce = NewNonce(), proof = new string('A', 64) },
+                     new { host = ServerHost, firstPort = 9000, nonce = "short", proof = new string('A', 64) },
+                     new { host = ServerHost, firstPort = 9000, nonce = NewNonce(), proof = "nothex" },
+                     new { host = ServerHost, firstPort = 0, nonce = NewNonce(), proof = new string('A', 64) },
                  })
             Assert.Equal("refused", (string?)(await Post("pair", body)).Body!["code"]);
         Assert.Null(_settings.Money.PairedServers);
@@ -234,13 +238,91 @@ public sealed class MoneyPairServiceTests(MoneyMariaDb maria) : IClassFixture<Mo
     }
 
     [Fact]
+    public async Task Failed_save_is_refused_not_a_500()
+    {
+        await StartAsync();
+        var (code, _) = _pairing.Issue();
+        var nonce = NewNonce();
+        _saveFails = true;
+
+        var (status, body, _) = await Post("pair", new { host = ServerHost, firstPort = 9000, nonce, proof = PairingProof.Client(code, _fingerprint, nonce, ServerHost) });
+
+        Assert.Equal(HttpStatusCode.OK, status);
+        Assert.Equal("refused", (string?)body!["code"]);
+        Assert.Contains(_logs, l => l.Contains("couldn't be saved"));
+    }
+
+    [Fact]
+    public async Task Money_turned_off_since_the_start_refuses_pairing()
+    {
+        await StartAsync();
+        var (code, _) = _pairing.Issue();
+        var nonce = NewNonce();
+        _mode = MoneyMode.Off;
+
+        var body = (await Post("pair", new { host = ServerHost, firstPort = 9000, nonce, proof = PairingProof.Client(code, _fingerprint, nonce, ServerHost) })).Body;
+
+        Assert.Equal("refused", (string?)body!["code"]);
+        Assert.Null(_settings.Money.PairedServers);
+    }
+
+    [Fact]
+    public async Task Missing_first_port_is_refused()
+    {
+        await StartAsync();
+        var (code, _) = _pairing.Issue();
+        var nonce = NewNonce();
+
+        var body = (await Post("pair", new { host = ServerHost, nonce, proof = PairingProof.Client(code, _fingerprint, nonce, ServerHost) })).Body;
+
+        Assert.Equal("refused", (string?)body!["code"]);
+        Assert.Equal(code, _pairing.Redeem(c => c == code));
+    }
+
+    [Fact]
+    public async Task Two_servers_on_one_address_each_cover_their_ports()
+    {
+        // Behind one router both Region Servers give out the router's address; each has its own forwarded port range.
+        var db = await StartAsync();
+        var upper = Guid.NewGuid();
+        var b = Guid.NewGuid();
+        var (sessionB, secureB) = (Guid.NewGuid(), Guid.NewGuid());
+        await db.AddUser(b);
+        await db.AddRegion(upper, ServerHost, port: 9100);
+        await db.AddPresence(A, Theirs, Session, Secure);       // Theirs is at port 9000
+        await db.AddPresence(b, upper, sessionB, secureB);
+        var whoB = new { agentId = b, home = "", sessionId = sessionB, secureSessionId = secureB };
+
+        var lower = await PairAsync(firstPort: 9000);
+        var higher = await PairAsync(firstPort: 9100);
+
+        Assert.Equal(2, _settings.Money.PairedServers!.Count);
+        Assert.Equal("ok", (string?)(await Post("balance", Who(A), lower)).Body!["code"]);
+        Assert.Equal("wrong_region", (string?)(await Post("balance", whoB, lower)).Body!["code"]);
+        Assert.Equal("ok", (string?)(await Post("balance", whoB, higher)).Body!["code"]);
+        Assert.Equal("wrong_region", (string?)(await Post("balance", Who(A), higher)).Body!["code"]);
+    }
+
+    [Fact]
+    public async Task Health_says_how_many_regions_a_server_key_covers()
+    {
+        await StartAsync();
+        var key = await PairAsync();
+
+        var body = (await Post("health", new { }, key)).Body!;
+
+        Assert.True((bool)body["ok"]!);
+        Assert.Equal(1, body["regions"]!.GetValue<int>());
+    }
+
+    [Fact]
     public async Task Pair_refused_off_grid_asset()
     {
         await StartAsync(OwnerPlan.Local);
         var (code, _) = _pairing.Issue();
         var nonce = NewNonce();
 
-        var body = (await Post("pair", new { host = ServerHost, nonce, proof = PairingProof.Client(code, _fingerprint, nonce, ServerHost) })).Body;
+        var body = (await Post("pair", new { host = ServerHost, firstPort = 9000, nonce, proof = PairingProof.Client(code, _fingerprint, nonce, ServerHost) })).Body;
 
         Assert.Equal("refused", (string?)body!["code"]);
         Assert.Null(_settings.Money.PairedServers);
@@ -254,9 +336,9 @@ public sealed class MoneyPairServiceTests(MoneyMariaDb maria) : IClassFixture<Mo
         var nonce = NewNonce();
         var proof = PairingProof.Client(code, _fingerprint, nonce, ServerHost);
 
-        var body = (await Post("pair", new { host = ServerHost, nonce, proof })).Body!;
+        var body = (await Post("pair", new { host = ServerHost, firstPort = 9000, nonce, proof })).Body!;
         var key = (string)body["key"]!;
-        await Post("pair", new { host = ServerHost, nonce, proof }); // a replay, refused
+        await Post("pair", new { host = ServerHost, firstPort = 9000, nonce, proof }); // a replay, refused
 
         var log = string.Join("\n", _logs);
         Assert.Contains("Paired a Region Server at 192.168.1.20.", log);

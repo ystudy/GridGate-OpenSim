@@ -181,7 +181,7 @@
                         @foreach (var server in Model.Servers)
                         {
                             <li>
-                                @server.Host, paired @server.PairedAt.ToString("yyyy-MM-dd")
+                                @server.Host@(server.FirstPort > 0 ? $", region ports from {server.FirstPort}" : ""), paired @server.PairedAt.ToString("yyyy-MM-dd")
                                 @if (Model.CanChange)
                                 {
                                     <form method="post" action="/money?handler=RemoveServer" asp-antiforgery="true" class="d-inline">

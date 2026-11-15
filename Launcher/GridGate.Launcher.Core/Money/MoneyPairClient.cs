@@ -10,10 +10,13 @@ using GridGate.Launcher.Core.Settings;
 namespace GridGate.Launcher.Core.Money;
 
 /// <summary>What a Region Server's pairing looks like from its side, as its Money page shows it.</summary>
-public enum PairingHealth { Ok, Refused, CertificateChanged, Unreachable, NotPaired }
+public enum PairingHealth { Ok, Refused, CertificateChanged, Unreachable, NotPaired, NoRegions }
 
-/// <summary>A pairing attempt: the pairing to save, or an owner-readable reason nothing was saved.</summary>
-public sealed record PairOutcome(ServerPairing? Pairing, string? Error);
+/// <summary>
+/// A pairing attempt: the pairing to save, or an owner-readable reason nothing was saved; and the grid information it read
+/// fresh, which the page saves with the pairing (the saved join is only refreshed when the grid service starts).
+/// </summary>
+public sealed record PairOutcome(ServerPairing? Pairing, string? Error, JoinedGrid? Grid = null);
 
 /// <summary>A Region Server's side of pairing (money plan 3); a seam so the page can be tested.</summary>
 public interface IMoneyPairClient
@@ -34,6 +37,7 @@ public sealed class MoneyPairClient(IGridJoinClient join, TimeProvider time) : I
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
     private sealed record PairAnswer(string? Code, string? Key, string? Proof);
+    private sealed record HealthAnswer(string? Code, bool? Ok, int? Regions);
 
     public async Task<PairOutcome> PairAsync(LauncherSettings s, string typedCode, CancellationToken ct)
     {
@@ -68,7 +72,7 @@ public sealed class MoneyPairClient(IGridJoinClient join, TimeProvider time) : I
         {
             using var http = Pinned(fingerprint, out _);
             using var response = await http.PostAsJsonAsync($"https://{joined.Host}:{port}/money/v1/pair",
-                new { host, nonce, proof = PairingProof.Client(code, fingerprint, nonce, host) }, Json, ct);
+                new { host, firstPort = s.RegionPort, nonce, proof = PairingProof.Client(code, fingerprint, nonce, host) }, Json, ct);
             answer = response.IsSuccessStatusCode ? await response.Content.ReadFromJsonAsync<PairAnswer>(Json, ct) : null;
         }
         catch (Exception e) when (e is HttpRequestException or TaskCanceledException or JsonException or NotSupportedException && !ct.IsCancellationRequested)
@@ -78,7 +82,7 @@ public sealed class MoneyPairClient(IGridJoinClient join, TimeProvider time) : I
 
         if (answer is { Code: "ok", Key: { Length: > 0 } key, Proof: { } proof })
             return PairingProof.Same(PairingProof.Server(code, fingerprint, nonce, key), proof)
-                ? new(new ServerPairing(joined.Host, fingerprint, key, time.GetUtcNow()), null)
+                ? new(new ServerPairing(joined.Host, fingerprint, key, time.GetUtcNow()), null, grid)
                 : new(null, "The Grid Asset Server didn't prove it made this code. Nothing was saved.");
         return new(null, "The Grid Asset Server didn't accept this code. Codes work once, for 15 minutes; make a new one there.");
     }
@@ -110,10 +114,14 @@ public sealed class MoneyPairClient(IGridJoinClient join, TimeProvider time) : I
             try
             {
                 using var response = await http.SendAsync(request, ct);
-                return response.StatusCode switch
+                if (response.StatusCode == HttpStatusCode.Unauthorized) return PairingHealth.Refused;
+                if (response.StatusCode != HttpStatusCode.OK) return PairingHealth.Unreachable;
+                // A 200 can still be {"code":"unavailable"} (the grid can't read its region list right now).
+                var health = await response.Content.ReadFromJsonAsync<HealthAnswer>(Json, ct);
+                return health switch
                 {
-                    HttpStatusCode.OK => PairingHealth.Ok,
-                    HttpStatusCode.Unauthorized => PairingHealth.Refused,
+                    { Ok: true, Regions: 0 } => PairingHealth.NoRegions,
+                    { Ok: true } => PairingHealth.Ok,
                     _ => PairingHealth.Unreachable,
                 };
             }
@@ -122,7 +130,7 @@ public sealed class MoneyPairClient(IGridJoinClient join, TimeProvider time) : I
                 pinFailed = failed();
             }
         }
-        catch (Exception e) when (e is HttpRequestException or TaskCanceledException && !ct.IsCancellationRequested)
+        catch (Exception e) when (e is HttpRequestException or TaskCanceledException or JsonException && !ct.IsCancellationRequested)
         {
             return pinFailed ? PairingHealth.CertificateChanged : PairingHealth.Unreachable;
         }

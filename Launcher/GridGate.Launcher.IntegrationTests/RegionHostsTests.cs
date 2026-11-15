@@ -19,8 +19,8 @@ public sealed class RegionHostsTests(MoneyMariaDb maria) : IClassFixture<MoneyMa
         await db.AddRegion(c, "192.168.1.30");
         var hosts = new RegionHosts(db.OpenRobust);
 
-        Assert.Equal(new HashSet<Guid> { a, b }, (await hosts.RegionsAtAsync("192.168.1.20", Ct)).ToHashSet());
-        Assert.Empty(await hosts.RegionsAtAsync("192.168.1.99", Ct));
+        Assert.Equal(new HashSet<Guid> { a, b }, (await hosts.RegionsAtAsync("192.168.1.20", 0, 65536, Ct)).ToHashSet());
+        Assert.Empty(await hosts.RegionsAtAsync("192.168.1.99", 0, 65536, Ct));
     }
 
     [Fact]
@@ -30,6 +30,6 @@ public sealed class RegionHostsTests(MoneyMariaDb maria) : IClassFixture<MoneyMa
         var closed = db.Settings with { MariaDbPort = MoneyMariaDb.FreePort() };
         var hosts = new RegionHosts(ct => Core.Database.GridDb.OpenRobustAsync(closed, 2, ct));
 
-        await Assert.ThrowsAsync<MoneyUnavailableException>(() => hosts.RegionsAtAsync("192.168.1.20", Ct));
+        await Assert.ThrowsAsync<MoneyUnavailableException>(() => hosts.RegionsAtAsync("192.168.1.20", 0, 65536, Ct));
     }
 }

@@ -44,7 +44,15 @@ service), §7.6, §7.7, §9.1 (People, Region Servers), §11. This is step 4 of 
     (plan 6b, owner: "keep it basic"), so a machine that re-registers someone else's region in Robust takes that region
     over anyway. The key then acts only for avatars that machine really hosts. That is spec §11's "acts only for avatars
     currently in its regions".
-  - One address is paired to one server. Pairing the same address again replaces the old key.
+  - **Changed in the final review (Important 2):** Region Servers behind one router give out the same public address,
+    each with its own forwarded port range (install-and-plans design §11). So a pairing also records the Region Server's
+    first region port. Its key covers that address from that port up to the next paired server's first port there, by
+    the region's `serverPort` in Robust.
+  - Pairing the same address and first port again replaces the old key.
+  - Known limit: until every Region Server behind one address is paired, the one with lower ports also covers an unpaired
+    one's higher ports. The owner pairs each of them, as they set each one up.
+  - The health answer says how many regions a key covers now. The Region Server's Check says so when the grid sees
+    none, for example after its address or first region port changed.
 - **A visitor's home is checked against Robust's `GridUser` table, not taken from the region.**
   - The Gatekeeper writes `GridUser.UserID = "<uuid>;<HomeURI>;<First Last>"` for every visitor it lets in
     (`GatekeeperService.cs:622-639`).
@@ -66,7 +74,8 @@ service), §7.6, §7.7, §9.1 (People, Region Servers), §11. This is step 4 of 
   give, take and merge, so the owner can tidy up.
 - **An unpaired Region Server's regions** run `GridGateMoneyModule` in a refusing state. Every payment answers "This region
   isn't connected to the grid's money yet." (spec §7.7). Regions don't fall back to OpenSim's sample module, which would
-  show different prices.
+  show different prices. Uploads and classifieds cost nothing there while it is unpaired: the refusing service has no
+  economy answer, so fees read as 0 (final review, Minor 9).
 - **Pairing codes** live only in the Grid Asset Server's memory:
   - one at a time;
   - valid for 15 minutes;

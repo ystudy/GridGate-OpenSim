@@ -36,7 +36,9 @@ public static class MoneyNetworkFilter
         if (connection.RemoteEndPoint is IPEndPoint remote && !Allowed(remote.Address))
         {
             failures.RecordFailure(remote.Address);
-            log.LogWarning("Refused a money connection from {Address}: it isn't on this computer's network.", remote.Address);
+            if (failures.FirstDropInWindow(remote.Address))
+                log.LogWarning("Refused money connections from {Address}: it isn't on this computer's network. (Once per {Minutes} minutes.)",
+                    remote.Address, (int)MoneyAuthFailures.Window.TotalMinutes);
             connection.Abort();
             return;
         }

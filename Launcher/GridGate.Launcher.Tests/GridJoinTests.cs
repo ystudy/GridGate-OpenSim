@@ -41,6 +41,18 @@ public sealed class GridJoinTests
         Assert.Null(join.Economy);
     }
 
+    [Theory]
+    [InlineData("javascript:alert(1)")]
+    [InlineData("ftp://192.168.1.5/economy/")]
+    [InlineData("/economy/")]
+    [InlineData("http://192.168.1.5:8001/economy/\nRegionKey = x")]
+    public void Parse_drops_an_economy_address_that_is_not_http(string economy)
+    {
+        var xml = Xml().Replace("</gridinfo>", $"<economy>{System.Security.SecurityElement.Escape(economy)}</economy></gridinfo>");
+
+        Assert.Null(GridJoin.Parse("192.168.1.5", 8002, xml).Economy);
+    }
+
     [Fact]
     public void Parse_unreadable_money_reads_as_off()
     {

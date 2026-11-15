@@ -78,7 +78,7 @@ public sealed class MoneyServiceHost(
         builder.Services.AddRoutingCore();
         var app = builder.Build();
         app.UseRouting();
-        MoneyApi.Map(app, new MoneyApi.Context(ledger, presence, settings, failures, _log, pairing, update, hosts, MoneyCertificate.Fingerprint(cert)));
+        MoneyApi.Map(app, new MoneyApi.Context(ledger, presence, settings, failures, _log, pairing, update, hosts, MoneyCertificate.Fingerprint(cert), effective));
         return app;
     }
 

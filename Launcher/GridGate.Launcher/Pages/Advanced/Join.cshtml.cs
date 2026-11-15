@@ -119,6 +119,8 @@ public sealed class JoinModel(IGridController grid, Func<LauncherSettings> setti
             Join = before.Join,
             GridName = before.GridName,
             Setup = s.Setup with { OwnerCreated = before.Setup.OwnerCreated, Owner = before.Setup.Owner },
+            // Joining dropped a money pairing with the old Grid Asset Server; a refused re-point keeps it.
+            Money = s.Money with { Pairing = before.Money.Pairing },
         }, writeConfig: true);
         Error = error;
         Found = read;

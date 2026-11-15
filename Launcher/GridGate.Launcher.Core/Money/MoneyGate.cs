@@ -25,6 +25,9 @@ public sealed class MoneyGate(Func<LauncherSettings> settings, Func<MoneySetting
     /// <summary>The mode the ledger, service and their pages run in here: <see cref="Effective"/>, or Off where they don't run.</summary>
     public MoneyMode ServiceMode() => ServiceHere ? Effective() : MoneyMode.Off;
 
+    /// <summary>Whether the release gate lets <paramref name="mode"/> run at all, whatever this computer's plan.</summary>
+    public bool Approved(MoneyMode mode) => _effective(new MoneySettings(Mode: mode)) == mode;
+
     /// <summary>Whether choosing <paramref name="mode"/> would actually run it: what the Money page may offer.</summary>
     public bool Allows(MoneyMode mode) => _effective(settings().Money with { Mode = mode }) == mode;
 }

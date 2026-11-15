@@ -8,9 +8,12 @@ public enum MoneyMode { Off, Play, Real, Gloebit }
 
 /// <summary>
 /// A Region Server paired with this Grid Asset Server's money (money plan 3): the address it paired from, which is the
-/// address its regions register with, and the SHA-256 of its key. The key itself is never kept here.
+/// address its regions register with, its first region port, and the SHA-256 of its key. The key itself is never kept
+/// here. Region Servers behind one router share an address and have their own port ranges, so a server's key covers
+/// that address from <paramref name="FirstPort"/> up to the next paired server's first port there (final review,
+/// Important 2).
 /// </summary>
-public sealed record PairedServer(Guid Id, string Host, string KeyHash, DateTimeOffset PairedAt)
+public sealed record PairedServer(Guid Id, string Host, string KeyHash, DateTimeOffset PairedAt, int FirstPort = 0)
 {
     /// <summary>The upper-case hex SHA-256 of a key's UTF-8 bytes, as stored.</summary>
     public static string HashOf(string key) => Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(key)));
