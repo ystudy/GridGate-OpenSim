@@ -1,11 +1,39 @@
+using System.Globalization;
 using MySqlConnector;
 
 namespace GridGate.Launcher.Core.Money;
 
-/// <summary>How the ledger compares a visitor's home grid address: trimmed, without a trailing slash, lower case.</summary>
+/// <summary>
+/// How the ledger stores and compares a visitor's home grid address: trimmed, without a trailing slash, lower case, and
+/// in ASCII. An international domain name is stored as punycode, and the database compares homes byte for byte
+/// (<c>utf8mb4_bin</c>), so a look-alike domain (<c>othér.example</c> for <c>other.example</c>) is a different home with
+/// its own empty wallet (money review 2026-11-15, L-2).
+/// </summary>
 public static class MoneyHomes
 {
-    public static string Normal(string? home) => (home ?? "").Trim().TrimEnd('/').ToLowerInvariant();
+    /// <summary>The stored form of <paramref name="home"/> ("" for a resident), or null when it can't be written in ASCII.</summary>
+    public static string? Normal(string? home)
+    {
+        var t = (home ?? "").Trim().TrimEnd('/').ToLowerInvariant();
+        if (t.All(char.IsAscii)) return t;
+
+        // Only an http(s) address's domain name may be outside ASCII.
+        var start = t.IndexOf("://", StringComparison.Ordinal);
+        if (start < 0 || t[..start] is not ("http" or "https")) return null;
+        var rest = t[(start + 3)..];
+        var end = rest.IndexOfAny([':', '/']);
+        var (host, tail) = end < 0 ? (rest, "") : (rest[..end], rest[end..]);
+        if (host.Length == 0 || !tail.All(char.IsAscii)) return null;
+        try
+        {
+            var ascii = new IdnMapping { UseStd3AsciiRules = true }.GetAscii(host).ToLowerInvariant();
+            return $"{t[..start]}://{ascii}{tail}";
+        }
+        catch (ArgumentException)
+        {
+            return null;
+        }
+    }
 }
 
 /// <summary>A hypergrid visitor as the Gatekeeper recorded them: their id, home grid address and name.</summary>
@@ -42,7 +70,7 @@ public sealed class VisitorDirectory(Func<CancellationToken, Task<MySqlConnectio
     public async Task<VisitorInfo?> FindAsync(Guid id, string home, CancellationToken ct)
     {
         var wanted = MoneyHomes.Normal(home);
-        if (id == Guid.Empty || wanted.Length == 0) return null;
+        if (id == Guid.Empty || string.IsNullOrEmpty(wanted)) return null;
         var rows = await QueryAsync("SELECT UserID FROM GridUser WHERE UserID LIKE @prefix", [("@prefix", id.ToString() + ";%")],
             v => MoneyHomes.Normal(v.Home) == wanted, ct);
         return rows.Count > 0 ? rows[0] : null;

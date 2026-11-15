@@ -73,8 +73,8 @@ public sealed class PresenceCheck(Func<CancellationToken, Task<MySqlConnection>>
     /// </summary>
     public async Task<bool> IsKnownVisitorAsync(Guid id, string home, CancellationToken ct)
     {
-        var wanted = MoneyLedger.NormalHome(home);
-        if (id == Guid.Empty || wanted.Length == 0) return false;
+        var wanted = MoneyHomes.Normal(home);
+        if (id == Guid.Empty || string.IsNullOrEmpty(wanted)) return false;
         await using var conn = await openRobust(ct);
         await using var cmd = new MySqlCommand("SELECT UserID FROM GridUser WHERE UserID LIKE @prefix", conn);
         cmd.Parameters.AddWithValue("@prefix", id.ToString() + ";%");
@@ -82,7 +82,7 @@ public sealed class PresenceCheck(Func<CancellationToken, Task<MySqlConnection>>
         while (await r.ReadAsync(ct))
         {
             var parts = r.GetString(0).Split(';');
-            if (parts.Length >= 2 && MoneyLedger.NormalHome(parts[1]) == wanted) return true;
+            if (parts.Length >= 2 && MoneyHomes.Normal(parts[1]) == wanted) return true;
         }
         return false;
     }
