@@ -1652,6 +1652,16 @@ public sealed partial class GridController(
         }
         new GridConfigWriter(paths, _money).Write(s, _modules.Cast<IIniContributor>().ToList(), _held);
         _writtenGridName = s.GridName;
+        // Gloebit's DLL only in Gloebit mode (money plan 4): it switches itself on whenever it is present.
+        try
+        {
+            new RuntimeStager(paths).SetGloebit(MoneyPlace.GloebitHere(s, _money));
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            _log?.LogWarning("Gloebit's module couldn't be {Change} yet ({Error}); it will be on the next world start.",
+                MoneyPlace.GloebitHere(s, _money) ? "added" : "removed", e.GetType().Name);
+        }
     }
 
     /// <summary>Stages the runtime, writes the configs and checks the ports (the web port is the host's; adoptable children keep theirs).</summary>

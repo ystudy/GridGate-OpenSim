@@ -143,8 +143,9 @@ public sealed class MoneyConfigTests : IDisposable
         Write(Make(symbol: "GG"));
         Assert.Equal("GG", Robust().Get("LoginService", "Currency"));
 
+        // Off: no leftover "G$" from DreamGrid's Gloebit days (money plan 4).
         Write(Make(symbol: "GG"), open: false);
-        Assert.Equal("G$", Robust().Get("LoginService", "Currency"));
+        Assert.DoesNotContain(Robust().ActiveEntries(), e => e.Section == "LoginService" && e.Key == "Currency");
     }
 
     [Fact]

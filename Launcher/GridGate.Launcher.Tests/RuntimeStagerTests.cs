@@ -45,6 +45,46 @@ public sealed class RuntimeStagerTests : IDisposable
     }
 
     [Fact]
+    public void Gloebit_dll_only_in_gloebit_mode()
+    {
+        var stager = new RuntimeStager(_paths);
+        stager.StageIfNeeded();
+        var dll = Path.Combine(_paths.RuntimeOpenSim, "Gloebit.dll");
+
+        stager.SetGloebit(true);
+        Assert.Equal([4], File.ReadAllBytes(dll)); // a dev build's bin/Gloebit.dll
+
+        stager.SetGloebit(false);
+        Assert.False(File.Exists(dll));
+    }
+
+    [Fact]
+    public void A_package_stages_gloebit_from_its_proto()
+    {
+        File.Delete(Path.Combine(_paths.OpenSimProgram, "Gloebit.dll"));
+        File.WriteAllBytes(Path.Combine(_paths.OpenSimProgram, "Gloebit.dll.Proto"), [42]);
+        var stager = new RuntimeStager(_paths);
+        stager.StageIfNeeded();
+
+        Assert.False(File.Exists(Path.Combine(_paths.RuntimeOpenSim, "Gloebit.dll.Proto")));
+        stager.SetGloebit(true);
+        Assert.Equal([42], File.ReadAllBytes(Path.Combine(_paths.RuntimeOpenSim, "Gloebit.dll")));
+    }
+
+    [Fact]
+    public void Removed_when_leaving_gloebit()
+    {
+        var stager = new RuntimeStager(_paths);
+        stager.StageIfNeeded();
+        stager.SetGloebit(true);
+
+        stager.SetGloebit(false);
+        stager.SetGloebit(false); // nothing there: no error
+
+        Assert.False(File.Exists(Path.Combine(_paths.RuntimeOpenSim, "Gloebit.dll")));
+    }
+
+    [Fact]
     public void First_stage_copies_and_skips_excluded_items()
     {
         Assert.True(new RuntimeStager(_paths).StageIfNeeded());

@@ -150,6 +150,7 @@ marked in the code with a `GridGate:` comment. When an upstream pick touches the
 | `feat(opensim): llTransferLindenDollars can pay hypergrid visitors` | `OpenSim/Framework/IVisitorMoneyModule.cs` (new), `OpenSim/Framework/OpenSim.Framework.csproj`, `LSL_Api.cs` (`llTransferLindenDollars`) |
 | `fix(opensim): UDP uploads are charged the upload fee` | `OpenSim/Region/CoreModules/Agent/AssetTransaction/AssetXferUploader.cs` |
 | `fix(opensim): classifieds are checked and charged at the money module's fee` | `OpenSim/Framework/IClassifiedFeeModule.cs` (new), `OpenSim/Framework/OpenSim.Framework.csproj`, `UserProfileModule.cs` (`ClassifiedInfoUpdate`) |
+| `feat(money): Gloebit's DLL and INI only in Gloebit mode; no leftover G$ currency` | `bin/Robust.HG.ini.proto` (`[LoginService] Currency="G$"` commented out: GridGate writes the currency), `bin/config-include/Proto/Robust/OpenSim.ini` (DreamGrid's `[Gloebit]` section with placeholder values and a Robust connection string removed: GridGate writes `[Gloebit]` in Gloebit mode) |
 
 The script changes (the five `LSL_Api.cs` rows) are tried against a real `LSL_Api` in a test region by
 `tests/GridGate.Lsl.Tests`, which CI runs on Linux and Windows. After an upstream pick that touches `LSL_Api.cs`, run it:
