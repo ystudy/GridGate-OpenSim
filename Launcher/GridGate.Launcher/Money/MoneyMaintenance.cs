@@ -65,8 +65,9 @@ public sealed class MoneyMaintenance(MoneyLedger ledger, Func<MoneyMode> effecti
             var result = await ledger.SelfCheckAsync(ct);
             if (status is not null) status.LastCheck = (time.GetUtcNow(), result);
             if (!result.Ok)
-                log.LogError("The money self-check found a difference and froze all payments. Sum of balances {Sum}; accounts that differ: {Accounts}.",
-                    result.Sum, string.Join(", ", result.Mismatches.Select(m => $"{m.AccountId} (stored {m.Stored}, entries {m.FromEntries})")));
+                log.LogError("The money self-check found a difference and froze all payments. Sum of balances {Sum}; accounts that differ: {Accounts}; also found: {Problems}",
+                    result.Sum, string.Join(", ", result.Mismatches.Select(m => $"{m.AccountId} (stored {m.Stored}, entries {m.FromEntries})")),
+                    result.Problems.Count == 0 ? "nothing else." : string.Join(" ", result.Problems));
             return true;
         }
         catch (MoneyUnavailableException)

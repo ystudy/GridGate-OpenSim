@@ -32,6 +32,12 @@ public enum MoneyOutcome
 
     /// <summary>A hypergrid visitor on either side while the owner has visitor wallets off (money design §7.6).</summary>
     VisitorsOff,
+
+    /// <summary>
+    /// A hold that no longer matches the entry that opened it, or that Holding can't cover: it isn't settled, and payments
+    /// are frozen (money review 2026-11-15, L-3).
+    /// </summary>
+    HoldMismatch,
 }
 
 /// <summary>

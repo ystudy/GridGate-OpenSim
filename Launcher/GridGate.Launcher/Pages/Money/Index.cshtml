@@ -122,6 +122,23 @@
             @if (Model.LastCheck is { } last)
             {
                 <p id="money-last-check">@(last.Result.Ok ? "The books add up." : "The last check found a difference.") Checked @last.At.ToString("yyyy-MM-dd HH:mm 'UTC'").</p>
+                @if (!last.Result.Ok)
+                {
+                    <ul id="money-check-problems">
+                        @foreach (var mismatch in last.Result.Mismatches)
+                        {
+                            <li>Account @mismatch.AccountId has @mismatch.Stored, but its entries add up to @mismatch.FromEntries.</li>
+                        }
+                        @if (last.Result.Sum != 0)
+                        {
+                            <li>All balances add up to @last.Result.Sum instead of zero.</li>
+                        }
+                        @foreach (var p in last.Result.Problems)
+                        {
+                            <li>@p</li>
+                        }
+                    </ul>
+                }
             }
             else
             {

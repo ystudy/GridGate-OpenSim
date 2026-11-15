@@ -125,6 +125,57 @@ public sealed class MoneyLedgerHoldTests(MoneyMariaDb maria) : IClassFixture<Mon
         Assert.Equal(0, await db.Scalar("SELECT COUNT(*) FROM `money`.`holds`"));
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task A_hold_whose_amount_was_changed_isnt_settled_and_freezes_payments(bool complete)
+    {
+        // Money review 2026-11-15, L-3: settling paid holds.amount without a guard, so one changed value made coins.
+        var (ledger, db, _) = await MoneyLedgerTransferTests.Setup(maria);
+        var hold = await ledger.HoldAsync(Buy(10), Ct);
+        await db.Sql($"UPDATE `money`.`holds` SET amount = 1000 WHERE id = {hold.HoldId}");
+
+        var settled = complete
+            ? await ledger.CompleteHoldAsync(Guid.NewGuid(), hold.HoldId!.Value, Ct)
+            : await ledger.ReturnHoldAsync(Guid.NewGuid(), hold.HoldId!.Value, Ct);
+
+        Assert.Equal(MoneyOutcome.HoldMismatch, settled.Outcome);
+        Assert.Equal(90, await Of(db, A));
+        Assert.Equal(100, await Of(db, B));
+        Assert.Equal(10, await Balance(db, MoneySchema.HoldingId));
+        Assert.Equal("open", await db.Text($"SELECT state FROM `money`.`holds` WHERE id = {hold.HoldId}"));
+        var frozen = await ledger.FrozenAsync(Ct);
+        Assert.True(frozen.Frozen);
+        Assert.Contains("hold", frozen.Reason, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task A_mismatched_hold_keeps_an_earlier_freeze_reason()
+    {
+        var (ledger, db, _) = await MoneyLedgerTransferTests.Setup(maria);
+        var hold = await ledger.HoldAsync(Buy(10), Ct);
+        await ledger.SetFrozenAsync(true, "Owner's own reason", Ct);
+        await db.Sql($"UPDATE `money`.`holds` SET amount = 1000 WHERE id = {hold.HoldId}");
+
+        await ledger.CompleteHoldAsync(Guid.NewGuid(), hold.HoldId!.Value, Ct);
+
+        Assert.Equal("Owner's own reason", (await ledger.FrozenAsync(Ct)).Reason);
+    }
+
+    [Fact]
+    public async Task A_hold_that_would_take_holding_below_zero_isnt_settled()
+    {
+        // The hold and its entry agree, but Holding's own balance was lowered.
+        var (ledger, db, _) = await MoneyLedgerTransferTests.Setup(maria);
+        var hold = await ledger.HoldAsync(Buy(10), Ct);
+        await db.Sql($"UPDATE `money`.`accounts` SET balance = 5 WHERE id = {MoneySchema.HoldingId}");
+
+        var settled = await ledger.CompleteHoldAsync(Guid.NewGuid(), hold.HoldId!.Value, Ct);
+
+        Assert.Equal(MoneyOutcome.HoldMismatch, settled.Outcome);
+        Assert.Equal(100, await Of(db, B));
+    }
+
     [Fact]
     public async Task Hold_region_is_remembered()
     {
