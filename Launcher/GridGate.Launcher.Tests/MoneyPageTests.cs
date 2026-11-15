@@ -678,6 +678,41 @@ public sealed class MoneyPageTests
     }
 
     [Fact]
+    public async Task Saving_the_app_says_restart_the_world()
+    {
+        await using var f = Make(new FakeBooks());
+
+        using var r = await PostAsync(await SignedInAsync(f), "/money", "Gloebit", GloebitForm());
+
+        Assert.Contains("Saved this computer's Gloebit app. " + MoneyPageRules.RestartWorld, MainText(await ParseAsync(r)));
+    }
+
+    [Fact]
+    public async Task A_new_key_needs_its_own_secret()
+    {
+        // An empty secret keeps the saved one only for the same app (review, money plan 4).
+        await using var f = Make(new FakeBooks(), money: m => m with { Gloebit = GApp });
+        var form = GloebitForm(secret: "");
+        form["Key"] = "1c2d3e4f-5555-4a6b-8c7d-0123456789ff";
+
+        using var r = await PostAsync(await SignedInAsync(f), "/money", "Gloebit", form);
+
+        Assert.Equal(GApp, f.Grid.CurrentSettings().Money.Gloebit);
+        Assert.Contains("Type the secret that goes with the new key.", (await ParseAsync(r)).QuerySelector(".alert-danger")!.TextContent);
+    }
+
+    [Fact]
+    public async Task Supervisor_cannot_save_a_gloebit_app()
+    {
+        await using var f = Make(new FakeBooks());
+
+        using var r = await PostAsync(await SignedInAsync(f, "supervisor"), "/money", "Gloebit", GloebitForm());
+
+        Assert.Equal(HttpStatusCode.Forbidden, r.StatusCode);
+        Assert.Null(f.Grid.CurrentSettings().Money.Gloebit);
+    }
+
+    [Fact]
     public async Task Secret_is_never_shown_back()
     {
         await using var f = Make(new FakeBooks(), money: m => m with { Gloebit = GApp });

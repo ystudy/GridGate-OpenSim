@@ -20,8 +20,9 @@ public static partial class GloebitRules
 {
     public static readonly string[] Environments = ["sandbox", "production"];
 
-    // Characters that would break the INI line the value is written on, or the section around it.
-    private static readonly char[] IniBreakers = ['"', ';', '[', ']'];
+    // Characters that would break the INI line the value is written on, or the section around it; and '$', which OpenSim
+    // expands as ${Section|Key} (another setting's value, a password even).
+    private static readonly char[] IniBreakers = ['"', ';', '[', ']', '$'];
 
     [GeneratedRegex(@"^[^@\s]+@[^@\s]+\.[^@\s]+$")]
     private static partial Regex EmailShape();
@@ -30,9 +31,9 @@ public static partial class GloebitRules
     public static string? Problem(GloebitSettings g)
     {
         if (!Environments.Contains(g.Environment)) return "Pick Gloebit's sandbox or production.";
-        if (!Guid.TryParse(g.Key, out _)) return "The app key is the GUID Gloebit's merchant tools show, like 0b9e3c2a-….";
-        if (!Guid.TryParse(g.Secret, out _)) return "The app secret is the GUID Gloebit's merchant tools show.";
-        if (g.OwnerName.Trim().Length is < 1 or > 64 || Unsafe(g.OwnerName)) return "Give a contact name of 1 to 64 characters, without \" ; [ ].";
+        if (!Guid.TryParseExact(g.Key, "D", out _)) return "The app key is the GUID Gloebit's merchant tools show, like 0b9e3c2a-….";
+        if (!Guid.TryParseExact(g.Secret, "D", out _)) return "The app secret is the GUID Gloebit's merchant tools show.";
+        if (g.OwnerName.Trim().Length is < 1 or > 64 || Unsafe(g.OwnerName)) return "Give a contact name of 1 to 64 characters, without \" ; [ ] $.";
         if (g.OwnerEmail.Length > 0 && (g.OwnerEmail.Length > 128 || Unsafe(g.OwnerEmail) || !EmailShape().IsMatch(g.OwnerEmail)))
             return "The contact email doesn't look like an address.";
         return null;

@@ -58,6 +58,9 @@ public static class MoneyPageRules
     {
         var app = new GloebitSettings((environment ?? "").Trim(), (key ?? "").Trim(),
             string.IsNullOrWhiteSpace(secret) ? stored?.Secret ?? "" : secret.Trim(), (ownerName ?? "").Trim(), (ownerEmail ?? "").Trim());
+        // The saved secret belongs to the saved key: another app's key needs its own.
+        if (string.IsNullOrWhiteSpace(secret) && stored is { Key.Length: > 0 } && !string.Equals(app.Key, stored.Key, StringComparison.OrdinalIgnoreCase))
+            return (app, "Type the secret that goes with the new key.");
         return (app, GloebitRules.Problem(app));
     }
 

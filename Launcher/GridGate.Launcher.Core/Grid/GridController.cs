@@ -1657,6 +1657,10 @@ public sealed partial class GridController(
         {
             new RuntimeStager(paths).SetGloebit(MoneyPlace.GloebitHere(s, _money));
         }
+        catch (FileNotFoundException)
+        {
+            _log?.LogError("Gloebit's module isn't in this install (Gloebit.dll.Proto), so the regions have no money module. Reinstall GridGate.");
+        }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
             _log?.LogWarning("Gloebit's module couldn't be {Change} yet ({Error}); it will be on the next world start.",

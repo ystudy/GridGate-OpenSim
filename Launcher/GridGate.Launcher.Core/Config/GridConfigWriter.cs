@@ -303,16 +303,24 @@ public sealed class GridConfigWriter(LauncherPaths paths, Func<MoneySettings, Mo
         SetSmartStart(os, s);
         os.Set("YEngine", "ScriptEnginesPath", Fwd(paths.ScriptEngines));
         var moneySection = MoneySection(s, instance, money);
-        var addonFile = Path.Combine(paths.RegionDir(instance), GloebitAddonFile);
-        if (gloebit is not null)
-        {
-            Directory.CreateDirectory(paths.RegionDir(instance));
-            File.WriteAllText(addonFile, "; GridGate writes Gloebit's settings in this folder's OpenSim.ini. This file stays empty so Gloebit's" + Environment.NewLine +
-                "; module, which merges it over them, finds nothing to change." + Environment.NewLine);
-        }
-        else if (File.Exists(addonFile)) File.Delete(addonFile);
-        Finish(os, "region", extra, Path.Combine(paths.RegionDir(instance), "OpenSim.ini"),
-            last: gloebit is not null ? GloebitSection(gloebit, paths.RegionDir(instance)) : doc => { moneySection?.Invoke(doc); GloebitOff(doc); });
+        // Gloebit's module merges <ConfigDirectory>/Gloebit.ini over the program's settings before it reads them, and
+        // when there is none it copies its example there and stops the program. Every program has its own file, in every
+        // mode: a Gloebit.dll left in the runtime outside Gloebit mode reads it too.
+        var regionDir = paths.RegionDir(instance);
+        Directory.CreateDirectory(regionDir);
+        var nl = Environment.NewLine;
+        File.WriteAllText(Path.Combine(regionDir, GloebitAddonFile), gloebit is not null
+            ? "; GridGate writes Gloebit's settings in this folder's OpenSim.ini. This file stays empty so Gloebit's" + nl +
+              "; module, which merges it over them, finds nothing to change." + nl
+            : "; Gloebit isn't this grid's money now. GridGate keeps its module off, should its DLL still be here." + nl +
+              "[Gloebit]" + nl + "Enabled=false" + nl);
+        Finish(os, "region", extra, Path.Combine(regionDir, "OpenSim.ini"),
+            last: gloebit is not null ? GloebitSection(gloebit, regionDir) : doc =>
+            {
+                moneySection?.Invoke(doc);
+                GloebitOff(doc);
+                doc.Set("Startup", "ConfigDirectory", Fwd(regionDir));
+            });
 
         // 5. region definition files. Every other region file goes off first, by its exact name: after a rename that
         // only changes letter case ("home" to "Home") the old file must go off on Linux, and on Windows the new file

@@ -92,6 +92,23 @@ public sealed class GloebitConfigTests : IDisposable
     }
 
     [Fact]
+    public void Other_modes_give_a_leftover_gloebit_its_own_file_too()
+    {
+        // Outside Gloebit mode a leftover Gloebit.dll still runs LoadConfig first: with no file in its config directory
+        // it copies its example there and stops the program (review, money plan 4). Its own file says Enabled=false.
+        foreach (var (mode, open) in new[] { (MoneyMode.Play, true), (MoneyMode.Off, true), (MoneyMode.Gloebit, false) })
+        {
+            Write(Grid(mode, App), open);
+            foreach (var p in new[] { "p1", "p2" })
+            {
+                var dir = Region(p).Get("Startup", "ConfigDirectory");
+                Assert.Equal(Path.GetFullPath(_paths.RegionDir(p)), Path.GetFullPath(dir!));
+                AssertGloebitOff(IniDocument.Load(Path.Combine(dir!, "Gloebit.ini")));
+            }
+        }
+    }
+
+    [Fact]
     public void Gloebit_reads_no_addon_file_of_its_own()
     {
         // Gloebit's module merges <ConfigDirectory>/Gloebit.ini over the program's settings, and makes one from its

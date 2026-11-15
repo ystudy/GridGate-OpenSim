@@ -24,6 +24,12 @@ public sealed class GloebitRulesTests
     [InlineData("sandbox", Key, Secret, "Grid \"Owner\"", "")]
     [InlineData("sandbox", Key, Secret, "Grid Owner", "a@")]
     [InlineData("sandbox", Key, Secret, "Grid Owner", "owner@example;org")]
+    // OpenSim expands ${Section|Key} in INI values (review, money plan 4).
+    [InlineData("sandbox", Key, Secret, "${DatabaseService|ConnectionString}", "")]
+    [InlineData("sandbox", Key, Secret, "Grid Owner", "${Const|x}@example.org")]
+    // Only the GUID form Gloebit shows, as it is written to the INI.
+    [InlineData("sandbox", "{0b9e3c2a-1111-4c5d-8e9f-0123456789ab}", Secret, "Grid Owner", "")]
+    [InlineData("sandbox", Key, "7d3f9a1022224b6c9d8efedcba987654", "Grid Owner", "")]
     public void Problem_spots_bad_values(string env, string key, string secret, string name, string email) =>
         Assert.NotNull(GloebitRules.Problem(new GloebitSettings(env, key, secret, name, email)));
 

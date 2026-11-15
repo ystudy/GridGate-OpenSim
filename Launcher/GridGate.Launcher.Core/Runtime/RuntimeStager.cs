@@ -67,7 +67,7 @@ public sealed class RuntimeStager(LauncherPaths paths)
             Path.Combine(paths.Logs, "robust.log"), level);
         foreach (var instance in instances)
             WriteLogConfig(Path.Combine(paths.RuntimeOpenSim, $"gridgate-region-{instance}.log4net.xml"),
-                Path.Combine(paths.Logs, $"region-{instance}.log"), level);
+                Path.Combine(paths.Logs, $"region-{instance}.log"), level, region: true);
     }
 
     private string ComputeStamp()
@@ -117,7 +117,7 @@ public sealed class RuntimeStager(LauncherPaths paths)
         }
     }
 
-    private static void WriteLogConfig(string file, string logPath, string level)
+    private static void WriteLogConfig(string file, string logPath, string level, bool region = false)
     {
         using var w = XmlWriter.Create(file, new XmlWriterSettings { Indent = true });
         w.WriteStartDocument();
@@ -136,6 +136,15 @@ public sealed class RuntimeStager(LauncherPaths paths)
         Value(w, "conversionPattern", "%date{HH:mm:ss} - [%level] %message%newline");
         w.WriteEndElement(); // layout
         w.WriteEndElement(); // appender
+        if (region)
+        {
+            // Gloebit's API logs its request parameters, the app secret among them, at DEBUG (money plan 4): its loggers
+            // never go below INFO, whatever the owner picks.
+            w.WriteStartElement("logger");
+            w.WriteAttributeString("name", "Gloebit");
+            Value(w, "level", level.ToUpperInvariant() is "DEBUG" or "ALL" or "TRACE" or "VERBOSE" ? "INFO" : level);
+            w.WriteEndElement();
+        }
         w.WriteStartElement("root");
         Value(w, "level", level);
         w.WriteStartElement("appender-ref");

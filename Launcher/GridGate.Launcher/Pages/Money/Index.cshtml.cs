@@ -129,7 +129,7 @@ public sealed class IndexModel(IGridController grid, MoneyGate gate, IMoneyBooks
         if (Error is null)
         {
             grid.UpdateSettings(s => s with { Money = s.Money with { Gloebit = app } }, writeConfig: true);
-            Notice = "Saved this computer's Gloebit app.";
+            Notice = "Saved this computer's Gloebit app. " + MoneyPageRules.RestartWorld;
         }
         audit.Write(User, Ip, "money-gloebit", "money", Error is null ? "ok" : "refused");
         await ShowAsync(ct);

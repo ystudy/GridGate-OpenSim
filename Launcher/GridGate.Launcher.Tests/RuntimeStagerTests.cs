@@ -167,6 +167,17 @@ public sealed class RuntimeStagerTests : IDisposable
     }
 
     [Fact]
+    public void Region_logs_keep_gloebit_above_debug()
+    {
+        // Gloebit's API logs its request parameters, the app secret among them, at DEBUG (review, money plan 4).
+        new RuntimeStager(_paths).WriteLogConfigs(["Region1"], "DEBUG");
+
+        var region = XDocument.Load(Path.Combine(_paths.RuntimeOpenSim, "gridgate-region-Region1.log4net.xml"));
+        var gloebit = Assert.Single(region.Root!.Elements("logger"), l => l.Attribute("name")!.Value == "Gloebit");
+        Assert.Equal("INFO", gloebit.Element("level")!.Attribute("value")!.Value);
+    }
+
+    [Fact]
     public void Log_configs_use_absolute_forward_slash_paths_under_Logs()
     {
         new RuntimeStager(_paths).WriteLogConfigs(["Region1"], "DEBUG");
