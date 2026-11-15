@@ -136,9 +136,11 @@ public sealed partial class MoneyLedger(
 
     /// <summary>
     /// The account for <paramref name="who"/>, creating it when allowed: a resident only if they are a local user (§7.2), a
-    /// visitor only while visitor wallets are on and only for a home the Gatekeeper recorded (plan 3). While visitor wallets
-    /// are off a visitor is <see cref="MoneyOutcome.VisitorsOff"/>, unless <paramref name="staff"/> is acting: staff may still
-    /// tidy up an existing wallet. System accounts can't be named. Doesn't lock.
+    /// visitor only while visitor wallets are on and, for a region's request, only for the home the Gatekeeper recorded
+    /// (plan 3). OpenSim keeps one GridUser row per UUID, the first home seen, so a visitor whose home grid moved is opened
+    /// at the new address by <paramref name="staff"/> (a give or a merge: admin-only, with a reason, audited). While visitor
+    /// wallets are off a visitor is <see cref="MoneyOutcome.VisitorsOff"/>, unless staff are acting: staff may still tidy up
+    /// an existing wallet, but open none. System accounts can't be named. Doesn't lock.
     /// </summary>
     private async Task<(Account? Account, MoneyOutcome Refusal)> ResolveAsync(MySqlConnection conn, MySqlTransaction tx, AccountRef who, CancellationToken ct,
         bool staff = false)
@@ -154,7 +156,7 @@ public sealed partial class MoneyLedger(
         if (await FindAsync(conn, tx, who.AgentId, home, ct) is { } found)
             return (found, MoneyOutcome.Ok);
 
-        if (resident ? !await isLocalUser(who.AgentId, ct) : !visitorsOn || !await isKnownVisitor(who.AgentId, home, ct))
+        if (resident ? !await isLocalUser(who.AgentId, ct) : !visitorsOn || (!staff && !await isKnownVisitor(who.AgentId, home, ct)))
             return (null, MoneyOutcome.NoWallet);
 
         var created = await ExecAsync(conn, tx,

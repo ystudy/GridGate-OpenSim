@@ -48,10 +48,20 @@ service), §7.6, §7.7, §9.1 (People, Region Servers), §11. This is step 4 of 
 - **A visitor's home is checked against Robust's `GridUser` table, not taken from the region.**
   - The Gatekeeper writes `GridUser.UserID = "<uuid>;<HomeURI>;<First Last>"` for every visitor it lets in
     (`GatekeeperService.cs:622-639`).
-  - A visitor wallet is created only when such a row exists for that UUID with the same home address, compared as the
-    ledger already compares homes: trimmed, lower case, no trailing slash.
+  - A region's request creates a visitor wallet only when such a row exists for that UUID with the same home address,
+    compared as the ledger already compares homes: trimmed, lower case, no trailing slash.
   - An existing wallet needs no new check.
-  - This closes plan 2's deferred minor ("a made-up `home=` makes a junk visitor wallet") for regions and staff pages alike.
+  - **Changed in the final review (Important 1):** OpenSim keeps one `GridUser` row per UUID. A later arrival from another
+    home updates the first row and keeps its `UserID` (`GridUserService.LoggedIn`), so the first home seen wins. A visitor
+    whose home grid moved can therefore never be "known" at the new address. Staff moves (give, and the merge of spec §7.1)
+    may open a visitor wallet without the check. They are admin-only, need a reason and are audited. After a merge,
+    payments find the new wallet.
+  - This closes plan 2's deferred minor ("a made-up `home=` makes a junk visitor wallet") for staff pages, which no longer
+    create wallets when opened.
+  - For regions it narrows the minor but doesn't close it. Robust's `GridUserService` is on the LAN-open private port, and
+    regions write `GridUser` rows too, so a LAN machine or a taken-over region can plant a row and then get an empty junk
+    wallet. Visitors get no starting balance, so that wallet stays empty. This is a known limit, recorded for plan 5's
+    review.
 - **With visitor wallets off,** an existing visitor wallet is kept but can't pay or be paid (spec §7.6). Staff can still
   give, take and merge, so the owner can tidy up.
 - **An unpaired Region Server's regions** run `GridGateMoneyModule` in a refusing state. Every payment answers "This region

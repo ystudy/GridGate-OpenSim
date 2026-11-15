@@ -102,12 +102,38 @@ public sealed class MoneyLedgerVisitorTests(MoneyMariaDb maria) : IClassFixture<
     }
 
     [Fact]
-    public async Task Staff_cannot_make_a_junk_visitor_wallet()
+    public async Task Staff_may_open_a_wallet_robust_has_no_record_of()
     {
+        // OpenSim keeps one GridUser row per UUID, so a visitor's new home is never recorded; staff (admin-only, a reason,
+        // audited) are the way to a wallet there.
         var (ledger, db, _) = await MoneyLedgerTransferTests.Setup(maria);
 
-        Assert.Equal(MoneyOutcome.NoWallet, (await ledger.GiveAsync(new AccountRef(V, "http://made.up/"), 5, Staff, Ct)).Outcome);
+        Assert.Equal(MoneyOutcome.Ok, (await ledger.GiveAsync(new AccountRef(V, "http://new.example:8002/"), 5, Staff, Ct)).Outcome);
+        Assert.Equal(1, await Accounts(db, V));
+    }
+
+    [Fact]
+    public async Task A_returning_visitors_new_home_is_not_known()
+    {
+        var (ledger, db, _) = await MoneyLedgerTransferTests.Setup(maria);
+        await db.AddVisitor(V, "http://new.example:8002/"); // ignored: the first home stays
+
+        Assert.Equal(MoneyOutcome.NoWallet, (await ledger.TransferAsync(Pay(AccountRef.Resident(A), new AccountRef(V, "http://new.example:8002"), 5), Ct)).Outcome);
         Assert.Equal(0, await Accounts(db, V));
+    }
+
+    [Fact]
+    public async Task Merge_to_a_new_home_opens_it()
+    {
+        var (ledger, db, _) = await MoneyLedgerTransferTests.Setup(maria);
+        var oldHome = new AccountRef(V, "http://other.example:8002");
+        await ledger.GiveAsync(oldHome, 12, Staff, Ct);
+
+        Assert.Equal(MoneyOutcome.Ok, (await ledger.MergeWalletsAsync(oldHome, new AccountRef(V, "http://moved.example:8002/"), Staff, Ct)).Outcome);
+
+        Assert.Equal(12, await db.Scalar($"SELECT balance FROM `money`.`accounts` WHERE agent_id = '{V}' AND home = 'http://moved.example:8002'"));
+        // Payments now find the new wallet without any GridUser row for it.
+        Assert.Equal(MoneyOutcome.Ok, (await ledger.TransferAsync(Pay(AccountRef.Resident(A), new AccountRef(V, "http://moved.example:8002"), 5), Ct)).Outcome);
     }
 
     [Fact]
@@ -138,7 +164,7 @@ public sealed class MoneyLedgerVisitorTests(MoneyMariaDb maria) : IClassFixture<
 
         Assert.Equal(MoneyOutcome.Ok, (await books.MergeWalletsAsync(oldHome, newHome, Staff, Ct)).Outcome);
         Assert.Equal(25, await db.Scalar($"SELECT balance FROM `money`.`accounts` WHERE agent_id = '{V}' AND home = 'http://new.example:8002'"));
-        Assert.Equal(MoneyOutcome.NoWallet, (await books.MergeWalletsAsync(newHome, new AccountRef(V, "http://made.up"), Staff, Ct)).Outcome);
+        Assert.Equal(MoneyOutcome.NoWallet, (await books.MergeWalletsAsync(new AccountRef(V, "http://never.example"), newHome, Staff, Ct)).Outcome);
     }
 
     [Fact]

@@ -186,7 +186,12 @@ public sealed class MoneyTestDatabase(LauncherSettings settings)
     public Task AddRegion(Guid id, string serverIp) =>
         Sql($"INSERT INTO `robust`.`regions` (`uuid`, `regionName`, `serverIP`) VALUES ('{id}', 'R{id.ToString()[..4]}', '{serverIp}')");
 
-    /// <summary>Records a hypergrid visitor the way the Gatekeeper does: GridUser.UserID = "uuid;HomeURI;First Last".</summary>
+    /// <summary>
+    /// Records a hypergrid visitor the way the Gatekeeper does: GridUser.UserID = "uuid;HomeURI;First Last". Like OpenSim's
+    /// GridUserService, a UUID keeps one row: a later arrival from another home updates the first row and keeps its UserID,
+    /// so the first home seen wins (review of plan 3, Important 1).
+    /// </summary>
     public Task AddVisitor(Guid id, string home, string name = "Ann Smith", long login = 1000) =>
-        Sql($"INSERT INTO `robust`.`GridUser` (`UserID`, `Login`) VALUES ('{id};{home};{name}', '{login}')");
+        Sql($"INSERT INTO `robust`.`GridUser` (`UserID`, `Login`) SELECT '{id};{home};{name}', '{login}' FROM DUAL " +
+            $"WHERE NOT EXISTS (SELECT 1 FROM `robust`.`GridUser` WHERE `UserID` LIKE '{id}%')");
 }

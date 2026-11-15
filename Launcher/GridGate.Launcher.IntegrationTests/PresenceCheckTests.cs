@@ -119,6 +119,19 @@ public sealed class PresenceCheckTests(MoneyMariaDb maria) : IClassFixture<Money
     }
 
     [Fact]
+    public async Task The_first_home_seen_wins()
+    {
+        var db = await maria.FreshAsync();
+        var visitor = Guid.NewGuid();
+        await db.AddVisitor(visitor, "http://old.example:8002/");
+        await db.AddVisitor(visitor, "http://new.example:8002/"); // OpenSim updates the first row instead
+        var check = new PresenceCheck(db.OpenRobust);
+
+        Assert.True(await check.IsKnownVisitorAsync(visitor, "http://old.example:8002", Ct));
+        Assert.False(await check.IsKnownVisitorAsync(visitor, "http://new.example:8002", Ct));
+    }
+
+    [Fact]
     public async Task Empty_home_is_not_known_without_a_query()
     {
         var check = new PresenceCheck(_ => throw new InvalidOperationException("no query expected"));
