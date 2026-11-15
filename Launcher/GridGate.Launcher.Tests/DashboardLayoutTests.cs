@@ -98,6 +98,26 @@ public sealed class DashboardLayoutTests
     }
 
     [Fact]
+    public async Task The_power_menu_stays_on_screen_when_the_controls_wrap()
+    {
+        await using var f = Factory();
+        var page = await HomeAsync(f);
+        var css = await SiteCss.GetAsync(f, Ct);
+
+        // The menu opens to the left of its button, so the button has to be the last control (after it: the hidden form token)...
+        var last = page.QuerySelectorAll("form#controls > :not(input[type=hidden])").Last();
+        Assert.Equal("details", last.LocalName);
+        Assert.True(last.ClassList.Contains("power-menu") && last.ClassList.Contains("power-menu-end"));
+        Assert.Contains("right: 0", SiteCss.Rule(css, ".power-menu-end .power-items"));
+        // ...and the controls keep to the right edge even when they wrap onto lines of their own (a narrow window).
+        var controls = SiteCss.Rule(css, ".home-controls");
+        Assert.Contains("margin-left: auto", controls);
+        Assert.Contains("justify-content: flex-end", controls);
+        // A menu is never wider than the window.
+        Assert.Contains("min-width: min(18rem, calc(100vw - 1.5rem))", SiteCss.Rule(css, ".power-menu .power-items, .oar-menu .power-items"));
+    }
+
+    [Fact]
     public async Task Controls_are_in_the_heading_row_and_the_panels_in_three_columns()
     {
         await using var f = Factory();
