@@ -15,7 +15,8 @@ Debian Linux as well as Windows.
 
 **For you and your staff (the GridGate admin pages):**
 
-* **A setup wizard** that names your world, creates your avatar and picks a plan:
+* **A setup wizard** that names your world, creates your avatar and picks a
+  [plan](#plans):
   * **Local:** just you and friends on your own network.
   * **Simple Public Server:** a world open to the internet.
   * **Grid Asset Server:** the centre of a grid other computers add regions to.
@@ -40,10 +41,60 @@ Debian Linux as well as Windows.
 create an account, how to connect with Firestorm, their own account page, and a
 way to ask for help.
 
+## Plans
+
+The first setup page asks what this computer will be. In the charts, purple
+boxes are computers running GridGate, gray boxes are people and equipment, teal
+is a grid someone else runs, and a dashed outline is your home or office
+network.
+
+![What each plan needs: a 64-bit computer running Debian 12/13 or Windows 10/11 and a viewer for each visitor for every plan; a public address and router port forwarding for Simple Public Server and Connected Server, and for a Grid Asset Server or Region Server only when the grid has a public address; a Grid Asset Server on your network for a Region Server; an avatar on the other grid for a Connected Server.](docs/images/plans/plan-prerequisites.svg)
+
+You can move between Local, Simple Public Server and Grid Asset Server later,
+in **Settings → Plan**. Moving to or from Region Server or Connected Server
+means a new install.
+
+### One computer
+
+**Local** is the simplest start: everything runs on this computer, and only
+computers on the same network can visit.
+
+![Local: one computer runs the whole grid; you and your friends visit from the same network; the internet can't reach in.](docs/images/plans/plan-local.svg)
+
+**Simple Public Server** is the same single computer, opened to the internet.
+Your router forwards the grid's port (8002) and the region ports to it, and one
+switch turns on hypergrid travel to and from other grids.
+
+![Simple Public Server: visitors from anywhere and other grids reach your router, which forwards port 8002 and the region ports to the one computer running the whole grid.](docs/images/plans/plan-simple-public.svg)
+
+### Several computers
+
+**Grid Asset Server with Region Servers.** One computer keeps the grid's
+accounts, inventory and assets; every other computer on your network adds land
+to it as a Region Server, joining on the private port 8003. Kept on your network
+only, nobody outside can visit:
+
+![A Grid Asset Server on your network, with three Region Servers joining it on private port 8003; nobody outside can reach in.](docs/images/plans/plan-grid-network.svg)
+
+Give the Grid Asset Server a public address and the same grid opens to the
+internet: the router forwards 8002 to the Grid Asset Server and each Region
+Server's region ports to that computer.
+
+![A public grid: visitors and other grids reach your router; it forwards 8002 to the Grid Asset Server and region ports to each Region Server, and the Region Servers join the Grid Asset Server on 8003.](docs/images/plans/plan-grid-public.svg)
+
+**Connected Servers** run regions on a grid someone else runs, such as OSgrid.
+That grid keeps the accounts and decides about hypergrid, and computers in
+different homes can each add their own regions to it.
+
+![Connected Servers in two different homes each add regions to OSgrid, which keeps accounts, inventory and assets; visitors sign in with OSgrid.](docs/images/plans/plan-connected.svg)
+
 ## Install
 
-Each install ends with a link: open it in your browser to name your world and
-create your avatar.
+Every computer gets the same installer, whatever its plan. Each install ends
+with a link: open it in your browser to pick the plan, name your world and
+create your avatar. GridGate then sets the computer up for that plan.
+
+![The same installer on every computer; GridGate then creates the databases, writes the settings files, picks free ports and starts each program. Local or Simple Public runs the database, accounts and inventory (Robust), regions and the admin website; a Grid Asset Server runs all but regions, which are optional; a Region or Connected Server runs a region-only database, regions and the admin website, and gets accounts from the other grid.](docs/images/plans/plan-what-runs.svg)
 
 ### Debian 12 and 13 (amd64)
 
@@ -109,6 +160,23 @@ commands above do not pick them up. On Debian, name the tag:
 
 On Windows, download `GridGateSetup-<version>.exe` from that pre-release's
 page on the [releases list](https://github.com/ystudy/GridGate-OpenSim/releases).
+
+## Adding more computers
+
+Set up the Grid Asset Server first. Then, on each other computer on the same
+network, install the same GridGate version, choose **Region Server**, and type
+the Grid Asset Server's address. GridGate reads everything else it needs from
+that computer. You sign in with the avatar you already have there: no new
+account.
+
+![Each step you take and what GridGate does for you. On the Grid Asset Server: run the installer, choose Grid Asset Server, say whether visitors come from your network or the internet, name your world and make your avatar, and optionally choose a first region. On each extra computer: run the installer, choose Region Server, type the server's address, check your network, type your avatar's name, choose your first region and connect with Firestorm.](docs/images/plans/plan-add-computer.svg)
+
+Keep in mind:
+
+* If the Grid Asset Server is off, every Region Server's regions stop working.
+* Every computer on your network can reach the Grid Asset Server's private port
+  (8003), so anyone on your network can add regions to the grid.
+* Never forward the money port (8000 unless you changed it) on your router.
 
 ## Connecting with a viewer
 

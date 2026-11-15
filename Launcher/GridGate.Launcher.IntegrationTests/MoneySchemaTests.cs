@@ -1,5 +1,6 @@
 using GridGate.Launcher.Core.Database;
 using GridGate.Launcher.Core.Money;
+using MySqlConnector;
 using Xunit;
 
 namespace GridGate.Launcher.IntegrationTests;
@@ -60,10 +61,89 @@ public sealed class MoneySchemaTests(MoneyMariaDb maria) : IClassFixture<MoneyMa
     public async Task Moneyuser_can_open_the_money_database()
     {
         var db = await maria.FreshAsync();
+        await db.EnsureSchemaAsync();
 
         await using var conn = await db.OpenMoney(Ct);
 
         Assert.Equal("money", conn.Database);
+    }
+
+    private static async Task AsMoneyuser(MoneyTestDatabase db, string sql)
+    {
+        await using var conn = await db.OpenMoney(Ct);
+        await using var cmd = new MySqlCommand(sql, conn);
+        await cmd.ExecuteNonQueryAsync(Ct);
+    }
+
+    private static Task Seed(MoneyTestDatabase db) => db.Sql("""
+        INSERT INTO `money`.`entries` (at, type, from_id, to_id, amount, from_after, to_after) VALUES (UTC_TIMESTAMP(6), 'fee_moved', 2, 1, 1, -1, 1);
+        INSERT INTO `money`.`holds` (buyer_id, seller_id, amount, kind, created, state) VALUES (1, 2, 1, 'object', UTC_TIMESTAMP(6), 'open');
+        """);
+
+    [Theory]
+    [InlineData("UPDATE `money`.`entries` SET amount = 5")]
+    [InlineData("DELETE FROM `money`.`entries`")]
+    public async Task Entries_are_never_edited_or_deleted_even_by_root(string sql)
+    {
+        // Money design §7.1; money review 2026-11-15, L-9.
+        var db = await maria.FreshAsync();
+        await db.EnsureSchemaAsync();
+        await Seed(db);
+
+        await Assert.ThrowsAsync<MySqlException>(() => db.Sql(sql));
+        Assert.Equal(1, await db.Scalar("SELECT amount FROM `money`.`entries`"));
+    }
+
+    [Theory]
+    [InlineData("DELETE FROM `money`.`accounts` WHERE id = 3")]
+    [InlineData("UPDATE `money`.`accounts` SET kind = 'Bank' WHERE id = 2")]
+    [InlineData("UPDATE `money`.`holds` SET amount = 1000")]
+    [InlineData("UPDATE `money`.`holds` SET seller_id = 3")]
+    [InlineData("DELETE FROM `money`.`holds`")]
+    [InlineData("DELETE FROM `money`.`requests`")]
+    [InlineData("DROP TRIGGER `money`.`entries_never_edited`")]
+    [InlineData("ALTER TABLE `money`.`entries` DROP COLUMN reason")]
+    [InlineData("DROP TABLE `money`.`entries`")]
+    [InlineData("CREATE TABLE `money`.`extra` (id INT)")]
+    public async Task Moneyuser_may_not_rewrite_history(string sql)
+    {
+        var db = await maria.FreshAsync();
+        await db.EnsureSchemaAsync();
+        await Seed(db);
+
+        var e = await Assert.ThrowsAsync<MySqlException>(() => AsMoneyuser(db, sql));
+        Assert.Contains("denied", e.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData("UPDATE `money`.`accounts` SET balance = balance, frozen = 0, payouts_allowed = 0, last_allowance = NULL WHERE id = 3")]
+    [InlineData("UPDATE `money`.`holds` SET state = 'returned', settled = UTC_TIMESTAMP(6)")]
+    [InlineData("UPDATE `money`.`state` SET value = '0' WHERE name = 'frozen'")]
+    [InlineData("INSERT INTO `money`.`requests` (txn_id, op, fingerprint, response, at) VALUES (UUID(), 'x', 'f', 'r', UTC_TIMESTAMP(6))")]
+    [InlineData("SELECT COUNT(*) FROM `money`.`entries` WHERE hold_id IS NULL")]
+    public async Task Moneyuser_may_still_do_what_the_ledger_does(string sql)
+    {
+        var db = await maria.FreshAsync();
+        await db.EnsureSchemaAsync();
+        await Seed(db);
+
+        await AsMoneyuser(db, sql);
+    }
+
+    [Fact]
+    public async Task An_earlier_grant_of_everything_is_taken_back()
+    {
+        // Before L-9 the provisioner granted moneyuser ALL on money.*.
+        var db = await maria.FreshAsync();
+        await db.EnsureSchemaAsync();
+        await db.Sql("GRANT ALL ON `money`.* TO 'moneyuser'@'localhost'; GRANT ALL ON `money`.* TO 'moneyuser'@'127.0.0.1';");
+        await Seed(db);
+
+        await new DatabaseProvisioner(db.Settings).EnsureAsync(Ct);
+        await db.EnsureSchemaAsync();
+
+        await Assert.ThrowsAsync<MySqlException>(() => AsMoneyuser(db, "DELETE FROM `money`.`holds`"));
+        Assert.Equal(1, await db.Scalar("SELECT COUNT(*) FROM `money`.`holds`"));
     }
 
     [Fact]

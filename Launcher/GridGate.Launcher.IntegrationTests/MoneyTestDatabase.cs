@@ -144,10 +144,10 @@ public sealed class MoneyTestDatabase(LauncherSettings settings)
     /// <summary>Opens <c>robust</c> as robustuser, the way the launcher does.</summary>
     public Task<MySqlConnection> OpenRobust(CancellationToken ct) => GridDb.OpenRobustAsync(Settings, 10, ct);
 
-    /// <summary>Creates the money schema.</summary>
+    /// <summary>Creates the money schema and moneyuser's grants, as root, the way the launcher does.</summary>
     public async Task EnsureSchemaAsync()
     {
-        await using var conn = await OpenMoney(Ct);
+        await using var conn = await GridDb.OpenMoneyAsRootAsync(Settings, 10, Ct);
         await MoneySchema.EnsureAsync(conn, Ct);
     }
 

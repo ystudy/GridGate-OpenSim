@@ -22,7 +22,7 @@ internal sealed class FakeBooks : IMoneyBooks
     public AccountFlags? Flags { get; set; } = new(false, false);
     public List<HistoryLine> History { get; } = [];
     public MoneyOutcome Outcome { get; set; } = MoneyOutcome.Ok;
-    public SelfCheckResult Check { get; set; } = new(true, 0, []);
+    public SelfCheckResult Check { get; set; } = new(true, 0, [], []);
 
     private void Up(string call)
     {
@@ -342,12 +342,27 @@ public sealed class MoneyPageTests
     public async Task Totals_and_last_check_are_shown()
     {
         await using var f = Make(new FakeBooks());
-        f.Services.GetRequiredService<MoneyStatus>().LastCheck = (f.Time.GetUtcNow(), new SelfCheckResult(true, 0, []));
+        f.Services.GetRequiredService<MoneyStatus>().LastCheck = (f.Time.GetUtcNow(), new SelfCheckResult(true, 0, [], []));
 
         var text = MainText(await PageAsync(await SignedInAsync(f), "/money"));
 
         Assert.Contains("1,000", text);
         Assert.Contains("The books add up.", text);
+    }
+
+    [Fact]
+    public async Task What_the_last_check_found_is_listed()
+    {
+        await using var f = Make(new FakeBooks());
+        f.Services.GetRequiredService<MoneyStatus>().LastCheck = (f.Time.GetUtcNow(),
+            new SelfCheckResult(false, 5, [new BalanceMismatch(7, 75, 70)], ["Hold 3 doesn't match its entries."]));
+
+        var text = MainText(await PageAsync(await SignedInAsync(f), "/money"));
+
+        Assert.Contains("The last check found a difference.", text);
+        Assert.Contains("Account 7 has 75, but its entries add up to 70.", text);
+        Assert.Contains("All balances add up to 5 instead of zero.", text);
+        Assert.Contains("Hold 3 doesn't match its entries.", text);
     }
 
     [Fact]
