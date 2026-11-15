@@ -18,9 +18,19 @@ public static class MoneyPageRules
     public static IReadOnlyList<MoneyMode> Offered(MoneyGate gate) =>
         new[] { MoneyMode.Off, MoneyMode.Play, MoneyMode.Gloebit }.Where(m => m == MoneyMode.Off || gate.Allows(m)).ToList();
 
-    /// <summary>Whether a switch between <paramref name="from"/> and <paramref name="to"/> crosses GridGate coins and Gloebit (design §10).</summary>
-    public static bool CrossesGloebit(MoneyMode from, MoneyMode to) =>
-        from != to && (from == MoneyMode.Gloebit && to is MoneyMode.Play or MoneyMode.Real || to == MoneyMode.Gloebit && from is MoneyMode.Play or MoneyMode.Real);
+    /// <summary>
+    /// Whether a switch from <paramref name="from"/> to <paramref name="to"/> crosses GridGate coins and Gloebit (design §10).
+    /// Going through Off counts too (money review 2026-11-15, H-5): to Gloebit once coins have ever run here
+    /// (<paramref name="coinsUsed"/>), and to coins once a Gloebit app was ever saved (<paramref name="gloebitUsed"/>).
+    /// </summary>
+    public static bool CrossesGloebit(MoneyMode from, MoneyMode to, bool coinsUsed, bool gloebitUsed)
+    {
+        static bool Coins(MoneyMode m) => m is MoneyMode.Play or MoneyMode.Real;
+        if (from == to) return false;
+        if (to == MoneyMode.Gloebit) return Coins(from) || coinsUsed;
+        if (Coins(to)) return from == MoneyMode.Gloebit || (!Coins(from) && gloebitUsed);
+        return false;
+    }
 
     public const string SwitchWarning =
         "GridGate coin balances don't move to Gloebit. They are kept, not shown, and come back if you switch back. Gloebit balances belong to Gloebit.";

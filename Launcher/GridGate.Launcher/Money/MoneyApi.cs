@@ -103,8 +103,10 @@ internal static class MoneyApi
             // Holding's balance (ToBalance) is nobody's balance: it never leaves the service (plan 1 deferred finding).
             return await WithSession(c, buyer, grant, ct) ?? Of(await c.Ledger.HoldAsync(request, ct)) with { ToBalance = null };
         });
-        Post(app, "/money/v1/hold/complete", c, (http, grant, ct) => Settle(http, c, grant, complete: true, ct));
-        Post(app, "/money/v1/hold/return", c, (http, grant, ct) => Settle(http, c, grant, complete: false, ct));
+        // A purchase already paid into Holding still finishes after coins are switched off: the buyer gets the item or the
+        // coins back.
+        Post(app, "/money/v1/hold/complete", c, (http, grant, ct) => Settle(http, c, grant, complete: true, ct), whileOff: true);
+        Post(app, "/money/v1/hold/return", c, (http, grant, ct) => Settle(http, c, grant, complete: false, ct), whileOff: true);
     }
 
     /// <summary>
@@ -183,8 +185,15 @@ internal static class MoneyApi
     /// <summary>One endpoint's work, given its authenticated key's grant; returns the answer to write.</summary>
     private delegate Task<object> Endpoint(HttpContext http, RegionKeyGrant grant, CancellationToken ct);
 
-    private static void Post(IEndpointRouteBuilder app, string path, Context c, Endpoint endpoint) =>
-        app.MapPost(path, (RequestDelegate)(http => Handle(http, c, endpoint)));
+    private static void Post(IEndpointRouteBuilder app, string path, Context c, Endpoint endpoint, bool whileOff = false) =>
+        app.MapPost(path, (RequestDelegate)(http => Handle(http, c, endpoint, whileOff)));
+
+    /// <summary>
+    /// Whether coins are on now. The service starts only in Play or Real, but the owner may switch to Off or Gloebit while it
+    /// runs, for instance because a region looks compromised; payments stop at once, not at the next restart (money design
+    /// §10; money review 2026-11-15, L-6). Without a mode to ask (tests), coins are on.
+    /// </summary>
+    private static bool CoinsOn(Context c) => c.Mode is null || c.Mode() is MoneyMode.Play or MoneyMode.Real;
 
     private static async Task<object> Settle(HttpContext http, Context c, RegionKeyGrant grant, bool complete, CancellationToken ct)
     {
@@ -200,7 +209,7 @@ internal static class MoneyApi
     /// <summary>
     /// Authenticates, runs the endpoint and writes its answer. Nothing here logs what was sent: no key, no session id, no body.
     /// </summary>
-    private static async Task Handle(HttpContext http, Context c, Endpoint endpoint)
+    private static async Task Handle(HttpContext http, Context c, Endpoint endpoint, bool whileOff)
     {
         var ct = http.RequestAborted;
         var header = http.Request.Headers.Authorization.ToString();
@@ -215,6 +224,12 @@ internal static class MoneyApi
         }
 
         object answer;
+        if (!whileOff && !CoinsOn(c))
+        {
+            http.Response.ContentType = "application/json";
+            await JsonSerializer.SerializeAsync(http.Response.Body, Code("unavailable"), Json, ct);
+            return;
+        }
         try
         {
             // A paired Region Server's key covers the regions Robust lists at its address, never this computer's own.

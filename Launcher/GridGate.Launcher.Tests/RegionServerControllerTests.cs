@@ -111,6 +111,96 @@ public sealed class RegionServerControllerTests : OtherGridControllerRig
         Assert.Equal(ProcessState.Running, grid.GetStatus().Robust.State);
     }
 
+    private static readonly Core.Money.GloebitSettings GloebitApp =
+        new("sandbox", "0b9e3c2a-1111-4c5d-8e9f-0123456789ab", "7d3f9a10-2222-4b6c-9d8e-fedcba987654", "Grid Owner");
+
+    /// <summary>A Region Server whose grid runs Gloebit and that has its own complete Gloebit app, so its regions run Gloebit.</summary>
+    private string JoinGloebitGrid()
+    {
+        File.WriteAllBytes(Path.Combine(_paths.OpenSimProgram, "Gloebit.dll.Proto"), [7]);
+        _join.Result = Avalon with { Money = Core.Money.MoneyMode.Gloebit };
+        Save(s => s with
+        {
+            Join = Avalon with { Money = Core.Money.MoneyMode.Gloebit },
+            Money = s.Money with { Gloebit = GloebitApp },
+        });
+        return Path.Combine(_paths.RuntimeOpenSim, "Gloebit.dll");
+    }
+
+    private static async Task Until(Func<bool> done, CancellationToken ct)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(15);
+        while (!done() && DateTime.UtcNow < deadline) await Task.Delay(20, ct);
+        Assert.True(done());
+    }
+
+    [Fact]
+    public async Task Region_server_drops_gloebit_when_its_grid_leaves_it()
+    {
+        // Money review 2026-11-15, H-4: the grid's mode was read only at start, and Gloebit needs nothing from the Grid
+        // Asset Server, so real-dollar payments went on here after the owner switched them off.
+        var ct = TestContext.Current.CancellationToken;
+        AddWelcome();
+        var dll = JoinGloebitGrid();
+        var grid = NewGrid(watchEvery: TimeSpan.FromMilliseconds(50), moneyEffective: Core.Money.MoneyGate.Open);
+        await grid.StartAsync(ct);
+        var ini = Path.Combine(_paths.RegionDir("Welcome"), "OpenSim.ini");
+        Assert.True(File.Exists(dll));
+        Assert.Equal("Gloebit", IniDocument.Load(ini).Get("Economy", "economymodule"));
+
+        _join.Result = Avalon with { Money = Core.Money.MoneyMode.Play };
+
+        await Until(() => _store.LoadOrCreate().Join?.Money == Core.Money.MoneyMode.Play && !File.Exists(dll), ct);
+        Assert.NotEqual("Gloebit", IniDocument.Load(ini).Get("Economy", "economymodule"));
+    }
+
+    [Fact]
+    public async Task Region_server_restarts_its_running_regions_when_its_grid_leaves_gloebit()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        AddWelcome();
+        var dll = JoinGloebitGrid();
+        var starts = 0;
+        var grid = NewGrid(watchEvery: TimeSpan.FromMilliseconds(50), moneyEffective: Core.Money.MoneyGate.Open,
+            programStart: _ => { Interlocked.Increment(ref starts); return StandIn(Path.Combine(_paths.RuntimeOpenSim, "OpenSim.dll")); });
+        await grid.StartAsync(ct);
+        Assert.Equal(ProcessState.Running, grid.GetStatus().Programs.Single().Process.State);
+        Assert.Equal(1, starts);
+        // The stand-in leaves when told to quit, as OpenSim does.
+        var pidFile = Path.Combine(_paths.Pids, "Welcome.pid");
+        var quit = 0;
+        _consoles.OnCommand = _ =>
+        {
+            if (Interlocked.Exchange(ref quit, 1) == 1 || PidFile.Read(pidFile) is not { } pid) return;
+            try { using var p = Process.GetProcessById(pid); p.Kill(); }
+            catch (Exception e) when (e is ArgumentException or InvalidOperationException) { }
+        };
+
+        _join.Result = Avalon with { Money = Core.Money.MoneyMode.Off };
+
+        await Until(() => Volatile.Read(ref starts) == 2 && grid.GetStatus().Programs.Single().Process.State == ProcessState.Running, ct);
+        Assert.False(File.Exists(dll));
+    }
+
+    [Fact]
+    public async Task Region_server_without_gloebit_only_saves_the_grids_new_mode()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        AddWelcome();
+        _join.Result = Avalon with { Money = Core.Money.MoneyMode.Play };
+        Save(s => s with { Join = Avalon with { Money = Core.Money.MoneyMode.Play } });
+        var starts = 0;
+        var grid = NewGrid(watchEvery: TimeSpan.FromMilliseconds(50), moneyEffective: Core.Money.MoneyGate.Open,
+            programStart: _ => { Interlocked.Increment(ref starts); return StandIn(Path.Combine(_paths.RuntimeOpenSim, "OpenSim.dll")); });
+        await grid.StartAsync(ct);
+
+        _join.Result = Avalon with { Money = Core.Money.MoneyMode.Off };
+
+        await Until(() => _store.LoadOrCreate().Join?.Money == Core.Money.MoneyMode.Off, ct);
+        await Task.Delay(200, ct);
+        Assert.Equal(1, starts);
+    }
+
     [Fact]
     public async Task Region_server_refuses_robust_operations()
     {
