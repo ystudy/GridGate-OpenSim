@@ -30,7 +30,7 @@
                 <select class="form-select mb-3" id="money-mode" name="Mode">
                     @foreach (var mode in Model.Offered)
                     {
-                        <option value="@mode" selected="@(mode == m.Mode)">@(mode == MoneyMode.Off ? "Off" : "Play coins")</option>
+                        <option value="@mode" selected="@(mode == m.Mode)">@(mode switch { MoneyMode.Off => "Off", MoneyMode.Gloebit => "Gloebit", _ => "Play coins" })</option>
                     }
                 </select>
                 <div class="row g-3">
@@ -61,6 +61,13 @@
                     <input class="form-check-input" type="checkbox" id="money-visitors" name="VisitorWallets" value="true" checked="@m.VisitorWallets">
                     <label class="form-check-label" for="money-visitors">Hypergrid visitors get wallets</label>
                 </div>
+                @if (Model.Offered.Contains(MoneyMode.Gloebit))
+                {
+                    <div class="form-check mt-3">
+                        <input class="form-check-input" type="checkbox" id="money-confirm-switch" name="ConfirmSwitch" value="true">
+                        <label class="form-check-label" for="money-confirm-switch">When switching between coins and Gloebit: I understand GridGate coin balances don't move to Gloebit. They are kept, and come back if I switch back.</label>
+                    </div>
+                }
                 <button type="submit" class="btn btn-primary mt-3">Save</button>
             </form>
         }
@@ -74,6 +81,43 @@
             </dl>
         }
     </section>
+    @if (Model.ShowGloebit)
+    {
+        <section class="work-panel" id="money-gloebit" aria-labelledby="money-gloebit-title">
+            <h2 id="money-gloebit-title" class="panel-title">Gloebit<help-tip>Gloebit is an outside service: residents buy gloebits from it and artists cash out through it. This computer's regions use the app you create in Gloebit's merchant tools.</help-tip></h2>
+            @if (Model.GloebitMode)
+            {
+                <p id="money-gloebit-on">Gloebit handles payments on this grid. GridGate coin balances are kept and come back if you switch back to coins.</p>
+                @if (Model.GloebitUnreachable)
+                {
+                    <div class="alert alert-warning" role="alert">Gloebit needs your regions reachable from the internet: purchases and payments call back to them.</div>
+                }
+            }
+            @if (m.Gloebit is { } app)
+            {
+                <p id="money-gloebit-app">App: @app.Environment, key @GridGate.Launcher.Core.Money.GloebitRules.Masked(app.Key), secret @(app.Secret.Length > 0 ? "saved" : "not set").</p>
+            }
+            @if (Model.CanChange)
+            {
+                <form method="post" action="/money?handler=Gloebit" asp-antiforgery="true" autocomplete="off">
+                    <label class="form-label" for="gloebit-env">Environment</label>
+                    <select class="form-select mb-2" id="gloebit-env" name="Environment">
+                        <option value="sandbox" selected="@(m.Gloebit?.Environment != "production")">Sandbox (test payments)</option>
+                        <option value="production" selected="@(m.Gloebit?.Environment == "production")">Production (real payments)</option>
+                    </select>
+                    <label class="form-label" for="gloebit-key">App key</label>
+                    <input class="form-control mb-2" id="gloebit-key" name="Key" maxlength="64" spellcheck="false" placeholder="@(m.Gloebit is { Key.Length: > 0 } k ? "Saved: " + GridGate.Launcher.Core.Money.GloebitRules.Masked(k.Key) + ". Type it again to save changes." : "From Gloebit's merchant tools")" required>
+                    <label class="form-label" for="gloebit-secret">App secret</label>
+                    <input class="form-control mb-2" id="gloebit-secret" name="Secret" type="password" maxlength="64" autocomplete="new-password" placeholder="@(m.Gloebit?.Secret.Length > 0 ? "Saved. Leave empty to keep it." : "")">
+                    <label class="form-label" for="gloebit-owner">Contact name for residents</label>
+                    <input class="form-control mb-2" id="gloebit-owner" name="OwnerName" maxlength="64" value="@m.Gloebit?.OwnerName" required>
+                    <label class="form-label" for="gloebit-email">Contact email (optional)</label>
+                    <input class="form-control mb-2" id="gloebit-email" name="OwnerEmail" type="email" maxlength="128" value="@m.Gloebit?.OwnerEmail">
+                    <button type="submit" class="btn btn-outline-primary">Save Gloebit app</button>
+                </form>
+            }
+        </section>
+    }
     @if (Model.On && !Model.DatabaseDown && Model.Totals is { } t)
     {
         <section class="work-panel" aria-labelledby="money-totals-title">

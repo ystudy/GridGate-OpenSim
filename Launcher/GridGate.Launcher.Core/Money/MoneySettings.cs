@@ -44,7 +44,8 @@ public sealed record MoneySettings(
     long MaxPayment = 1_000_000,
     Dictionary<string, string>? ProgramKeys = null,
     List<PairedServer>? PairedServers = null,
-    ServerPairing? Pairing = null)
+    ServerPairing? Pairing = null,
+    GloebitSettings? Gloebit = null)
 {
     private static readonly IReadOnlyDictionary<string, string> NoKeys = new Dictionary<string, string>();
 

@@ -11,14 +11,24 @@ public static class MoneyPageRules
     public const int MaxReason = 200;
 
 
-    /// <summary>The modes the page offers: Off, and Play once the gate lets it run. Real is plan 6 and Gloebit plan 4.</summary>
+    /// <summary>The modes the page offers: Off, and Play and Gloebit once the gate lets them run. Real is plan 6.</summary>
     public static IReadOnlyList<MoneyMode> Offered(MoneyGate gate) =>
-        gate.Allows(MoneyMode.Play) ? [MoneyMode.Off, MoneyMode.Play] : [MoneyMode.Off];
+        new[] { MoneyMode.Off, MoneyMode.Play, MoneyMode.Gloebit }.Where(m => m == MoneyMode.Off || gate.Allows(m)).ToList();
+
+    /// <summary>Whether a switch between <paramref name="from"/> and <paramref name="to"/> crosses GridGate coins and Gloebit (design §10).</summary>
+    public static bool CrossesGloebit(MoneyMode from, MoneyMode to) =>
+        from != to && (from == MoneyMode.Gloebit && to is MoneyMode.Play or MoneyMode.Real || to == MoneyMode.Gloebit && from is MoneyMode.Play or MoneyMode.Real);
+
+    public const string SwitchWarning =
+        "GridGate coin balances don't move to Gloebit. They are kept, not shown, and come back if you switch back. Gloebit balances belong to Gloebit.";
+
+    public const string RestartWorld = "Takes effect after you restart GridGate and then the world (Power → Restart on the dashboard).";
 
     /// <summary>The first problem with <paramref name="m"/>, in words for the page, or null when it can be saved.</summary>
     public static string? Problem(MoneySettings m, IReadOnlyList<MoneyMode> offered)
     {
         if (!offered.Contains(m.Mode)) return "That money mode isn't available here.";
+        if (m.Mode == MoneyMode.Gloebit && m.Gloebit?.Complete != true) return "Enter this computer's Gloebit app first, under Gloebit.";
         if (!MoneySymbolRule.Valid(m.CurrencySymbol))
             return "The currency symbol must be 1 to 4 characters, with no spaces and none of ; \" = [ ] < > & \\.";
         if (m.CurrencyName.Trim().Length is < 1 or > 20 || m.CurrencyName.Any(char.IsControl))
