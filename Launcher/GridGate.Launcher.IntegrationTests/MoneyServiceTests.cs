@@ -47,7 +47,7 @@ public sealed class MoneyServiceTests(MoneyMariaDb maria) : IClassFixture<MoneyM
 
     /// <summary>Starts the service on a fresh database: program p1 holds region Here, and A is logged in there.</summary>
     private async Task<MoneyTestDatabase> StartAsync(MoneyMode mode = MoneyMode.Play, Func<LauncherSettings, LauncherSettings>? dbOverride = null,
-        Func<X509Certificate2>? certificate = null, int? port = null)
+        Func<X509Certificate2>? certificate = null, int? port = null, OwnerPlan? plan = null)
     {
         var db = await maria.FreshAsync();
         await db.EnsureSchemaAsync();
@@ -58,6 +58,7 @@ public sealed class MoneyServiceTests(MoneyMariaDb maria) : IClassFixture<MoneyM
         _port = port ?? MoneyMariaDb.FreePort();
         var settings = db.Settings with
         {
+            Plan = plan,
             MoneyPort = _port,
             Programs = [new ProgramSettings("p1", 8004, 8011), new ProgramSettings("p2", 8005, 8012)],
             Regions = [new RegionSettings("p1", "Here", Here, UdpPort: 8004), new RegionSettings("p2", "There", There, UdpPort: 8005)],
@@ -94,6 +95,50 @@ public sealed class MoneyServiceTests(MoneyMariaDb maria) : IClassFixture<MoneyM
 
     private static object WhoA(Guid? secure = null) =>
         new { agentId = A, home = "", sessionId = SessionA, secureSessionId = secure ?? SecureA };
+
+    /// <summary>This computer's first IPv4 address that isn't loopback, or null.</summary>
+    private static IPAddress? NetworkAddress() =>
+        System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces()
+            .Where(n => n.OperationalStatus == System.Net.NetworkInformation.OperationalStatus.Up)
+            .SelectMany(n => n.GetIPProperties().UnicastAddresses)
+            .Select(a => a.Address)
+            .FirstOrDefault(a => a.AddressFamily == AddressFamily.InterNetwork && !IPAddress.IsLoopback(a));
+
+    [Fact]
+    public async Task Grid_asset_listens_beyond_loopback()
+    {
+        await StartAsync(plan: OwnerPlan.GridAsset);
+        var ip = NetworkAddress();
+        Assert.NotNull(ip);
+        using var http = new HttpClient(new SocketsHttpHandler
+        {
+            SslOptions = { RemoteCertificateValidationCallback = (_, c, _, _) => c is not null && MoneyCertificate.Fingerprint(X509CertificateLoader.LoadCertificate(c.GetRawCertData())) == _fingerprint },
+        });
+        using var req = new HttpRequestMessage(HttpMethod.Post, $"https://{ip}:{_port}/money/v1/health") { Content = new StringContent("{}", Encoding.UTF8, "application/json") };
+        req.Headers.TryAddWithoutValidation("Authorization", "GridGateRegion " + Key);
+
+        if (MoneyNetworkFilter.Allowed(ip!))
+        {
+            using var resp = await http.SendAsync(req, Ct);
+            Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+        }
+        else
+        {
+            // This machine's only network address is public: the filter must drop it.
+            await Assert.ThrowsAnyAsync<HttpRequestException>(() => http.SendAsync(req, Ct));
+        }
+    }
+
+    [Fact]
+    public async Task Local_plan_still_listens_on_loopback_only()
+    {
+        await StartAsync(plan: OwnerPlan.Local);
+        var ip = NetworkAddress();
+        Assert.NotNull(ip);
+        using var tcp = new TcpClient();
+
+        await Assert.ThrowsAnyAsync<SocketException>(async () => await tcp.ConnectAsync(ip!, _port, Ct));
+    }
 
     [Fact]
     public async Task No_key_is_401_with_empty_body()

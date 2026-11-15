@@ -46,6 +46,8 @@ public static class PlanCatalog
         "The website uses plain HTTP, so passwords cross the internet unencrypted until HTTPS exists.";
     private const string CgnatAdvice =
         "Some internet providers share one address between customers; if yours does, nobody outside can reach you.";
+    private const string MoneyPortAdvice =
+        "Never forward the money port (8000 unless you changed it): only this computer and your network's Region Servers may reach it.";
     private const string PrivatePortAdvice =
         "Every computer on your network can reach the Grid Asset Server's private port; anyone on your network can add regions to the grid.";
 
@@ -72,7 +74,7 @@ public static class PlanCatalog
             ["This computer", "A public address or name for it", "Access to your router to forward ports"],
             HypergridCapability.Switch,
             "Hypergrid is possible: one switch lets avatars travel between your grid and other grids, in both directions.",
-            [PublicAdvice, HttpAdvice, CgnatAdvice],
+            [PublicAdvice, HttpAdvice, CgnatAdvice, MoneyPortAdvice],
             true),
         new(OwnerPlan.GridAsset, "grid-asset", "🗄️", "Grid Asset Server", "(LAN or WAN)",
             "The heart of a grid spread over several computers.",
@@ -85,6 +87,7 @@ public static class PlanCatalog
                 "If this computer is off, every Region Server's regions stop working.",
                 "You can run regions here too, but it isn't advised: busy regions slow down logins, inventory and the map for everyone on the grid.",
                 PrivatePortAdvice,
+                MoneyPortAdvice,
                 "With a network-only address, only computers on this network can visit and there is no hypergrid. You can switch to a public address later.",
                 "With a public address: " + PublicAdvice + " " + HttpAdvice + " " + CgnatAdvice,
             ],

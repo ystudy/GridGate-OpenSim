@@ -154,7 +154,7 @@ public sealed class PersonModel(MoneyGate gate, IMoneyBooks books, AuditLog audi
     /// </summary>
     private async Task<string?> NameAsync(CancellationToken ct)
     {
-        if (!gate.On || Id == Guid.Empty) return null;
+        if (!gate.ServiceHere || Id == Guid.Empty) return null;
         if (Who.IsResident) return (await robust.FindAccountByIdAsync(Id, ct))?.FullName();
         var host = Uri.TryCreate(Who.Home, UriKind.Absolute, out var u) ? u.Host : LogText.Clean(Who.Home);
         try

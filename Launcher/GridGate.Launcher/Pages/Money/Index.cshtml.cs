@@ -199,7 +199,7 @@ public sealed class IndexModel(IGridController grid, MoneyGate gate, IMoneyBooks
     /// <summary>The ledger's actions exist only while money is on.</summary>
     private async Task<bool> GuardOnAsync(CancellationToken ct)
     {
-        if (gate.On) return true;
+        if (gate.ServiceHere) return true;
         Error = "Money is off.";
         await ShowAsync(ct);
         return false;
@@ -209,7 +209,7 @@ public sealed class IndexModel(IGridController grid, MoneyGate gate, IMoneyBooks
     {
         Saved = grid.CurrentSettings().Money;
         Offered = MoneyPageRules.Offered(gate);
-        On = gate.On;
+        On = gate.ServiceHere;
         CanChange = Admin;
         if (!On) return;
         LastCheck = status.LastCheck;

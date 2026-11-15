@@ -49,7 +49,7 @@ public sealed class GridConfigWriter(LauncherPaths paths, Func<MoneySettings, Mo
         // Money and its helper belong to the grid that runs Robust; a server joined to another grid gets them by pairing
         // (money plan 3).
         var moneyHere = PlanCatalog.RunsRobust(s);
-        var money = moneyHere && (effective ?? MoneyRelease.Effective)(s.Money) != MoneyMode.Off ? MoneyFor(s) : null;
+        var money = MoneyPlace.ServiceHere(s, effective ?? MoneyRelease.Effective) ? MoneyFor(s) : null;
 
         // 1. Robust.HG.ini
         var robust = LoadProto(Path.Combine(rt, "Robust.HG.ini.proto"));

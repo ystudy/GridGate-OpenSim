@@ -100,11 +100,14 @@ public sealed record IniOverride(string Target, string Section, string Key, stri
 
 /// <summary>
 /// The Grid Asset Server a Region Server has joined: its address, the grid service's ports, the grid's name and
-/// version, whether hypergrid is on, and the region ports it publishes (null when none). Never holds a password.
+/// version, whether hypergrid is on, and the region ports it publishes (null when none). Money plan 3 adds what it
+/// publishes about money: its mode, the money service's port and certificate fingerprint, and the economy helper's
+/// address (all null from an older Grid Asset Server). Never holds a password.
 /// </summary>
 public sealed record JoinedGrid(
     string Host, int PublicPort, int PrivatePort, string GridName, string LoginUri, string Version, bool Hypergrid,
-    int? RegionPortsFrom, int? RegionPortsTo);
+    int? RegionPortsFrom, int? RegionPortsTo,
+    MoneyMode? Money = null, int? MoneyPort = null, string? MoneyFingerprint = null, string? Economy = null);
 
 /// <summary>
 /// The grid a Connected Server's regions are on: a preset's id (null for another grid), where this computer reaches its

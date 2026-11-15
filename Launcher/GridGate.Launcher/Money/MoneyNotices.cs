@@ -13,7 +13,7 @@ public sealed class MoneyNotices(MoneyGate gate, IMoneyBooks books, MoneyStatus 
 {
     public async Task<IReadOnlyList<MoneyNotice>> CurrentAsync(CancellationToken ct)
     {
-        if (!gate.On) return [];
+        if (!gate.ServiceHere) return [];
         var notices = new List<MoneyNotice>();
         if (status.ServiceError is not null)
             notices.Add(new("money-service",

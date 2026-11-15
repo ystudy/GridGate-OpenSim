@@ -428,7 +428,7 @@ builder.Services.AddSingleton<IVisitorDirectory>(sp => new VisitorDirectory(Mone
 builder.Services.AddSingleton(sp =>
 {
     var current = sp.GetRequiredService<Func<LauncherSettings>>();
-    return new MoneyLedger(MoneyConnections.Money(current), () => current().Money, sp.GetRequiredService<MoneyGate>().Effective,
+    return new MoneyLedger(MoneyConnections.Money(current), () => current().Money, sp.GetRequiredService<MoneyGate>().ServiceMode,
         sp.GetRequiredService<PresenceCheck>().IsLocalUserAsync, sp.GetRequiredService<PresenceCheck>().IsKnownVisitorAsync,
         sp.GetRequiredService<TimeProvider>());
 });
@@ -440,12 +440,12 @@ builder.Services.AddSingleton(sp =>
     var current = sp.GetRequiredService<Func<LauncherSettings>>();
     var time = sp.GetRequiredService<TimeProvider>();
     return new MoneyServiceHost(sp.GetRequiredService<MoneyLedger>(), sp.GetRequiredService<PresenceCheck>(), current,
-        sp.GetRequiredService<MoneyGate>().Effective,
+        sp.GetRequiredService<MoneyGate>().ServiceMode,
         () => MoneyCertificate.LoadOrCreate(Path.Combine(paths.Security, MoneyCertificate.FileName), time),
         sp.GetRequiredService<MoneyAuthFailures>(), sp.GetRequiredService<ILoggerFactory>(), sp.GetRequiredService<MoneyStatus>());
 });
 builder.Services.AddHostedService(sp => sp.GetRequiredService<MoneyServiceHost>());
-builder.Services.AddHostedService(sp => new MoneyMaintenance(sp.GetRequiredService<MoneyLedger>(), sp.GetRequiredService<MoneyGate>().Effective,
+builder.Services.AddHostedService(sp => new MoneyMaintenance(sp.GetRequiredService<MoneyLedger>(), sp.GetRequiredService<MoneyGate>().ServiceMode,
     sp.GetRequiredService<TimeProvider>(), sp.GetRequiredService<ILogger<MoneyMaintenance>>(), sp.GetRequiredService<MoneyStatus>()));
 builder.Services.AddHostedService<GridHostedService>();
 // Moves regions into their owner's estate and back while they run; registered after GridHostedService, so it stops first.
