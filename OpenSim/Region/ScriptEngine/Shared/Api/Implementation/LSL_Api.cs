@@ -119,6 +119,8 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
 
         protected double m_timer = Util.GetTimeStamp();
         protected bool m_waitingForScriptAnswer = false;
+        // GridGate: the permissions this script asked the viewer for; an answer grants no more (money review R-7).
+        private int m_requestedPerms;
         protected bool m_automaticLinkPermission = false;
         protected int m_notecardLineReadCharsMax = 255;
         protected int m_scriptConsoleChannel = 0;
@@ -4104,7 +4106,9 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
                     grp.InvalidateEffectivePerms();
                 }
 
-                m_item.PermsMask = permsmask;
+                // GridGate: the granter has just become the owner. A PERMISSION_DEBIT granted while they weren't the
+                // owner must not start spending their money now (money review 2026-11-15, R-1).
+                m_item.PermsMask = permsmask & ~ScriptBaseClass.PERMISSION_DEBIT;
                 m_item.PermsGranter = permsgranter;
 
                 grp.RootPart.ObjectSaleType = 0;
@@ -4505,6 +4509,21 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
                 return;
             }
 
+            // GridGate: only the object's owner can let it spend the owner's money, so nobody else is asked for
+            // PERMISSION_DEBIT. Otherwise a stranger's yes would start spending their money as soon as an ownership change
+            // (llAttachToAvatarTemp, a copy sale) made them the owner (money review 2026-11-15, R-1).
+            if ((perm & ScriptBaseClass.PERMISSION_DEBIT) != 0 && agentID.NotEqual(m_host.OwnerID))
+            {
+                Error("llRequestPermissions", "PERMISSION_DEBIT can only be granted by the object's owner");
+                perm &= ~ScriptBaseClass.PERMISSION_DEBIT;
+                if (perm == 0)
+                {
+                    m_ScriptEngine.PostScriptEvent(m_item.ItemID, new EventParams(
+                            "run_time_permissions", new Object[] { LSL_Integer.Zero }, Array.Empty<DetectParams>()));
+                    return;
+                }
+            }
+
             if (m_item.PermsGranter != agentID || (perm & ScriptBaseClass.PERMISSION_TAKE_CONTROLS) == 0)
                 llReleaseControls();
 
@@ -4590,6 +4609,9 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
                 if (ownerName == String.Empty)
                     ownerName = "(hippos)";
 
+                // GridGate: what this script asked for, so the answer can't grant more (money review 2026-11-15, R-7).
+                m_requestedPerms = m_waitingForScriptAnswer ? m_requestedPerms | perm : perm;
+
                 if (!m_waitingForScriptAnswer)
                 {
                     m_host.TaskInventory.LockItemsForWrite(true);
@@ -4618,8 +4640,20 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
             if (taskID != m_host.UUID)
                 return;
 
+            // GridGate: every script in the prim waiting on this avatar hears the answer. It is this script's only when
+            // the viewer answers this script's own, still open, question (money review 2026-11-15, R-7).
+            if (itemID.NotEqual(m_item.ItemID) || !m_waitingForScriptAnswer)
+                return;
+
             client.OnScriptAnswer -= handleScriptAnswer;
             m_waitingForScriptAnswer = false;
+
+            // GridGate: a yes grants only what was asked, and PERMISSION_DEBIT only from the owner, who may have changed
+            // since the question (R-1, R-7).
+            answer &= m_requestedPerms;
+            m_requestedPerms = 0;
+            if (client.AgentId.NotEqual(m_host.OwnerID))
+                answer &= ~ScriptBaseClass.PERMISSION_DEBIT;
 
             if ((answer & ScriptBaseClass.PERMISSION_TAKE_CONTROLS) == 0)
                 llReleaseControls();

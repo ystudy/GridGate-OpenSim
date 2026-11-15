@@ -44,7 +44,9 @@ namespace OpenSim.Tests.Common
     {
         private static readonly ILog m_log = LogManager.GetLogger(MethodBase.GetCurrentMethod().DeclaringType);
 
-        EventWaitHandle wh = new EventWaitHandle (false, EventResetMode.AutoReset, "Crossing");
+        // GridGate: unnamed. .NET has no named wait handles on Linux, so a named one stopped every test with an avatar there
+        // (and on Windows made every test client share one system-wide event). It is only ever set, never waited on.
+        EventWaitHandle wh = new EventWaitHandle (false, EventResetMode.AutoReset);
 
         private Scene m_scene;
 

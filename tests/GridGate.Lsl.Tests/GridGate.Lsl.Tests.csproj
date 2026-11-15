@@ -23,6 +23,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- An avatar in the test region (permission questions and answers) loads OpenSim's default animations. -->
+    <None Include="$(GgRoot)bin/data/avataranimations.xml" Link="data/avataranimations.xml" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Reference Include="Nini"><HintPath>$(GgRoot)bin/Nini.dll</HintPath></Reference>
     <Reference Include="log4net"><HintPath>$(GgRoot)bin/log4net.dll</HintPath></Reference>
     <Reference Include="OpenMetaverse"><HintPath>$(GgRoot)bin/OpenMetaverse.dll</HintPath></Reference>

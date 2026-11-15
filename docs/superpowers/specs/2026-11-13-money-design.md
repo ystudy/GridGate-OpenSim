@@ -296,6 +296,18 @@ Each is small, kept in its own commit, and listed in `MERGING.md`:
    it can pay them (§7.6).
 5. **Uploads through the older UDP path are charged** as well as checked (`AssetTransactionModule.cs:259`; today only caps
    uploads are charged, `Scene.Inventory.cs:102`). This only matters when the upload fee isn't 0.
+6. **Only the owner is ever asked for `PERMISSION_DEBIT`, and a saved grant doesn't travel** (money review 2026-11-15, R-1
+   and R-7). Item 1 checks the granter only when money is paid. A stranger's yes would start working once they became the
+   owner: by `llAttachToAvatarTemp`, by a copy sale, or by a saved script state that an inventory backup brings in. So:
+   - `llRequestPermissions` asks nobody but the owner for `PERMISSION_DEBIT`. The rest of the request still goes ahead.
+   - A script's answer is used only by the script that asked, only while its question is open, and only for what it asked.
+     It never brings `PERMISSION_DEBIT` from someone who isn't the owner by then.
+   - `llAttachToAvatarTemp` drops `PERMISSION_DEBIT` when it changes the owner.
+   - A saved `PERMISSION_DEBIT` comes back only when its granter is the owner and the state comes from a running script: a
+     region start, a crossing or a teleport.
+
+   **What owners notice:** after a rez from inventory or an attach, a script has to ask for `PERMISSION_DEBIT` again. Most
+   tip jars and vendors already ask in `on_rez` or `attach`.
 
 ## 8. The viewer side
 
