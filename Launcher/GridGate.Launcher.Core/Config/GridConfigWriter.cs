@@ -112,7 +112,7 @@ public sealed class GridConfigWriter(LauncherPaths paths, Func<MoneySettings, Mo
         }
         // Re-checked here as well as on the Money page: a hand-edited settings file must not break Robust's INI line.
         // The viewer's currency name at login: the owner's symbol for coins, Gloebit's own in Gloebit mode, and nothing in
-        // Off (the prototype's "G$" was DreamGrid's Gloebit leftover, shown even with no money; money plan 4).
+        // Off (the prototype's "G$" was an upstream Gloebit leftover, shown even with no money; money plan 4).
         if (moneyHere)
         {
             if (mode is MoneyMode.Play or MoneyMode.Real)
