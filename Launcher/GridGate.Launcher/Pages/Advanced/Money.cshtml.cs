@@ -45,13 +45,25 @@ public sealed class MoneyModel(IGridController grid, MoneyGate gate, IMoneyPairC
             return Page();
         }
         var outcome = await pair.PairAsync(grid.CurrentSettings(), Code ?? "", ct);
+        // The join may have been pointed at another Grid Asset Server while pairing ran (another tab): then neither the
+        // pairing nor what was read belongs to it.
+        if (outcome.Pairing is { } moved && !string.Equals(grid.CurrentSettings().Join?.Host, moved.GridHost, StringComparison.OrdinalIgnoreCase))
+        {
+            audit.Write(User, Ip, "money-pair", "money", "refused");
+            Error = "The Grid Asset Server changed while pairing. Pair again.";
+            Show();
+            return Page();
+        }
         if (outcome.Pairing is { } pairing)
         {
             // With the grid information pairing just read: the saved join is only refreshed when the grid service starts.
             grid.UpdateSettings(s => s with
             {
                 Money = s.Money with { Pairing = pairing },
-                Join = outcome.Grid is { } fresh && s.Join is { } current ? fresh with { Host = current.Host, PublicPort = current.PublicPort } : s.Join,
+                Join = outcome.Grid is { } fresh && s.Join is { } current && current.Host == fresh.Host && current.PublicPort == fresh.PublicPort
+                    ? fresh with { Host = current.Host, PublicPort = current.PublicPort }
+                    : s.Join,
+                GridName = outcome.Grid is { } named && s.Join is { } here && here.Host == named.Host ? named.GridName : s.GridName,
             }, writeConfig: true);
             audit.Write(User, Ip, "money-pair", "money", "ok");
             Notice = "Paired. Restart the regions to start taking payments.";
@@ -75,6 +87,7 @@ public sealed class MoneyModel(IGridController grid, MoneyGate gate, IMoneyPairC
             PairingHealth.Refused => "The grid no longer accepts this server's key. Pair again.",
             PairingHealth.CertificateChanged => "The grid's money certificate changed: pair again.",
             PairingHealth.NotPaired => "This server isn't paired.",
+            PairingHealth.SomeRegions => "The grid sees only some of this server's regions. Start the others; if they are running, pair again so the grid knows this server's ports.",
             PairingHealth.NoRegions => "The grid accepts this server's key, but sees none of its regions yet. Start them, and check that this computer's address and first region port haven't changed since pairing.",
             _ => "Couldn't reach the grid's money service. Is the Grid Asset Server running?",
         };

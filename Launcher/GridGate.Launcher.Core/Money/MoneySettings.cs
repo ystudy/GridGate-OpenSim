@@ -13,7 +13,7 @@ public enum MoneyMode { Off, Play, Real, Gloebit }
 /// that address from <paramref name="FirstPort"/> up to the next paired server's first port there (final review,
 /// Important 2).
 /// </summary>
-public sealed record PairedServer(Guid Id, string Host, string KeyHash, DateTimeOffset PairedAt, int FirstPort = 0)
+public sealed record PairedServer(Guid Id, string Host, string KeyHash, DateTimeOffset PairedAt, int FirstPort = 0, string? MachineId = null)
 {
     /// <summary>The upper-case hex SHA-256 of a key's UTF-8 bytes, as stored.</summary>
     public static string HashOf(string key) => Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(key)));

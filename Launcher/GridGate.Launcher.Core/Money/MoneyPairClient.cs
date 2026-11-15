@@ -10,7 +10,7 @@ using GridGate.Launcher.Core.Settings;
 namespace GridGate.Launcher.Core.Money;
 
 /// <summary>What a Region Server's pairing looks like from its side, as its Money page shows it.</summary>
-public enum PairingHealth { Ok, Refused, CertificateChanged, Unreachable, NotPaired, NoRegions }
+public enum PairingHealth { Ok, Refused, CertificateChanged, Unreachable, NotPaired, NoRegions, SomeRegions }
 
 /// <summary>
 /// A pairing attempt: the pairing to save, or an owner-readable reason nothing was saved; and the grid information it read
@@ -72,7 +72,7 @@ public sealed class MoneyPairClient(IGridJoinClient join, TimeProvider time) : I
         {
             using var http = Pinned(fingerprint, out _);
             using var response = await http.PostAsJsonAsync($"https://{joined.Host}:{port}/money/v1/pair",
-                new { host, firstPort = s.RegionPort, nonce, proof = PairingProof.Client(code, fingerprint, nonce, host) }, Json, ct);
+                new { host, firstPort = FirstPort(s), machineId = s.MachineId, nonce, proof = PairingProof.Client(code, fingerprint, nonce, host) }, Json, ct);
             answer = response.IsSuccessStatusCode ? await response.Content.ReadFromJsonAsync<PairAnswer>(Json, ct) : null;
         }
         catch (Exception e) when (e is HttpRequestException or TaskCanceledException or JsonException or NotSupportedException && !ct.IsCancellationRequested)
@@ -86,6 +86,16 @@ public sealed class MoneyPairClient(IGridJoinClient join, TimeProvider time) : I
                 : new(null, "The Grid Asset Server didn't prove it made this code. Nothing was saved.");
         return new(null, "The Grid Asset Server didn't accept this code. Codes work once, for 15 minutes; make a new one there.");
     }
+
+    /// <summary>
+    /// The lowest region port this server uses: its first region port, or a live region's port below it (Advanced → Network
+    /// can raise the first port without moving existing regions). The key covers from here up (second review, Important).
+    /// </summary>
+    public static int FirstPort(LauncherSettings s) =>
+        s.Regions.Where(r => r.DeletedAt is null && r.UdpPort > 0).Select(r => r.UdpPort).Append(s.RegionPort).Min();
+
+    /// <summary>This server's regions the grid should see: those not deleted or parked.</summary>
+    private static int LiveRegions(LauncherSettings s) => s.Regions.Count(r => r.DeletedAt is null && !r.Parked);
 
     public async Task<PairingHealth> CheckAsync(LauncherSettings s, CancellationToken ct)
     {
@@ -121,6 +131,7 @@ public sealed class MoneyPairClient(IGridJoinClient join, TimeProvider time) : I
                 return health switch
                 {
                     { Ok: true, Regions: 0 } => PairingHealth.NoRegions,
+                    { Ok: true, Regions: { } seen } when seen < LiveRegions(s) => PairingHealth.SomeRegions,
                     { Ok: true } => PairingHealth.Ok,
                     _ => PairingHealth.Unreachable,
                 };

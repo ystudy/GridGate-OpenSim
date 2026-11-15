@@ -87,6 +87,32 @@ public sealed class MoneyPlaceTests
     }
 
     [Fact]
+    public void Drops_are_logged_again_in_a_new_window_the_way_the_middleware_counts()
+    {
+        var time = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(DateTimeOffset.UtcNow);
+        var failures = new MoneyAuthFailures(time, Microsoft.Extensions.Logging.Abstractions.NullLogger<MoneyAuthFailures>.Instance);
+        var ip = IPAddress.Parse("203.0.113.5");
+
+        failures.RecordFailure(ip);
+        Assert.True(failures.FirstDropInWindow(ip));
+        time.Advance(MoneyAuthFailures.Window + TimeSpan.FromSeconds(1));
+        failures.RecordFailure(ip); // the middleware counts the failure first; that starts the new window
+
+        Assert.True(failures.FirstDropInWindow(ip));
+    }
+
+    [Fact]
+    public void Tallies_stop_growing_past_the_cap()
+    {
+        var failures = new MoneyAuthFailures(TimeProvider.System, Microsoft.Extensions.Logging.Abstractions.NullLogger<MoneyAuthFailures>.Instance);
+
+        for (var i = 0; i < MoneyAuthFailures.MaxTallies + 100; i++)
+            failures.RecordFailure(new IPAddress(BitConverter.GetBytes(0x0A000000 + i)));
+
+        Assert.True(failures.Tracked <= MoneyAuthFailures.MaxTallies + 1, $"{failures.Tracked} tallies kept");
+    }
+
+    [Fact]
     public void Old_tallies_are_pruned()
     {
         var time = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(DateTimeOffset.UtcNow);

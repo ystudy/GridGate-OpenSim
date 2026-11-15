@@ -41,7 +41,7 @@ public sealed class MoneyAuthFailures(TimeProvider time, ILogger<MoneyAuthFailur
         {
             var now = time.GetUtcNow();
             if (now - t.Since > Window)
-                (t.Since, t.Count, t.Warned) = (now, 0, false);
+                (t.Since, t.Count, t.Warned, t.DropWarned) = (now, 0, false, false);
             count = ++t.Count;
             warn = count > Limit && !t.Warned;
             if (warn) t.Warned = true;
@@ -74,9 +74,14 @@ public sealed class MoneyAuthFailures(TimeProvider time, ILogger<MoneyAuthFailur
     {
         var now = time.GetUtcNow();
         // Many fresh addresses (a forwarded port being scanned) must not grow this for ever: past the cap, expired ones go.
+        if (_tallies.TryGetValue(ip, out var known)) return known;
         if (_tallies.Count >= MaxTallies)
+        {
             foreach (var (address, old) in _tallies)
                 if (now - old.Since > Window) _tallies.TryRemove(address, out _);
+            // Still full: every further new address shares one tally, so this never grows past the cap.
+            if (_tallies.Count >= MaxTallies) return _tallies.GetOrAdd(IPAddress.None, _ => new Tally { Since = now });
+        }
         return _tallies.GetOrAdd(ip, _ => new Tally { Since = now });
     }
 }

@@ -38,7 +38,7 @@ internal static class MoneyApi
     internal sealed record Answer(string Code, long? Balance = null, long? ToBalance = null, long? EntryId = null, long? HoldId = null);
     internal sealed record EconomyAnswer(string Code, string CurrencySymbol, long UploadFee, long ClassifiedFee, bool VisitorWallets, bool ScriptPayouts, long MaxPayment);
     internal sealed record HealthAnswer(bool Ok, int Regions);
-    internal sealed record PairBody(string? Host, int? FirstPort, string? Nonce, string? Proof);
+    internal sealed record PairBody(string? Host, int? FirstPort, string? MachineId, string? Nonce, string? Proof);
     internal sealed record PairAnswer(string Code, string Key, string Proof);
 
     private sealed class BadRequest : Exception;
@@ -124,12 +124,19 @@ internal static class MoneyApi
             if (c.Pairing is { } pairing && c.Update is { } update && c.Mode?.Invoke() is MoneyMode.Play or MoneyMode.Real
                 && c.Settings().Plan == OwnerPlan.GridAsset && c.Fingerprint.Length > 0
                 && host.Length is > 0 and <= 255 && SettingsValidator.HostnameError(host) is null && IsNonce(nonce) && proof.Length == 64
-                && b.FirstPort is { } firstPort and >= 1 and <= 65535)
+                && b.FirstPort is { } firstPort and >= 1 and <= 65535 && (b.MachineId ?? "").Length <= 64)
             {
                 if (pairing.Redeem(code => PairingProof.Same(PairingProof.Client(code, c.Fingerprint, nonce, host), proof)) is { } code)
                 {
                     var key = Secrets.NewPassword(MoneyKeys.KeyLength);
-                    var server = new PairedServer(Guid.NewGuid(), host, PairedServer.HashOf(key), DateTimeOffset.UtcNow, firstPort);
+                    var machine = string.IsNullOrWhiteSpace(b.MachineId) ? null : b.MachineId.Trim();
+                    var server = new PairedServer(Guid.NewGuid(), host, PairedServer.HashOf(key), DateTimeOffset.UtcNow, firstPort, machine);
+                    // The same Region Server pairing again (its machine id), or another one on the same address and first
+                    // port, replaces the old key: one key per server, and no two keys over the same ports.
+                    bool Replaced(PairedServer p) =>
+                        (machine is not null && string.Equals(p.MachineId, machine, StringComparison.Ordinal))
+                        || (string.Equals(p.Host, host, StringComparison.OrdinalIgnoreCase) && p.FirstPort == firstPort);
+                    var replacing = c.Settings().Money.PairedServers?.Any(Replaced) == true;
                     try
                     {
                         update(s => s with
@@ -138,14 +145,11 @@ internal static class MoneyApi
                             {
                                 // One address and first port, one server: pairing it again replaces its key. Servers behind
                                 // one router share the address and differ by port (final review, Important 2).
-                                PairedServers =
-                                [
-                                    .. (s.Money.PairedServers ?? []).Where(p => !(string.Equals(p.Host, host, StringComparison.OrdinalIgnoreCase) && p.FirstPort == firstPort)),
-                                    server,
-                                ],
+                                PairedServers = [.. (s.Money.PairedServers ?? []).Where(p => !Replaced(p)), server],
                             },
                         });
-                        c.Log.LogInformation("Paired a Region Server at {Host}.", LogText.Clean(host));
+                        c.Log.LogInformation("Paired a Region Server at {Host}, region ports from {FirstPort}{Replacing}.", LogText.Clean(host), firstPort,
+                            replacing ? ", replacing its earlier pairing" : "");
                         answer = new PairAnswer("ok", key, PairingProof.Server(code, c.Fingerprint, nonce, key));
                     }
                     catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidOperationException)

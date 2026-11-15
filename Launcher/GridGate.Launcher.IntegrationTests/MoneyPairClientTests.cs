@@ -100,6 +100,45 @@ public sealed class MoneyPairClientTests(MoneyMariaDb maria) : IClassFixture<Mon
     }
 
     [Fact]
+    public async Task First_port_is_the_lowest_region_port()
+    {
+        // Advanced → Network can raise the first region port without moving existing regions (second review, Important).
+        await StartGridAsync();
+        var (code, _) = _pairing.Issue();
+        var rs = RegionServer(_port, _fingerprint) with
+        {
+            RegionPort = 9000,
+            Regions =
+            [
+                new RegionSettings("p1", "Low", Guid.NewGuid(), UdpPort: 8500),
+                new RegionSettings("p1", "Gone", Guid.NewGuid(), UdpPort: 8400, DeletedAt: DateTimeOffset.UtcNow),
+                new RegionSettings("p1", "High", Guid.NewGuid(), UdpPort: 9001),
+            ],
+        };
+
+        await new MoneyPairClient(new FakeJoin(rs.Join!), TimeProvider.System).PairAsync(rs, code, Ct);
+
+        Assert.Equal(8500, Assert.Single(_grid.Money.PairedServers!).FirstPort);
+        Assert.Equal("rs", _grid.Money.PairedServers![0].MachineId);
+    }
+
+    [Fact]
+    public async Task Partly_covered_server_checks_as_partial()
+    {
+        var db = await StartGridAsync();
+        await db.AddRegion(Guid.NewGuid(), "192.168.1.20", port: 8004); // the grid sees one of the two
+        var (code, _) = _pairing.Issue();
+        var rs = RegionServer(_port, _fingerprint) with
+        {
+            Regions = [new RegionSettings("p1", "A", Guid.NewGuid(), UdpPort: 8004), new RegionSettings("p1", "B", Guid.NewGuid(), UdpPort: 8005)],
+        };
+        var client = new MoneyPairClient(new FakeJoin(rs.Join!), TimeProvider.System);
+        var pairing = (await client.PairAsync(rs, code, Ct)).Pairing!;
+
+        Assert.Equal(PairingHealth.SomeRegions, await client.CheckAsync(rs with { Money = rs.Money with { Pairing = pairing } }, Ct));
+    }
+
+    [Fact]
     public async Task Paired_but_no_regions_seen_checks_as_no_regions()
     {
         await StartGridAsync();

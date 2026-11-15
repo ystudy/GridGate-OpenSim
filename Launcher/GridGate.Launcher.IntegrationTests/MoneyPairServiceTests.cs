@@ -98,11 +98,11 @@ public sealed class MoneyPairServiceTests(MoneyMariaDb maria) : IClassFixture<Mo
     private static string NewNonce() => Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
 
     /// <summary>Pairs as a Region Server at <paramref name="host"/> would, with a fresh code; returns the key.</summary>
-    private async Task<string> PairAsync(string host = ServerHost, int firstPort = 9000)
+    private async Task<string> PairAsync(string host = ServerHost, int firstPort = 9000, string? machineId = null)
     {
         var (code, _) = _pairing.Issue();
         var nonce = NewNonce();
-        var (status, body, _) = await Post("pair", new { host, firstPort, nonce, proof = PairingProof.Client(code, _fingerprint, nonce, host) });
+        var (status, body, _) = await Post("pair", new { host, firstPort, machineId, nonce, proof = PairingProof.Client(code, _fingerprint, nonce, host) });
         Assert.Equal(HttpStatusCode.OK, status);
         Assert.Equal("ok", (string?)body!["code"]);
         var key = (string)body["key"]!;
@@ -316,6 +316,21 @@ public sealed class MoneyPairServiceTests(MoneyMariaDb maria) : IClassFixture<Mo
     }
 
     [Fact]
+    public async Task Re_pairing_the_same_machine_replaces_its_old_key()
+    {
+        await StartAsync();
+        var first = await PairAsync(firstPort: 9000, machineId: "rs-1");
+
+        var second = await PairAsync(firstPort: 9100, machineId: "rs-1");
+
+        var server = Assert.Single(_settings.Money.PairedServers!);
+        Assert.Equal(9100, server.FirstPort);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await Post("health", new { }, first)).Status);
+        Assert.Equal(HttpStatusCode.OK, (await Post("health", new { }, second)).Status);
+        Assert.Contains(_logs, l => l.Contains("Paired a Region Server at 192.168.1.20, region ports from 9100, replacing its earlier pairing."));
+    }
+
+    [Fact]
     public async Task Pair_refused_off_grid_asset()
     {
         await StartAsync(OwnerPlan.Local);
@@ -341,7 +356,7 @@ public sealed class MoneyPairServiceTests(MoneyMariaDb maria) : IClassFixture<Mo
         await Post("pair", new { host = ServerHost, firstPort = 9000, nonce, proof }); // a replay, refused
 
         var log = string.Join("\n", _logs);
-        Assert.Contains("Paired a Region Server at 192.168.1.20.", log);
+        Assert.Contains("Paired a Region Server at 192.168.1.20, region ports from 9000.", log);
         foreach (var secret in new[] { code, key, nonce, proof, (string)body["proof"]! })
             Assert.DoesNotContain(secret, log);
     }

@@ -59,3 +59,12 @@ The checks from Task 9 of `2026-11-14-money-plan3-visitors-region-servers.md`, r
 - **Important 2** (Region Servers sharing one address): fixed in `55721427`, along with Minors 2, 3, 4, 5, 6, 7, 8, 10 and 11.
 - **Minor 1** (a LAN machine can plant a `GridUser` row and get an empty junk wallet): recorded in the plan as a known limit, for plan 5's review.
 - **Minor 9** (an unpaired Region Server charges no fees): recorded in the plan's Decisions.
+- **Fresh re-review of the fixes** (`4d1a75d4..a4dd7633`), verdict "With fixes", no Critical findings:
+  - **Important** (a key's ports anchored on the first-port setting, not on the regions' real ports): fixed. The pairing
+    sends the lowest live region port, and Check reports partial coverage.
+  - **Minors fixed:** drop logging resets with the window; address tallies are hard-capped; the same machine re-pairing
+    replaces its own key, with the ports and the replacement logged; a re-point during pairing saves nothing.
+  - **Minor recorded:** a visitor with no wallet at a moved home, as a known limit in the plan.
+  - **Minor left:** a `FirstPort = 0` entry from a dev settings file is never replaced. Released settings never have one,
+    because money is release-gated.
+  - Not seen live: these fixes came after the live checks and are covered by tests.

@@ -15,12 +15,15 @@ namespace GridGate.Launcher.Tests;
 internal sealed class FakePairClient : IMoneyPairClient
 {
     public PairOutcome Next { get; set; } = new(new ServerPairing("192.168.1.5", new string('A', 64), "the-key", DateTimeOffset.UtcNow), null);
+    /// <summary>Runs while the pairing is "in flight", before it answers.</summary>
+    public Action? During { get; set; }
     public PairingHealth Health { get; set; } = PairingHealth.Ok;
     public List<string> Codes { get; } = [];
 
     public Task<PairOutcome> PairAsync(LauncherSettings s, string typedCode, CancellationToken ct)
     {
         Codes.Add(typedCode);
+        During?.Invoke();
         return Task.FromResult(Next);
     }
 
@@ -210,6 +213,32 @@ public sealed class RegionServerMoneyPageTests
         Assert.Equal(MoneyMode.Play, join.Money);
         Assert.Equal(new string('B', 64), join.MoneyFingerprint);
         Assert.Equal("192.168.1.5", join.Host);
+    }
+
+    [Fact]
+    public async Task Re_point_during_pairing_saves_neither()
+    {
+        var pair = new FakePairClient { Next = new(new ServerPairing("192.168.1.5", new string('B', 64), "the-key", DateTimeOffset.UtcNow), null, Avalon()) };
+        await using var f = Make(pair);
+        var elsewhere = Avalon("192.168.1.9");
+        pair.During = () => f.Grid.UpdateSettings(s => s with { Join = elsewhere }, writeConfig: false);
+
+        var doc = await PostAsync(await SignedInAsync(f), "Pair", new() { ["Code"] = Code });
+
+        Assert.Null(f.Grid.CurrentSettings().Money.Pairing);
+        Assert.Equal(elsewhere, f.Grid.CurrentSettings().Join);
+        Assert.Contains("The Grid Asset Server changed while pairing. Pair again.", doc.QuerySelector(".alert-danger")!.TextContent);
+    }
+
+    [Fact]
+    public async Task Partial_coverage_is_said()
+    {
+        var pair = new FakePairClient { Health = PairingHealth.SomeRegions };
+        await using var f = Make(pair, pairing: new ServerPairing("192.168.1.5", new string('A', 64), "k", DateTimeOffset.UtcNow));
+
+        var doc = await PostAsync(await SignedInAsync(f), "Check", []);
+
+        Assert.Contains("The grid sees only some of this server's regions.", MainText(doc));
     }
 
     [Fact]

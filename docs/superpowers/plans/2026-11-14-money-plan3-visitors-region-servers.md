@@ -48,7 +48,11 @@ service), §7.6, §7.7, §9.1 (People, Region Servers), §11. This is step 4 of 
     each with its own forwarded port range (install-and-plans design §11). So a pairing also records the Region Server's
     first region port. Its key covers that address from that port up to the next paired server's first port there, by
     the region's `serverPort` in Robust.
-  - Pairing the same address and first port again replaces the old key.
+  - Pairing the same address and first port again replaces the old key. **Second review:**
+    - The Region Server sends the lowest port its live regions use (`MoneyPairClient.FirstPort`), not just its first-port
+      setting. Advanced → Network can raise that setting without moving existing regions.
+    - It also sends its machine id, so the same server pairing again replaces its own old key.
+    - Check says when the grid sees only some of its regions.
   - Known limit: until every Region Server behind one address is paired, the one with lower ports also covers an unpaired
     one's higher ports. The owner pairs each of them, as they set each one up.
   - The health answer says how many regions a key covers now. The Region Server's Check says so when the grid sees
@@ -66,6 +70,9 @@ service), §7.6, §7.7, §9.1 (People, Region Servers), §11. This is step 4 of 
     payments find the new wallet.
   - This closes plan 2's deferred minor ("a made-up `home=` makes a junk visitor wallet") for staff pages, which no longer
     create wallets when opened.
+  - Known limit (second review): a visitor whose home moved, and who never had a wallet at the old home, has no record the
+    page can open, so staff can't give them coins until they visit again. Plan 5's review looks at letting an admin name a
+    new home for a UUID that `GridUser` knows.
   - For regions it narrows the minor but doesn't close it. Robust's `GridUserService` is on the LAN-open private port, and
     regions write `GridUser` rows too, so a LAN machine or a taken-over region can plant a row and then get an empty junk
     wallet. Visitors get no starting balance, so that wallet stays empty. This is a known limit, recorded for plan 5's
