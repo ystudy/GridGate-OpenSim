@@ -17,6 +17,9 @@ public sealed class CoinsModel(Func<LauncherSettings> settings, MoneyGate gate) 
     public long Starting { get; private set; }
     public long Allowance { get; private set; }
 
+    /// <summary>Gloebit's site, in Gloebit mode (money plan 4).</summary>
+    public string GloebitSite { get; private set; } = "";
+
     /// <summary>An amount as residents see it: the symbol, then the number in the page's language.</summary>
     public string Amount(long n) => Symbol + n.ToString("N0", CultureInfo.CurrentCulture);
 
@@ -27,5 +30,6 @@ public sealed class CoinsModel(Func<LauncherSettings> settings, MoneyGate gate) 
         (Name, Symbol) = (m.CurrencyName, m.CurrencySymbol);
         Starting = m.StartingBalance(Mode);
         Allowance = Mode == MoneyMode.Play ? m.WeeklyAllowance : 0;
+        GloebitSite = Economy.EconomyHelper.GloebitSite(settings());
     }
 }

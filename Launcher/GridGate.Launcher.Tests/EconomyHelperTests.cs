@@ -205,6 +205,49 @@ public sealed class EconomyHelperTests
     }
 
     [Fact]
+    public async Task Quote_in_gloebit_mode_points_at_gloebit()
+    {
+        await using var f = Make(new FakeSessions(), MoneyMode.Gloebit);
+
+        var answer = AssertFirestormSafe((await Post(Client(f), "/economy/currency.php", Call("getCurrencyQuote", Who(more: [("currencyBuy", 100)])))).Xml);
+
+        Assert.Equal("0", Member(answer, "success"));
+        Assert.Equal("This grid uses Gloebit. Buy gloebits on Gloebit's website.", Member(answer, "errorMessage"));
+        Assert.Equal("https://www.gloebit.com/purchase/", Member(answer, "errorURI"));
+    }
+
+    [Fact]
+    public async Task Land_shortfall_in_gloebit_mode_points_at_gloebit()
+    {
+        await using var f = Make(new FakeSessions(), MoneyMode.Gloebit);
+        f.Grid.UpdateSettings(s => s with
+        {
+            Money = s.Money with { Gloebit = new GloebitSettings("sandbox", "0b9e3c2a-1111-4c5d-8e9f-0123456789ab", "7d3f9a10-2222-4b6c-9d8e-fedcba987654", "Owner") },
+        }, writeConfig: false);
+
+        var answer = AssertFirestormSafe((await Post(Client(f), "/economy/landtool.php", Call("preflightBuyLandPrep", Who(more: [("currencyBuy", 25)])))).Xml);
+
+        Assert.Equal("0", Member(answer, "success"));
+        Assert.Equal("This grid uses Gloebit. Buy gloebits on Gloebit's website.", Member(answer, "errorMessage"));
+        Assert.Equal("https://sandbox.gloebit.com/purchase/", Member(answer, "errorURI"));
+    }
+
+    [Fact]
+    public async Task Coins_page_explains_gloebit()
+    {
+        await using var f = Make(new FakeSessions(), MoneyMode.Gloebit);
+        using var req = new HttpRequestMessage(HttpMethod.Get, "/coins");
+        req.Headers.Add("Cookie", "gg-lang=fr");
+
+        using var r = await Client(f).SendAsync(req, Ct);
+
+        var html = WebUtility.HtmlDecode(await r.Content.ReadAsStringAsync(Ct));
+        Assert.Contains("Gloebit", html);
+        Assert.Contains("https://www.gloebit.com/", html);
+        Assert.DoesNotContain("pièces de jeu", html);
+    }
+
+    [Fact]
     public async Task Buy_currency_always_refuses()
     {
         await using var f = Make(new FakeSessions());
