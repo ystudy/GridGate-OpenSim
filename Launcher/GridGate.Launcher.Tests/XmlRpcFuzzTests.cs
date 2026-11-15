@@ -502,10 +502,8 @@ public sealed class XmlRpcFuzzTests
     /// thrown.
     /// </summary>
     [Theory]
-    [InlineData("windows-1252")]
     [InlineData("utf-7")]
     [InlineData("UTF-32")]
-    [InlineData("ibm037")]
     [InlineData("x-no-such-encoding")]
     [InlineData("UTF-16")]
     [InlineData("")]
@@ -514,6 +512,28 @@ public sealed class XmlRpcFuzzTests
         var xml = Quote.Replace("<?xml version=\"1.0\"?>", $"<?xml version=\"1.0\" encoding=\"{encoding}\"?>");
 
         Assert.Null(XmlRpc.Read(Body(Encoding.ASCII.GetBytes(xml))));
+    }
+
+    /// <summary>
+    /// money review 2026-11-15, H-7: a code page .NET knows only once something registers CodePagesEncodingProvider (a
+    /// library elsewhere in the test run does). Either way the body is refused or read as the same call, never thrown or
+    /// misread.
+    /// </summary>
+    [Theory]
+    [InlineData("windows-1252")]
+    [InlineData("ibm037")]
+    public void Code_page_encodings_are_refused_or_read_the_same(string encoding)
+    {
+        var xml = Quote.Replace("<?xml version=\"1.0\"?>", $"<?xml version=\"1.0\" encoding=\"{encoding}\"?>");
+        var plain = XmlRpc.Read(Body(Encoding.ASCII.GetBytes(Quote)));
+
+        var call = XmlRpc.Read(Body(Encoding.ASCII.GetBytes(xml)));
+
+        if (call is not null)
+        {
+            Assert.Equal(plain!.Method, call.Method);
+            Assert.Equal(System.Text.Json.JsonSerializer.Serialize(plain.Params), System.Text.Json.JsonSerializer.Serialize(call.Params));
+        }
     }
 
     /// <summary>money review 2026-11-15, H-7: a UTF-32 body with its BOM neither throws nor reads as something else.</summary>
