@@ -420,6 +420,8 @@ builder.Services.AddSingleton<Func<CpuPriority, string?>>(_ => RegionSettingsRul
 // (MoneyRelease) and turned on; registered before GridHostedService so it is listening before regions start.
 builder.Services.AddSingleton(sp => new MoneyGate(sp.GetRequiredService<Func<LauncherSettings>>()));
 builder.Services.AddSingleton<MoneyStatus>();
+builder.Services.AddSingleton(sp => new MoneyPairing(sp.GetRequiredService<TimeProvider>()));
+builder.Services.AddSingleton(sp => new RegionHosts(MoneyConnections.Robust(sp.GetRequiredService<Func<LauncherSettings>>())));
 builder.Services.AddSingleton<ISecureSessionCheck>(sp => sp.GetRequiredService<PresenceCheck>());
 builder.Services.AddSingleton(sp => new EconomyLimits(sp.GetRequiredService<TimeProvider>()));
 builder.Services.AddSingleton<EconomyHelper>();
@@ -442,7 +444,9 @@ builder.Services.AddSingleton(sp =>
     return new MoneyServiceHost(sp.GetRequiredService<MoneyLedger>(), sp.GetRequiredService<PresenceCheck>(), current,
         sp.GetRequiredService<MoneyGate>().ServiceMode,
         () => MoneyCertificate.LoadOrCreate(Path.Combine(paths.Security, MoneyCertificate.FileName), time),
-        sp.GetRequiredService<MoneyAuthFailures>(), sp.GetRequiredService<ILoggerFactory>(), sp.GetRequiredService<MoneyStatus>());
+        sp.GetRequiredService<MoneyAuthFailures>(), sp.GetRequiredService<ILoggerFactory>(), sp.GetRequiredService<MoneyStatus>(),
+        sp.GetRequiredService<MoneyPairing>(), change => sp.GetRequiredService<IGridController>().UpdateSettings(change, writeConfig: false),
+        sp.GetRequiredService<RegionHosts>());
 });
 builder.Services.AddHostedService(sp => sp.GetRequiredService<MoneyServiceHost>());
 builder.Services.AddHostedService(sp => new MoneyMaintenance(sp.GetRequiredService<MoneyLedger>(), sp.GetRequiredService<MoneyGate>().ServiceMode,

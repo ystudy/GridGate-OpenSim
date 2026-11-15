@@ -24,6 +24,15 @@ public static class GridInfoKeys
     public const string Hypergrid = "gridgate_hypergrid";
     public const string RegionPorts = "gridgate_region_ports";
     public const string Plan = "gridgate_plan";
+
+    /// <summary>The grid's money mode, in lower case (money plan 3): what a Region Server's regions follow.</summary>
+    public const string Money = "gridgate_money";
+
+    /// <summary>The money service's port, while GridGate coins are on.</summary>
+    public const string MoneyPort = "gridgate_money_port";
+
+    /// <summary>The money certificate's fingerprint, which a Region Server pins to pair, while GridGate coins are on.</summary>
+    public const string MoneyFingerprint = "gridgate_money_fingerprint";
 }
 
 /// <summary>What the owner typed for the Grid Asset Server's address, as a host and the grid service's public port.</summary>

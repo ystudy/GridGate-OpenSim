@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using GridGate.Launcher.Core;
 using GridGate.Launcher.Core.Money;
 using GridGate.Launcher.Core.Settings;
 
@@ -37,13 +38,23 @@ internal static class MoneyApi
     internal sealed record Answer(string Code, long? Balance = null, long? ToBalance = null, long? EntryId = null, long? HoldId = null);
     internal sealed record EconomyAnswer(string Code, string CurrencySymbol, long UploadFee, long ClassifiedFee, bool VisitorWallets, bool ScriptPayouts, long MaxPayment);
     internal sealed record HealthAnswer(bool Ok);
+    internal sealed record PairBody(string? Host, string? Nonce, string? Proof);
+    internal sealed record PairAnswer(string Code, string Key, string Proof);
 
     private sealed class BadRequest : Exception;
 
-    internal sealed record Context(MoneyLedger Ledger, PresenceCheck Presence, Func<LauncherSettings> Settings, MoneyAuthFailures Failures, ILogger Log);
+    /// <summary>
+    /// What the endpoints need. <see cref="Pairing"/>, <see cref="Update"/> and <see cref="Hosts"/> are for Region Servers
+    /// (money plan 3): without them nobody can pair and a server key gets <c>unavailable</c>. <see cref="Fingerprint"/> is
+    /// the certificate this listener serves.
+    /// </summary>
+    internal sealed record Context(MoneyLedger Ledger, PresenceCheck Presence, Func<LauncherSettings> Settings, MoneyAuthFailures Failures, ILogger Log,
+        MoneyPairing? Pairing = null, Func<Func<LauncherSettings, LauncherSettings>, LauncherSettings>? Update = null, RegionHosts? Hosts = null,
+        string Fingerprint = "");
 
     public static void Map(IEndpointRouteBuilder app, Context c)
     {
+        app.MapPost("/money/v1/pair", (RequestDelegate)(http => PairAsync(http, c)));
         Post(app, "/money/v1/health", c, (_, _, _) => Task.FromResult<object>(new HealthAnswer(true)));
         Post(app, "/money/v1/economy", c, (_, _, _) =>
         {
@@ -95,6 +106,59 @@ internal static class MoneyApi
         Post(app, "/money/v1/hold/return", c, (http, grant, ct) => Settle(http, c, grant, complete: false, ct));
     }
 
+    /// <summary>
+    /// A Region Server pairing (money plan 3): <c>{ host, nonce, proof }</c>, where the proof is
+    /// <see cref="PairingProof.Client"/> over this listener's own fingerprint. Needs no region key. Every failure, whatever
+    /// its cause, is the same <c>{"code":"refused"}</c> and counts against the caller's address. Nothing sent is logged.
+    /// </summary>
+    private static async Task PairAsync(HttpContext http, Context c)
+    {
+        var ct = http.RequestAborted;
+        object answer = Code("refused");
+        try
+        {
+            var b = await Read<PairBody>(http, ct);
+            var (host, nonce, proof) = ((b.Host ?? "").Trim(), b.Nonce ?? "", b.Proof ?? "");
+            if (c.Pairing is { } pairing && c.Update is { } update && c.Settings().Plan == OwnerPlan.GridAsset && c.Fingerprint.Length > 0
+                && host.Length is > 0 and <= 255 && SettingsValidator.HostnameError(host) is null && IsNonce(nonce) && proof.Length == 64)
+            {
+                if (pairing.Redeem(code => PairingProof.Same(PairingProof.Client(code, c.Fingerprint, nonce, host), proof)) is { } code)
+                {
+                    var key = Secrets.NewPassword(MoneyKeys.KeyLength);
+                    var server = new PairedServer(Guid.NewGuid(), host, PairedServer.HashOf(key), DateTimeOffset.UtcNow);
+                    update(s => s with
+                    {
+                        Money = s.Money with
+                        {
+                            // One address, one server: pairing the same address again replaces its key.
+                            PairedServers = [.. (s.Money.PairedServers ?? []).Where(p => !string.Equals(p.Host, host, StringComparison.OrdinalIgnoreCase)), server],
+                        },
+                    });
+                    c.Log.LogInformation("Paired a Region Server at {Host}.", LogText.Clean(host));
+                    answer = new PairAnswer("ok", key, PairingProof.Server(code, c.Fingerprint, nonce, key));
+                }
+            }
+        }
+        catch (Exception e) when (e is BadRequest or JsonException or NotSupportedException)
+        {
+            // Refused like any other failure.
+        }
+        if (answer is not PairAnswer)
+        {
+            var wait = c.Failures.RecordFailure(http.Connection.RemoteIpAddress ?? IPAddress.None);
+            if (wait > TimeSpan.Zero) await Task.Delay(wait, ct);
+        }
+        http.Response.ContentType = "application/json";
+        await JsonSerializer.SerializeAsync(http.Response.Body, answer, answer.GetType(), Json, ct);
+    }
+
+    /// <summary>Base64 of exactly 32 bytes.</summary>
+    private static bool IsNonce(string nonce)
+    {
+        Span<byte> buffer = stackalloc byte[48];
+        return nonce.Length <= 64 && Convert.TryFromBase64String(nonce, buffer, out var n) && n == 32;
+    }
+
     /// <summary>One endpoint's work, given its authenticated key's grant; returns the answer to write.</summary>
     private delegate Task<object> Endpoint(HttpContext http, RegionKeyGrant grant, CancellationToken ct);
 
@@ -132,6 +196,13 @@ internal static class MoneyApi
         object answer;
         try
         {
+            // A paired Region Server's key covers the regions Robust lists at its address, never this computer's own.
+            if (grant.ServerHost is { } serverHost)
+            {
+                if (c.Hosts is null) throw new MoneyUnavailableException(new InvalidOperationException("no region lookup"));
+                var own = c.Settings().Regions.Select(r => r.Uuid).ToHashSet();
+                grant = grant with { Regions = (await c.Hosts.RegionsAtAsync(serverHost, ct)).Where(r => !own.Contains(r)).ToHashSet() };
+            }
             answer = await endpoint(http, grant, ct);
         }
         catch (Exception e) when (e is BadRequest or JsonException or NotSupportedException)

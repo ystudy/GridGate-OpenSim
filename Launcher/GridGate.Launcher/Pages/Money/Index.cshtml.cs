@@ -19,7 +19,7 @@ namespace GridGate.Launcher.Pages.Money;
 /// and the owner may change anything (each POST checks), and every change is audited.
 /// </summary>
 public sealed class IndexModel(IGridController grid, MoneyGate gate, IMoneyBooks books, MoneyStatus status, AuditLog audit, IRobustClient robust,
-    IPeopleDirectory people, IVisitorDirectory visitors, TimeProvider time)
+    IPeopleDirectory people, IVisitorDirectory visitors, MoneyPairing pairing, TimeProvider time)
     : PageModel
 {
     public IReadOnlyList<MoneyMode> Offered { get; private set; } = [];
@@ -40,6 +40,14 @@ public sealed class IndexModel(IGridController grid, MoneyGate gate, IMoneyBooks
 
     public IReadOnlyList<PersonRow> Found { get; private set; } = [];
     public IReadOnlyList<VisitorInfo> FoundVisitors { get; private set; } = [];
+
+    /// <summary>The Region Servers section: a Grid Asset Server whose ledger runs (money plan 3).</summary>
+    public bool ShowServers { get; private set; }
+    public IReadOnlyList<PairedServer> Servers { get; private set; } = [];
+    public DateTimeOffset? PairingUntil { get; private set; }
+
+    /// <summary>A pairing code just made: shown once, on this answer only.</summary>
+    public string? NewCode { get; private set; }
 
     /// <summary>The most visitors Find a person shows.</summary>
     public const int MaxVisitorsFound = 50;
@@ -86,6 +94,56 @@ public sealed class IndexModel(IGridController grid, MoneyGate gate, IMoneyBooks
         }
         await ShowAsync(ct);
         return Page();
+    }
+
+    public async Task<IActionResult> OnPostPairingCodeAsync(CancellationToken ct)
+    {
+        if (!Admin) return StatusCode(StatusCodes.Status403Forbidden);
+        if (!await GuardServersAsync(ct)) return Page();
+        var (code, _) = pairing.Issue();
+        NewCode = PairingCode.Show(code);
+        audit.Write(User, Ip, "money-pairing-code", "money", "ok");
+        await ShowAsync(ct);
+        return Page();
+    }
+
+    public async Task<IActionResult> OnPostPairingCancelAsync(CancellationToken ct)
+    {
+        if (!Admin) return StatusCode(StatusCodes.Status403Forbidden);
+        if (!await GuardServersAsync(ct)) return Page();
+        pairing.Cancel();
+        audit.Write(User, Ip, "money-pairing-cancel", "money", "ok");
+        Notice = "The pairing code was cancelled.";
+        await ShowAsync(ct);
+        return Page();
+    }
+
+    public async Task<IActionResult> OnPostRemoveServerAsync(Guid server, CancellationToken ct)
+    {
+        if (!Admin) return StatusCode(StatusCodes.Status403Forbidden);
+        if (!await GuardServersAsync(ct)) return Page();
+        var gone = grid.CurrentSettings().Money.PairedServers?.FirstOrDefault(p => p.Id == server);
+        if (gone is null)
+        {
+            Error = "That Region Server isn't paired.";
+        }
+        else
+        {
+            grid.UpdateSettings(s => s with { Money = s.Money with { PairedServers = (s.Money.PairedServers ?? []).Where(p => p.Id != server).ToList() } },
+                writeConfig: false);
+            audit.Write(User, Ip, "money-pairing-remove", LogText.Clean(gone.Host), "ok");
+            Notice = "Removed. Its regions can't take payments until it's paired again.";
+        }
+        await ShowAsync(ct);
+        return Page();
+    }
+
+    private async Task<bool> GuardServersAsync(CancellationToken ct)
+    {
+        if (gate.ServiceHere && grid.CurrentSettings().Plan == OwnerPlan.GridAsset) return true;
+        Error = "Region Servers pair only with a Grid Asset Server whose money is on.";
+        await ShowAsync(ct);
+        return false;
     }
 
     public async Task<IActionResult> OnPostCheckAsync(CancellationToken ct)
@@ -213,6 +271,9 @@ public sealed class IndexModel(IGridController grid, MoneyGate gate, IMoneyBooks
         CanChange = Admin;
         if (!On) return;
         LastCheck = status.LastCheck;
+        ShowServers = grid.CurrentSettings().Plan == OwnerPlan.GridAsset;
+        Servers = Saved.PairedServers ?? [];
+        PairingUntil = pairing.PendingUntil;
         if (!string.IsNullOrWhiteSpace(Q))
             try
             {

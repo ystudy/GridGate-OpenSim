@@ -92,6 +92,16 @@ public sealed class GridConfigWriter(LauncherPaths paths, Func<MoneySettings, Mo
         robust.Set("GridInfoService", GridInfoKeys.Plan, s.Plan is { } plan ? PlanCatalog.Get(plan).Id : "");
         // The economy helper, in every mode: with money Off it still tells Firestorm free land costs nothing (money design §8.4).
         if (moneyHere) robust.Set("GridInfoService", "economy", WebsiteAddress.Economy(s));
+        // What a Region Server's regions need to follow this grid's money and to pair with it (money plan 3). No secret.
+        if (moneyHere)
+        {
+            robust.Set("GridInfoService", GridInfoKeys.Money, MoneyPlace.GridMode(s, effective ?? MoneyRelease.Effective).ToString().ToLowerInvariant());
+            if (money is not null)
+            {
+                robust.Set("GridInfoService", GridInfoKeys.MoneyPort, s.MoneyPort.ToString(CultureInfo.InvariantCulture));
+                robust.Set("GridInfoService", GridInfoKeys.MoneyFingerprint, money.Fingerprint);
+            }
+        }
         if (money is not null) robust.Set("LoginService", "Currency", s.Money.CurrencySymbol);
         Finish(robust, "robust", extra, Path.Combine(rt, "Robust.HG.ini"));
 

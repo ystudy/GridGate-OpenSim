@@ -116,12 +116,13 @@ public sealed class MoneyPageTests
     private static readonly Guid Hope = Guid.Parse("c0000000-0000-0000-0000-0000000000c1");
     private const string HopeHome = "http://grid.example:8002/";
 
-    private static LauncherFactory Make(FakeBooks books, bool open = true, Func<MoneySettings, MoneySettings>? money = null, FakeVisitors? visitors = null)
+    private static LauncherFactory Make(FakeBooks books, bool open = true, Func<MoneySettings, MoneySettings>? money = null, FakeVisitors? visitors = null,
+        OwnerPlan plan = OwnerPlan.Local)
     {
         var f = new LauncherFactory(s => s with
         {
             SetupToken = null,
-            Plan = OwnerPlan.Local,
+            Plan = plan,
             Setup = s.Setup with { WorldNamed = true, OwnerCreated = true, Finished = true, Owner = new OwnerInfo("Test", "Owner", TestAuth.OwnerId) },
             Money = money?.Invoke(new MoneySettings(Mode: MoneyMode.Play)) ?? new MoneySettings(Mode: MoneyMode.Play),
             MoneyPort = 0,
@@ -567,6 +568,67 @@ public sealed class MoneyPageTests
         using var r = await PostAsync(await SignedInAsync(f), $"/money/person?id={Ann}", "Give", new() { ["Amount"] = "25", ["Reason"] = "gift" });
 
         Assert.Contains(Audit(f), a => a.GetProperty("action").GetString() == "money-give" && a.GetProperty("result").GetString() == "ok 25");
+    }
+
+    [Fact]
+    public async Task Pairing_code_shown_once_and_audited_without_it()
+    {
+        await using var f = Make(new FakeBooks(), plan: OwnerPlan.GridAsset);
+        var c = await SignedInAsync(f);
+
+        using var made = await PostAsync(c, "/money", "PairingCode", []);
+        var code = (await ParseAsync(made)).QuerySelector("#money-pairing-code code")?.TextContent.Trim();
+
+        Assert.NotNull(code);
+        Assert.Matches("^[0-9A-Z]{4}-[0-9A-Z]{4}-[0-9A-Z]{4}-[0-9A-Z]{4}$", code);
+        var line = Assert.Single(Audit(f), a => a.GetProperty("action").GetString() == "money-pairing-code");
+        Assert.DoesNotContain(code!.Replace("-", ""), line.GetRawText().Replace("-", ""));
+        var again = await PageAsync(c, "/money");
+        Assert.Null(again.QuerySelector("#money-pairing-code"));
+        Assert.NotNull(again.QuerySelector("#money-pairing-waiting"));
+        Assert.DoesNotContain(code, again.DocumentElement.OuterHtml);
+    }
+
+    [Fact]
+    public async Task Region_servers_section_only_on_grid_asset()
+    {
+        await using var local = Make(new FakeBooks());
+        Assert.Null((await PageAsync(await SignedInAsync(local), "/money")).QuerySelector("#money-servers"));
+
+        await using var gas = Make(new FakeBooks(), plan: OwnerPlan.GridAsset);
+        Assert.NotNull((await PageAsync(await SignedInAsync(gas), "/money")).QuerySelector("#money-servers"));
+
+        await using var closed = Make(new FakeBooks(), open: false, plan: OwnerPlan.GridAsset);
+        Assert.Null((await PageAsync(await SignedInAsync(closed), "/money")).QuerySelector("#money-servers"));
+    }
+
+    [Fact]
+    public async Task Pairing_code_refused_off_grid_asset()
+    {
+        await using var f = Make(new FakeBooks());
+
+        using var r = await PostAsync(await SignedInAsync(f), "/money", "PairingCode", []);
+
+        Assert.Null((await ParseAsync(r)).QuerySelector("#money-pairing-code"));
+        Assert.Null(f.Services.GetRequiredService<MoneyPairing>().PendingUntil);
+    }
+
+    [Fact]
+    public async Task Remove_paired_server_is_admin_only_and_audited()
+    {
+        var id = Guid.NewGuid();
+        await using var f = Make(new FakeBooks(), plan: OwnerPlan.GridAsset,
+            money: m => m with { PairedServers = [new PairedServer(id, "192.168.1.20", new string('A', 64), DateTimeOffset.UtcNow)] });
+        var c = await SignedInAsync(f);
+        Assert.Contains("192.168.1.20", (await PageAsync(c, "/money")).QuerySelector("#money-paired")!.TextContent);
+
+        var supervisor = await SignedInAsync(f, "supervisor");
+        Assert.Empty((await PageAsync(supervisor, "/money")).QuerySelectorAll("#money-servers form"));
+
+        using var r = await PostAsync(c, "/money", "RemoveServer", new() { ["Server"] = id.ToString() });
+
+        Assert.Empty(f.Grid.CurrentSettings().Money.PairedServers ?? []);
+        Assert.Contains(Audit(f), a => a.GetProperty("action").GetString() == "money-pairing-remove" && a.GetProperty("target").GetString() == "192.168.1.20");
     }
 
     [Fact]

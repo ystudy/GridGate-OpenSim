@@ -7,6 +7,22 @@ namespace GridGate.Launcher.Core.Money;
 public enum MoneyMode { Off, Play, Real, Gloebit }
 
 /// <summary>
+/// A Region Server paired with this Grid Asset Server's money (money plan 3): the address it paired from, which is the
+/// address its regions register with, and the SHA-256 of its key. The key itself is never kept here.
+/// </summary>
+public sealed record PairedServer(Guid Id, string Host, string KeyHash, DateTimeOffset PairedAt)
+{
+    /// <summary>The upper-case hex SHA-256 of a key's UTF-8 bytes, as stored.</summary>
+    public static string HashOf(string key) => Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(key)));
+}
+
+/// <summary>
+/// A Region Server's own side of its pairing (money plan 3): which Grid Asset Server, the money certificate fingerprint it
+/// pinned, the key its regions use, and when. Kept in the owner-only settings file, like the local program keys.
+/// </summary>
+public sealed record ServerPairing(string GridHost, string Fingerprint, string Key, DateTimeOffset PairedAt);
+
+/// <summary>
 /// The owner's money settings (money design §7.5). <paramref name="ProgramKeys"/> maps a region program's instance to its
 /// region key (§7.2); null reads as none.
 /// </summary>
@@ -23,7 +39,9 @@ public sealed record MoneySettings(
     long DailyPayoutLimit = 5000,
     bool VisitorWallets = true,
     long MaxPayment = 1_000_000,
-    Dictionary<string, string>? ProgramKeys = null)
+    Dictionary<string, string>? ProgramKeys = null,
+    List<PairedServer>? PairedServers = null,
+    ServerPairing? Pairing = null)
 {
     private static readonly IReadOnlyDictionary<string, string> NoKeys = new Dictionary<string, string>();
 

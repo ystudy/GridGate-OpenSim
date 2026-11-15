@@ -72,6 +72,10 @@ public sealed class MoneyMariaDb : IAsyncLifetime
               `PrincipalID` char(36) NOT NULL, `FirstName` varchar(64) NOT NULL, `LastName` varchar(64) NOT NULL,
               PRIMARY KEY (`PrincipalID`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+            CREATE TABLE `robust`.`regions` (
+              `uuid` VARCHAR(36) NOT NULL, `regionName` VARCHAR(128) NOT NULL DEFAULT '', `serverIP` VARCHAR(64) NOT NULL DEFAULT '',
+              PRIMARY KEY (`uuid`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
             CREATE TABLE `robust`.`GridUser` (
               `UserID` VARCHAR(255) NOT NULL,
               `HomeRegionID` CHAR(36) NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000',
@@ -177,6 +181,10 @@ public sealed class MoneyTestDatabase(LauncherSettings settings)
     /// <summary>Puts an avatar in a region, as Robust's presence service does at login or the Gatekeeper for a visitor.</summary>
     public Task AddPresence(Guid user, Guid region, Guid session, Guid secure) =>
         Sql($"INSERT INTO `robust`.`Presence` (`UserID`, `RegionID`, `SessionID`, `SecureSessionID`) VALUES ('{user}', '{region}', '{session}', '{secure}')");
+
+    /// <summary>Registers a region with Robust the way a region does: its id and the address it reports (serverIP).</summary>
+    public Task AddRegion(Guid id, string serverIp) =>
+        Sql($"INSERT INTO `robust`.`regions` (`uuid`, `regionName`, `serverIP`) VALUES ('{id}', 'R{id.ToString()[..4]}', '{serverIp}')");
 
     /// <summary>Records a hypergrid visitor the way the Gatekeeper does: GridUser.UserID = "uuid;HomeURI;First Last".</summary>
     public Task AddVisitor(Guid id, string home, string name = "Ann Smith", long login = 1000) =>

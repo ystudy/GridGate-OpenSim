@@ -589,7 +589,7 @@ public sealed class MoneyServiceTests(MoneyMariaDb maria) : IClassFixture<MoneyM
             }
     }
 
-    private sealed class QueueLoggerProvider(ConcurrentQueue<string> sink) : ILoggerProvider
+    internal sealed class QueueLoggerProvider(ConcurrentQueue<string> sink) : ILoggerProvider
     {
         public ILogger CreateLogger(string categoryName) => new QueueLogger(sink, categoryName);
 
