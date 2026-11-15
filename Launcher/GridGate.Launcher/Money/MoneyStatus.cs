@@ -10,12 +10,23 @@ public sealed class MoneyStatus
 {
     private readonly Lock _gate = new();
     private string? _serviceError;
+    private bool _serviceRunning;
     private (DateTimeOffset At, SelfCheckResult Result)? _lastCheck;
 
     public string? ServiceError
     {
         get { lock (_gate) return _serviceError; }
         set { lock (_gate) _serviceError = value; }
+    }
+
+    /// <summary>
+    /// Whether the money service started in this run. Money turned on after GridGate started isn't running until a restart
+    /// (plan 5 starts and stops it with the mode); the dashboard says so instead of reporting a database fault.
+    /// </summary>
+    public bool ServiceRunning
+    {
+        get { lock (_gate) return _serviceRunning; }
+        set { lock (_gate) _serviceRunning = value; }
     }
 
     public (DateTimeOffset At, SelfCheckResult Result)? LastCheck

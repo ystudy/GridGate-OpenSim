@@ -107,6 +107,7 @@ internal static class MoneyRules
         "not_allowed" => "TRANSFERS_DISABLED",
         "over_daily_limit" => "THROTTLED",
         "bad_amount" => "INVALID_AMOUNT",
+        "visitors_off" => "LINDENDOLLAR_ENTITYDOESNOTEXIST",
         _ => "SERVICE_ERROR",
     };
 
@@ -125,7 +126,10 @@ internal static class MoneyRules
     public static string Message(string code) => code switch
     {
         "not_enough" => "You don't have enough coins for that.",
-        "frozen" or "account_frozen" => "Payments are paused on this grid right now.",
+        "frozen" => "Payments are paused on this grid right now.",
+        "account_frozen" => "Your coins are frozen. Please contact the grid's staff.",
+        "visitors_off" => VisitorsOffText,
+        UnpairedMoneyService.Code => "This region isn't connected to the grid's money yet.",
         "unavailable" => "Money is unavailable right now. Please try again later.",
         "no_wallet" => "That person can't receive coins on this grid.",
         "no_session" or "wrong_region" => "Please log in again to use money here.",

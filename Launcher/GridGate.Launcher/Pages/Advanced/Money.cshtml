@@ -1,0 +1,46 @@
+@page "/advanced/money"
+@model GridGate.Launcher.Pages.Advanced.MoneyModel
+@{
+    ViewData["Title"] = "Money";
+}
+<nav aria-label="breadcrumb"><ol class="breadcrumb"><li class="breadcrumb-item"><a href="/advanced">Settings</a></li><li class="breadcrumb-item active" aria-current="page">@ViewData["Title"]</li></ol></nav>
+<h1>Money<help-tip class="help-start">This Region Server's regions take the grid's coins once it is paired with the Grid Asset Server's money.</help-tip></h1>
+<error-box text="@Model.Error" />
+<ok-box text="@Model.Notice" />
+<section class="work-panel" aria-labelledby="rs-money-title">
+    <h2 id="rs-money-title" class="panel-title">The grid's money</h2>
+    <p id="rs-money-mode">@Model.ModeText</p>
+    @if (Model.CanPair)
+    {
+        <p id="rs-money-state">
+            @switch (Model.State)
+            {
+                case GridGate.Launcher.Pages.Advanced.MoneyModel.PairState.Paired:
+                    @:Paired on @Model.PairedAt!.Value.ToString("yyyy-MM-dd").
+                    break;
+                case GridGate.Launcher.Pages.Advanced.MoneyModel.PairState.CertificateChanged:
+                    @:The grid's money certificate changed: pair again.
+                    break;
+                default:
+                    @:Not paired: these regions refuse payments.
+                    break;
+            }
+        </p>
+        <form method="post" action="/advanced/money?handler=Pair" asp-antiforgery="true" class="mb-3">
+            <label class="form-label" for="rs-money-code">Pairing code<help-tip>Make one on the Grid Asset Server's Money page, under Region Servers. It works once, for 15 minutes.</help-tip></label>
+            <input class="form-control mb-2" id="rs-money-code" name="Code" maxlength="32" autocomplete="off" spellcheck="false" placeholder="7K2M-9QXD-4HTB-ZW3R" required>
+            <button type="submit" class="btn btn-primary">Pair</button>
+        </form>
+        @if (Model.State != GridGate.Launcher.Pages.Advanced.MoneyModel.PairState.NotPaired)
+        {
+            <div class="d-flex flex-wrap gap-2">
+                <form method="post" action="/advanced/money?handler=Check" asp-antiforgery="true">
+                    <button type="submit" class="btn btn-outline-secondary">Check</button>
+                </form>
+                <form method="post" action="/advanced/money?handler=Unpair" asp-antiforgery="true">
+                    <button type="submit" class="btn btn-outline-danger">Unpair</button>
+                </form>
+            </div>
+        }
+    }
+</section>

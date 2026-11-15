@@ -76,6 +76,17 @@ public class PlanCatalogTests
     }
 
     [Fact]
+    public void Public_plans_say_not_to_forward_the_money_port()
+    {
+        const string Sentence = "Never forward the money port (8000 unless you changed it): only this computer and your network's Region Servers may reach it.";
+        Assert.Contains(Sentence, PlanCatalog.Get(OwnerPlan.SimplePublic).Advisories);
+        Assert.Contains(Sentence, PlanCatalog.Get(OwnerPlan.GridAsset).Advisories);
+        Assert.Contains(Sentence, PlanCatalog.AdvisoriesFor(PlanCatalog.Get(OwnerPlan.GridAsset), publicAddress: false));
+        Assert.Contains(Sentence, PlanCatalog.AdvisoriesFor(PlanCatalog.Get(OwnerPlan.GridAsset), publicAddress: true));
+        Assert.DoesNotContain(Sentence, PlanCatalog.Get(OwnerPlan.Local).Advisories);
+    }
+
+    [Fact]
     public void Hypergrid_capability_per_plan()
     {
         Assert.Equal(HypergridCapability.None, PlanCatalog.Get(OwnerPlan.Local).Hypergrid);

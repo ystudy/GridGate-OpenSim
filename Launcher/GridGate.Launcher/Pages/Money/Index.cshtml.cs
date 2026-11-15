@@ -19,7 +19,7 @@ namespace GridGate.Launcher.Pages.Money;
 /// and the owner may change anything (each POST checks), and every change is audited.
 /// </summary>
 public sealed class IndexModel(IGridController grid, MoneyGate gate, IMoneyBooks books, MoneyStatus status, AuditLog audit, IRobustClient robust,
-    IPeopleDirectory people, TimeProvider time)
+    IPeopleDirectory people, IVisitorDirectory visitors, MoneyPairing pairing, TimeProvider time)
     : PageModel
 {
     public IReadOnlyList<MoneyMode> Offered { get; private set; } = [];
@@ -39,6 +39,21 @@ public sealed class IndexModel(IGridController grid, MoneyGate gate, IMoneyBooks
     [BindProperty(SupportsGet = true)] public string? Q { get; set; }
 
     public IReadOnlyList<PersonRow> Found { get; private set; } = [];
+    public IReadOnlyList<VisitorInfo> FoundVisitors { get; private set; } = [];
+
+    /// <summary>The Region Servers section: a Grid Asset Server whose ledger runs (money plan 3).</summary>
+    public bool ShowServers { get; private set; }
+    public IReadOnlyList<PairedServer> Servers { get; private set; } = [];
+    public DateTimeOffset? PairingUntil { get; private set; }
+
+    /// <summary>A pairing code just made: shown once, on this answer only.</summary>
+    public string? NewCode { get; private set; }
+
+    /// <summary>The most visitors Find a person shows.</summary>
+    public const int MaxVisitorsFound = 50;
+
+    public static string VisitorLabel(VisitorInfo v) =>
+        $"{v.Name} (visitor from {(Uri.TryCreate(v.Home, UriKind.Absolute, out var u) ? u.Host : v.Home)})";
     public bool SearchDown { get; private set; }
 
     public static string N(long n) => n.ToString("N0", System.Globalization.CultureInfo.InvariantCulture);
@@ -79,6 +94,56 @@ public sealed class IndexModel(IGridController grid, MoneyGate gate, IMoneyBooks
         }
         await ShowAsync(ct);
         return Page();
+    }
+
+    public async Task<IActionResult> OnPostPairingCodeAsync(CancellationToken ct)
+    {
+        if (!Admin) return StatusCode(StatusCodes.Status403Forbidden);
+        if (!await GuardServersAsync(ct)) return Page();
+        var (code, _) = pairing.Issue();
+        NewCode = PairingCode.Show(code);
+        audit.Write(User, Ip, "money-pairing-code", "money", "ok");
+        await ShowAsync(ct);
+        return Page();
+    }
+
+    public async Task<IActionResult> OnPostPairingCancelAsync(CancellationToken ct)
+    {
+        if (!Admin) return StatusCode(StatusCodes.Status403Forbidden);
+        if (!await GuardServersAsync(ct)) return Page();
+        pairing.Cancel();
+        audit.Write(User, Ip, "money-pairing-cancel", "money", "ok");
+        Notice = "The pairing code was cancelled.";
+        await ShowAsync(ct);
+        return Page();
+    }
+
+    public async Task<IActionResult> OnPostRemoveServerAsync(Guid server, CancellationToken ct)
+    {
+        if (!Admin) return StatusCode(StatusCodes.Status403Forbidden);
+        if (!await GuardServersAsync(ct)) return Page();
+        var gone = grid.CurrentSettings().Money.PairedServers?.FirstOrDefault(p => p.Id == server);
+        if (gone is null)
+        {
+            Error = "That Region Server isn't paired.";
+        }
+        else
+        {
+            grid.UpdateSettings(s => s with { Money = s.Money with { PairedServers = (s.Money.PairedServers ?? []).Where(p => p.Id != server).ToList() } },
+                writeConfig: false);
+            audit.Write(User, Ip, "money-pairing-remove", LogText.Clean(gone.Host), "ok");
+            Notice = "Removed. Its regions can't take payments until it's paired again.";
+        }
+        await ShowAsync(ct);
+        return Page();
+    }
+
+    private async Task<bool> GuardServersAsync(CancellationToken ct)
+    {
+        if (gate.ServiceHere && grid.CurrentSettings().Plan == OwnerPlan.GridAsset) return true;
+        Error = "Region Servers pair only with a Grid Asset Server whose money is on.";
+        await ShowAsync(ct);
+        return false;
     }
 
     public async Task<IActionResult> OnPostCheckAsync(CancellationToken ct)
@@ -167,7 +232,8 @@ public sealed class IndexModel(IGridController grid, MoneyGate gate, IMoneyBooks
         else
         {
             var r = await books.MoveFeesAsync(AccountRef.Resident(account.PrincipalId), amount, Staff(reason), ct);
-            audit.Write(User, Ip, "money-move-fees", LogText.Clean(account.FullName()), MoneyPageRules.Code(r.Outcome));
+            audit.Write(User, Ip, "money-move-fees", LogText.Clean(account.FullName()),
+                MoneyPageRules.Code(r.Outcome) + " " + amount.ToString(System.Globalization.CultureInfo.InvariantCulture));
             Done(r.Outcome);
         }
         await ShowAsync(ct);
@@ -191,7 +257,7 @@ public sealed class IndexModel(IGridController grid, MoneyGate gate, IMoneyBooks
     /// <summary>The ledger's actions exist only while money is on.</summary>
     private async Task<bool> GuardOnAsync(CancellationToken ct)
     {
-        if (gate.On) return true;
+        if (gate.ServiceHere) return true;
         Error = "Money is off.";
         await ShowAsync(ct);
         return false;
@@ -201,16 +267,21 @@ public sealed class IndexModel(IGridController grid, MoneyGate gate, IMoneyBooks
     {
         Saved = grid.CurrentSettings().Money;
         Offered = MoneyPageRules.Offered(gate);
-        On = gate.On;
+        On = gate.ServiceHere;
         CanChange = Admin;
         if (!On) return;
         LastCheck = status.LastCheck;
+        ShowServers = grid.CurrentSettings().Plan == OwnerPlan.GridAsset;
+        Servers = Saved.PairedServers ?? [];
+        PairingUntil = pairing.PendingUntil;
         if (!string.IsNullOrWhiteSpace(Q))
             try
             {
-                Found = (await people.SearchAsync(Q.Trim(), PeopleFilter.Everyone, [], int.MaxValue, 1, ct)).Rows;
+                // The first page of residents (the directory's page size); the staff level is unused for Everyone.
+                Found = (await people.SearchAsync(Q.Trim(), PeopleFilter.Everyone, [], staffLevel: 0, page: 1, ct)).Rows;
+                FoundVisitors = await visitors.SearchAsync(Q.Trim(), MaxVisitorsFound, ct);
             }
-            catch (PeopleDirectoryUnavailableException)
+            catch (Exception e) when (e is PeopleDirectoryUnavailableException or MoneyUnavailableException)
             {
                 SearchDown = true;
             }

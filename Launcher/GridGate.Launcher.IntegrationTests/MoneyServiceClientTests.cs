@@ -56,7 +56,7 @@ public sealed class MoneyServiceClientTests(MoneyMariaDb maria) : IClassFixture<
         };
         var time = TimeProvider.System;
         var presence = new PresenceCheck(MoneyConnections.Robust(() => settings));
-        var ledger = new MoneyLedger(MoneyConnections.Money(() => settings), () => settings.Money, () => MoneyMode.Play, presence.IsLocalUserAsync, time);
+        var ledger = new MoneyLedger(MoneyConnections.Money(() => settings), () => settings.Money, () => MoneyMode.Play, presence.IsLocalUserAsync, presence.IsKnownVisitorAsync, time);
         Directory.CreateDirectory(_dir);
         var cert = MoneyCertificate.LoadOrCreate(Path.Combine(_dir, MoneyCertificate.FileName), time);
         _fingerprint = MoneyCertificate.Fingerprint(cert);

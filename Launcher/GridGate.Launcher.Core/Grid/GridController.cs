@@ -1644,7 +1644,7 @@ public sealed partial class GridController(
     {
         // Every program needs its own region key before its INI names the money module (money design §7.2). New keys
         // are saved first, so the service that reads them and the INI never disagree.
-        if (_money(s.Money) != MoneyMode.Off && MoneyKeys.EnsureProgramKeys(s) is var keyed && !ReferenceEquals(keyed, s))
+        if (MoneyPlace.ServiceHere(s, _money) && MoneyKeys.EnsureProgramKeys(s) is var keyed && !ReferenceEquals(keyed, s))
         {
             store.Save(keyed);
             _settings = keyed;
@@ -1721,7 +1721,9 @@ public sealed partial class GridController(
         await StartComponentAsync(_db!, ct);
         await new DatabaseProvisioner(s).EnsureAsync(ct);
         // The money database, once money is approved and turned on (money design §7.1); nothing while it is Off.
-        await MoneyStartup.TryPrepareAsync(s, change => UpdateSettings(change, writeConfig: false), _money(s.Money),
+        // Only where the ledger runs: a Region Server's leftover money settings never make a money database (money plan 3).
+        await MoneyStartup.TryPrepareAsync(s, change => UpdateSettings(change, writeConfig: false),
+            MoneyPlace.ServiceHere(s, _money) ? MoneyPlace.GridMode(s, _money) : MoneyMode.Off,
             _log ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance, ct);
     }
 

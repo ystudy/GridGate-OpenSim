@@ -15,7 +15,7 @@ public sealed class MoneyPagesOnlyAttribute : Attribute, IAuthorizationFilter, I
 
     public void OnAuthorization(AuthorizationFilterContext context)
     {
-        if (!context.HttpContext.RequestServices.GetRequiredService<MoneyGate>().On)
+        if (!context.HttpContext.RequestServices.GetRequiredService<MoneyGate>().ServiceHere)
             context.Result = new NotFoundResult();
     }
 }

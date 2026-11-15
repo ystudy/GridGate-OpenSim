@@ -39,8 +39,16 @@ public static class JoinForm
             : $"The Grid Asset Server runs GridGate {found.Version}, and this computer runs GridGate {LauncherVersion.Current}. "
               + "Both computers should run the same version. You can still join, but update the older one when you can.";
 
-    /// <summary>The settings after joining <paramref name="read"/>: the join itself, and the grid's name as this computer's.</summary>
-    public static LauncherSettings Apply(LauncherSettings s, JoinedGrid read) => s with { Join = read, GridName = read.GridName };
+    /// <summary>
+    /// The settings after joining <paramref name="read"/>: the join itself, and the grid's name as this computer's. A money
+    /// pairing with another Grid Asset Server is dropped: its key works only there (money plan 3).
+    /// </summary>
+    public static LauncherSettings Apply(LauncherSettings s, JoinedGrid read) => s with
+    {
+        Join = read,
+        GridName = read.GridName,
+        Money = s.Money.Pairing is { } p && !string.Equals(p.GridHost, read.Host, StringComparison.OrdinalIgnoreCase) ? s.Money with { Pairing = null } : s.Money,
+    };
 }
 
 /// <summary>What Pages/Shared/_JoinFound.cshtml shows: the join information read, and the address to read again on confirm.</summary>

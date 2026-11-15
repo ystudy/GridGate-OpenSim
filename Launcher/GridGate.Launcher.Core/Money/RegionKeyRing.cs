@@ -4,8 +4,12 @@ using GridGate.Launcher.Core.Settings;
 
 namespace GridGate.Launcher.Core.Money;
 
-/// <summary>What a valid region key may act for: the regions of one program (money design §7.2).</summary>
-public sealed record RegionKeyGrant(string KeyId, IReadOnlySet<Guid> Regions);
+/// <summary>
+/// What a valid region key may act for: the regions of one program (money design §7.2). A paired Region Server's grant
+/// names its <paramref name="ServerHost"/> instead; the service fills in its regions from Robust on each request (money
+/// plan 3).
+/// </summary>
+public sealed record RegionKeyGrant(string KeyId, IReadOnlySet<Guid> Regions, string? ServerHost = null, int FromPort = 0, int ToPort = 65536);
 
 /// <summary>
 /// The region keys the money service accepts. Keys are compared by their SHA-256 hashes in constant time. Local programs'
@@ -18,13 +22,30 @@ public sealed class RegionKeyRing
 
     private RegionKeyRing(List<(byte[] Hash, RegionKeyGrant Grant)> keys) => _keys = keys;
 
-    /// <summary>One grant per program key, covering that program's regions that aren't deleted.</summary>
+    private static readonly IReadOnlySet<Guid> NoRegions = new HashSet<Guid>();
+
+    /// <summary>
+    /// One grant per program key, covering that program's regions that aren't deleted; and one per paired Region Server,
+    /// from its stored hash.
+    /// </summary>
     public static RegionKeyRing FromSettings(LauncherSettings s) =>
         new(s.Money.Keys
             .Where(k => k.Value.Length > 0)
             .Select(k => (Hash(k.Value), new RegionKeyGrant(k.Key,
                 s.Regions.Where(r => r.Instance == k.Key && r.DeletedAt is null).Select(r => r.Uuid).ToHashSet())))
+            .Concat((s.Money.PairedServers ?? [])
+                .Where(p => p.KeyHash.Length == 64)
+                .Select(p => (Convert.FromHexString(p.KeyHash), new RegionKeyGrant("server:" + p.Id.ToString("N"), NoRegions, p.Host,
+                    p.FirstPort, NextFirstPort(s.Money.PairedServers!, p)))))
             .ToList());
+
+    /// <summary>
+    /// Where <paramref name="p"/>'s ports end: the next paired server's first port on the same address, or past the last
+    /// port when there is none.
+    /// </summary>
+    private static int NextFirstPort(List<PairedServer> all, PairedServer p) =>
+        all.Where(o => o.Id != p.Id && string.Equals(o.Host, p.Host, StringComparison.OrdinalIgnoreCase) && o.FirstPort > p.FirstPort)
+            .Select(o => o.FirstPort).DefaultIfEmpty(65536).Min();
 
     public bool TryAuthenticate(string? presented, out RegionKeyGrant? grant)
     {

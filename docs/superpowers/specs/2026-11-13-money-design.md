@@ -281,6 +281,7 @@ All on the Money page (§9), stored in the launcher settings under the money mod
   that server's regions. The Money page lists paired Region Servers, and the owner can remove one, which ends its key at once.
 - If the Region Server isn't paired, its regions run with money refused ("this region isn't connected to the grid's money yet").
 - Gloebit on a Region Server: the owner enters the Gloebit settings on that computer too. Gloebit runs inside each region.
+- Plan 3 settled the pairing details: see `docs/superpowers/plans/2026-11-14-money-plan3-visitors-region-servers.md`, Decisions.
 
 ### 7.8 Small changes to OpenSim itself (call)
 

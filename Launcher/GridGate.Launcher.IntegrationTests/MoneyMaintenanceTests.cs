@@ -79,7 +79,7 @@ public sealed class MoneyMaintenanceTests(MoneyMariaDb maria) : IClassFixture<Mo
     private static MoneyLedger Flaky(MoneyTestDatabase db, Func<bool> up, Func<CancellationToken, Task<MySqlConnector.MySqlConnection>> down, Microsoft.Extensions.Time.Testing.FakeTimeProvider time)
     {
         var s = new MoneySettings(Mode: MoneyMode.Play);
-        return new MoneyLedger(ct => up() ? db.OpenMoney(ct) : down(ct), () => s, () => MoneyMode.Play, MoneyLedgerTransferTests.LocalUsers(db), time);
+        return new MoneyLedger(ct => up() ? db.OpenMoney(ct) : down(ct), () => s, () => MoneyMode.Play, MoneyLedgerTransferTests.LocalUsers(db), MoneyLedgerTransferTests.KnownVisitors(db), time);
     }
 
     [Fact]

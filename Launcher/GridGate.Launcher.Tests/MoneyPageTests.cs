@@ -38,6 +38,15 @@ internal sealed class FakeBooks : IMoneyBooks
     }
 
     public Task<MoneyResult> BalanceAsync(AccountRef who, CancellationToken ct) => Moved($"balance {who.AgentId}");
+    /// <summary>What <see cref="FindBalanceAsync"/> answers: Ok with <see cref="Balance"/> unless set.</summary>
+    public MoneyOutcome FindOutcome { get; set; } = MoneyOutcome.Ok;
+    public Task<MoneyResult> FindBalanceAsync(AccountRef who, CancellationToken ct)
+    {
+        Up($"find {who.AgentId}");
+        return Task.FromResult(FindOutcome == MoneyOutcome.Ok ? new MoneyResult(MoneyOutcome.Ok, Balance) : MoneyResult.Of(FindOutcome));
+    }
+    public Task<MoneyResult> MergeWalletsAsync(AccountRef from, AccountRef to, StaffAction who, CancellationToken ct) =>
+        Moved($"merge {from.AgentId} {from.Home} -> {to.Home}", who);
     public Task<IReadOnlyList<HistoryLine>> HistoryAsync(AccountRef who, int max, CancellationToken ct)
     {
         Up($"history {who.AgentId} {max}");
@@ -81,6 +90,22 @@ internal sealed class FakeBooks : IMoneyBooks
     }
 }
 
+/// <summary>Robust's record of hypergrid visitors, faked for the money pages: answers from <see cref="Known"/>.</summary>
+internal sealed class FakeVisitors : IVisitorDirectory
+{
+    public List<VisitorInfo> Known { get; } = [];
+    public List<string> Calls { get; } = [];
+
+    public Task<IReadOnlyList<VisitorInfo>> SearchAsync(string text, int max, CancellationToken ct)
+    {
+        Calls.Add($"search {text} {max}");
+        return Task.FromResult<IReadOnlyList<VisitorInfo>>(Known.Where(v => v.Name.Contains(text, StringComparison.OrdinalIgnoreCase)).Take(max).ToList());
+    }
+
+    public Task<VisitorInfo?> FindAsync(Guid id, string home, CancellationToken ct) =>
+        Task.FromResult(Known.FirstOrDefault(v => v.Id == id && MoneyHomes.Normal(v.Home) == MoneyHomes.Normal(home)));
+}
+
 /// <summary>The Money staff page, the person page and the dashboard's money notices (money plan 2, task 9).</summary>
 public sealed class MoneyPageTests
 {
@@ -88,12 +113,16 @@ public sealed class MoneyPageTests
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
     private static readonly HtmlParser Parser = new();
 
-    private static LauncherFactory Make(FakeBooks books, bool open = true, Func<MoneySettings, MoneySettings>? money = null)
+    private static readonly Guid Hope = Guid.Parse("c0000000-0000-0000-0000-0000000000c1");
+    private const string HopeHome = "http://grid.example:8002/";
+
+    private static LauncherFactory Make(FakeBooks books, bool open = true, Func<MoneySettings, MoneySettings>? money = null, FakeVisitors? visitors = null,
+        OwnerPlan plan = OwnerPlan.Local)
     {
         var f = new LauncherFactory(s => s with
         {
             SetupToken = null,
-            Plan = OwnerPlan.Local,
+            Plan = plan,
             Setup = s.Setup with { WorldNamed = true, OwnerCreated = true, Finished = true, Owner = new OwnerInfo("Test", "Owner", TestAuth.OwnerId) },
             Money = money?.Invoke(new MoneySettings(Mode: MoneyMode.Play)) ?? new MoneySettings(Mode: MoneyMode.Play),
             MoneyPort = 0,
@@ -104,6 +133,8 @@ public sealed class MoneyPageTests
             {
                 services.RemoveAll<IMoneyBooks>();
                 services.AddSingleton<IMoneyBooks>(books);
+                services.RemoveAll<IVisitorDirectory>();
+                services.AddSingleton<IVisitorDirectory>(visitors ?? new FakeVisitors());
                 if (open)
                 {
                     services.RemoveAll<MoneyGate>();
@@ -405,7 +436,199 @@ public sealed class MoneyPageTests
         using var r = await PostAsync(await SignedInAsync(f), $"/money/person?id={Ann}", "Give", new() { ["Amount"] = "25", ["Reason"] = "gift" });
 
         Assert.NotNull((await ParseAsync(r)).QuerySelector(".alert-danger"));
-        Assert.Contains(Audit(f), a => a.GetProperty("action").GetString() == "money-give" && a.GetProperty("result").GetString() == "frozen");
+        Assert.Contains(Audit(f), a => a.GetProperty("action").GetString() == "money-give" && a.GetProperty("result").GetString() == "frozen 25");
+    }
+
+    [Fact]
+    public async Task Opening_a_person_creates_no_wallet()
+    {
+        var books = new FakeBooks();
+        await using var f = Make(books);
+
+        await PageAsync(await SignedInAsync(f), $"/money/person?id={Ann}");
+
+        Assert.Contains($"find {Ann}", books.Calls);
+        Assert.DoesNotContain(books.Calls, c => c.StartsWith("balance"));
+    }
+
+    [Fact]
+    public async Task Resident_without_wallet_says_so()
+    {
+        var books = new FakeBooks { FindOutcome = MoneyOutcome.NoWallet };
+        await using var f = Make(books);
+
+        var text = MainText(await PageAsync(await SignedInAsync(f), $"/money/person?id={Ann}"));
+
+        Assert.Contains("No wallet yet. Giving coins makes one.", text);
+    }
+
+    [Fact]
+    public async Task Made_up_visitor_home_is_404()
+    {
+        var books = new FakeBooks { FindOutcome = MoneyOutcome.NoWallet };
+        await using var f = Make(books);
+        var c = await SignedInAsync(f);
+
+        using var r = await c.GetAsync($"/money/person?id={Hope}&home=" + Uri.EscapeDataString("http://made.up/"), Ct);
+
+        Assert.Equal(HttpStatusCode.NotFound, r.StatusCode);
+        Assert.DoesNotContain(books.Calls, x => x.StartsWith("balance") || x.StartsWith("give"));
+    }
+
+    [Fact]
+    public async Task Known_visitor_without_wallet_is_shown()
+    {
+        var visitors = new FakeVisitors();
+        visitors.Known.Add(new VisitorInfo(Hope, HopeHome, "Hope Visitor"));
+        await using var f = Make(new FakeBooks { FindOutcome = MoneyOutcome.NoWallet }, visitors: visitors);
+
+        var text = MainText(await PageAsync(await SignedInAsync(f), $"/money/person?id={Hope}&home=" + Uri.EscapeDataString("http://GRID.example:8002")));
+
+        Assert.Contains("Hope Visitor (visitor from grid.example)", text);
+        Assert.Contains("No wallet yet. Giving coins makes one.", text);
+    }
+
+    [Fact]
+    public async Task Visitor_with_a_wallet_but_no_record_is_still_shown()
+    {
+        await using var f = Make(new FakeBooks { Balance = 7 });
+
+        var text = MainText(await PageAsync(await SignedInAsync(f), $"/money/person?id={Hope}&home=" + Uri.EscapeDataString(HopeHome)));
+
+        Assert.Contains("Visitor from grid.example", text);
+        Assert.Contains("7", text);
+    }
+
+    [Fact]
+    public async Task Find_shows_visitors()
+    {
+        var visitors = new FakeVisitors();
+        visitors.Known.Add(new VisitorInfo(Hope, HopeHome, "Hope Visitor"));
+        await using var f = Make(new FakeBooks(), visitors: visitors);
+
+        var doc = await PageAsync(await SignedInAsync(f), "/money?Q=Hope");
+
+        var link = Assert.Single(doc.QuerySelectorAll("#money-found a"), a => a.TextContent.Contains("Hope Visitor"));
+        Assert.Equal("Hope Visitor (visitor from grid.example)", link.TextContent.Trim());
+        Assert.Equal($"/money/person?id={Hope}&home=" + Uri.EscapeDataString(HopeHome), link.GetAttribute("href"));
+        Assert.Contains("search Hope 50", visitors.Calls);
+    }
+
+    [Fact]
+    public async Task Merge_is_audited_and_admin_only()
+    {
+        var books = new FakeBooks();
+        var visitors = new FakeVisitors();
+        visitors.Known.Add(new VisitorInfo(Hope, HopeHome, "Hope Visitor"));
+        await using var f = Make(books, visitors: visitors);
+        var page = $"/money/person?id={Hope}&home=" + Uri.EscapeDataString(HopeHome);
+
+        var supervisor = await SignedInAsync(f, "supervisor");
+        using (var r = await supervisor.PostAsync(page + "&handler=Merge", new FormUrlEncodedContent(new Dictionary<string, string>()), Ct))
+            Assert.NotEqual(HttpStatusCode.OK, r.StatusCode);
+        Assert.DoesNotContain(books.Calls, x => x.StartsWith("merge"));
+
+        using var ok = await PostAsync(await SignedInAsync(f), page, "Merge", new() { ["NewHome"] = "http://new.example:8002/", ["Reason"] = "grid moved" });
+
+        Assert.Contains($"merge {Hope} {HopeHome} -> http://new.example:8002/", books.Calls);
+        Assert.Contains(Audit(f), a => a.GetProperty("action").GetString() == "money-merge-wallet"
+            && a.GetProperty("target").GetString() == "Hope Visitor (visitor from grid.example)" && a.GetProperty("result").GetString() == "ok");
+    }
+
+    [Fact]
+    public async Task Merge_needs_a_home_and_a_reason()
+    {
+        var books = new FakeBooks();
+        var visitors = new FakeVisitors();
+        visitors.Known.Add(new VisitorInfo(Hope, HopeHome, "Hope Visitor"));
+        await using var f = Make(books, visitors: visitors);
+
+        using var r = await PostAsync(await SignedInAsync(f), $"/money/person?id={Hope}&home=" + Uri.EscapeDataString(HopeHome), "Merge",
+            new() { ["NewHome"] = "", ["Reason"] = "x" });
+
+        Assert.NotNull((await ParseAsync(r)).QuerySelector(".alert-danger"));
+        Assert.DoesNotContain(books.Calls, x => x.StartsWith("merge"));
+    }
+
+    [Fact]
+    public async Task Residents_get_no_merge_form()
+    {
+        await using var f = Make(new FakeBooks());
+
+        var doc = await PageAsync(await SignedInAsync(f), $"/money/person?id={Ann}");
+
+        Assert.Empty(doc.QuerySelectorAll("form[action*='handler=Merge']"));
+    }
+
+    [Fact]
+    public async Task Audit_lines_carry_the_amount()
+    {
+        await using var f = Make(new FakeBooks());
+
+        using var r = await PostAsync(await SignedInAsync(f), $"/money/person?id={Ann}", "Give", new() { ["Amount"] = "25", ["Reason"] = "gift" });
+
+        Assert.Contains(Audit(f), a => a.GetProperty("action").GetString() == "money-give" && a.GetProperty("result").GetString() == "ok 25");
+    }
+
+    [Fact]
+    public async Task Pairing_code_shown_once_and_audited_without_it()
+    {
+        await using var f = Make(new FakeBooks(), plan: OwnerPlan.GridAsset);
+        var c = await SignedInAsync(f);
+
+        using var made = await PostAsync(c, "/money", "PairingCode", []);
+        var code = (await ParseAsync(made)).QuerySelector("#money-pairing-code code")?.TextContent.Trim();
+
+        Assert.NotNull(code);
+        Assert.Matches("^[0-9A-Z]{4}-[0-9A-Z]{4}-[0-9A-Z]{4}-[0-9A-Z]{4}$", code);
+        var line = Assert.Single(Audit(f), a => a.GetProperty("action").GetString() == "money-pairing-code");
+        Assert.DoesNotContain(code!.Replace("-", ""), line.GetRawText().Replace("-", ""));
+        var again = await PageAsync(c, "/money");
+        Assert.Null(again.QuerySelector("#money-pairing-code"));
+        Assert.NotNull(again.QuerySelector("#money-pairing-waiting"));
+        Assert.DoesNotContain(code, again.DocumentElement.OuterHtml);
+    }
+
+    [Fact]
+    public async Task Region_servers_section_only_on_grid_asset()
+    {
+        await using var local = Make(new FakeBooks());
+        Assert.Null((await PageAsync(await SignedInAsync(local), "/money")).QuerySelector("#money-servers"));
+
+        await using var gas = Make(new FakeBooks(), plan: OwnerPlan.GridAsset);
+        Assert.NotNull((await PageAsync(await SignedInAsync(gas), "/money")).QuerySelector("#money-servers"));
+
+        await using var closed = Make(new FakeBooks(), open: false, plan: OwnerPlan.GridAsset);
+        Assert.Null((await PageAsync(await SignedInAsync(closed), "/money")).QuerySelector("#money-servers"));
+    }
+
+    [Fact]
+    public async Task Pairing_code_refused_off_grid_asset()
+    {
+        await using var f = Make(new FakeBooks());
+
+        using var r = await PostAsync(await SignedInAsync(f), "/money", "PairingCode", []);
+
+        Assert.Null((await ParseAsync(r)).QuerySelector("#money-pairing-code"));
+        Assert.Null(f.Services.GetRequiredService<MoneyPairing>().PendingUntil);
+    }
+
+    [Fact]
+    public async Task Remove_paired_server_is_admin_only_and_audited()
+    {
+        var id = Guid.NewGuid();
+        await using var f = Make(new FakeBooks(), plan: OwnerPlan.GridAsset,
+            money: m => m with { PairedServers = [new PairedServer(id, "192.168.1.20", new string('A', 64), DateTimeOffset.UtcNow)] });
+        var c = await SignedInAsync(f);
+        Assert.Contains("192.168.1.20", (await PageAsync(c, "/money")).QuerySelector("#money-paired")!.TextContent);
+
+        var supervisor = await SignedInAsync(f, "supervisor");
+        Assert.Empty((await PageAsync(supervisor, "/money")).QuerySelectorAll("#money-servers form"));
+
+        using var r = await PostAsync(c, "/money", "RemoveServer", new() { ["Server"] = id.ToString() });
+
+        Assert.Empty(f.Grid.CurrentSettings().Money.PairedServers ?? []);
+        Assert.Contains(Audit(f), a => a.GetProperty("action").GetString() == "money-pairing-remove" && a.GetProperty("target").GetString() == "192.168.1.20");
     }
 
     [Fact]
@@ -475,6 +698,7 @@ public sealed class MoneyPageTests
     public async Task Dashboard_shows_frozen_notice()
     {
         await using var f = Make(new FakeBooks { Frozen = (true, "test") });
+        f.Services.GetRequiredService<MoneyStatus>().ServiceRunning = true;
 
         var doc = await PageAsync(await SignedInAsync(f), "/dashboard");
 
@@ -488,6 +712,7 @@ public sealed class MoneyPageTests
     public async Task Dashboard_shows_service_failure()
     {
         await using var f = Make(new FakeBooks());
+        f.Services.GetRequiredService<MoneyStatus>().ServiceRunning = false;
         f.Services.GetRequiredService<MoneyStatus>().ServiceError = "IOException";
 
         var doc = await PageAsync(await SignedInAsync(f), "/dashboard");
@@ -497,9 +722,31 @@ public sealed class MoneyPageTests
     }
 
     [Fact]
+    public async Task Dashboard_says_money_starts_on_restart()
+    {
+        // Live check, plan 3: Play coins chosen while GridGate runs. The service and the money database start with GridGate,
+        // so until then the dashboard says that, calmly, and doesn't ask a database that doesn't exist yet.
+        var books = new FakeBooks { Down = true };
+        await using var f = Make(books);
+        var status = f.Services.GetRequiredService<MoneyStatus>();
+        status.ServiceRunning = false;
+        status.ServiceError = null;
+
+        var doc = await PageAsync(await SignedInAsync(f), "/dashboard");
+
+        var notice = doc.QuerySelector("#money-restart");
+        Assert.NotNull(notice);
+        Assert.Equal("Money was turned on after GridGate started. Payments start when GridGate restarts.", notice!.TextContent.Trim());
+        Assert.DoesNotContain("alert-danger", notice.ClassName);
+        Assert.Null(doc.QuerySelector("#money-database"));
+        Assert.Empty(books.Calls);
+    }
+
+    [Fact]
     public async Task Dashboard_shows_database_down()
     {
         await using var f = Make(new FakeBooks { Down = true });
+        f.Services.GetRequiredService<MoneyStatus>().ServiceRunning = true;
 
         var doc = await PageAsync(await SignedInAsync(f), "/dashboard");
 

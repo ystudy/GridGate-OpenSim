@@ -479,6 +479,24 @@ public sealed class GridControllerWiringTests : IAsyncDisposable
     }
 
     [Fact]
+    public void Region_server_makes_no_program_keys()
+    {
+        var grid = NewGrid(TimeProvider.System, moneyEffective: Core.Money.MoneyGate.Open);
+        _store.Save(_store.LoadOrCreate() with
+        {
+            Plan = OwnerPlan.RegionServer,
+            Join = new JoinedGrid("192.168.1.5", 8002, 8003, "Avalon", "http://192.168.1.5:8002/", "1.0", false, 8004, 8006,
+                Money: Core.Money.MoneyMode.Play),
+            Programs = [new ProgramSettings("p1", _ports[3] + 100, _ports[6] + 100)],
+            Money = new Core.Money.MoneySettings(Mode: Core.Money.MoneyMode.Play), // left over from an earlier plan
+        });
+
+        grid.RegenerateConfig();
+
+        Assert.Empty(_store.LoadOrCreate().Money.Keys);
+    }
+
+    [Fact]
     public void Write_config_makes_no_keys_while_money_is_off()
     {
         _store.Save(_store.LoadOrCreate() with

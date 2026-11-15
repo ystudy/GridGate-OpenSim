@@ -10,8 +10,6 @@ public static class MoneyPageRules
     public const long MaxMaxPayment = 1_000_000_000;
     public const int MaxReason = 200;
 
-    // Would break the INI line Robust reads it from ([LoginService] Currency) or the viewer's text.
-    private static readonly char[] SymbolForbidden = [';', '"', '=', '[', ']', '<', '>', '&', '\\'];
 
     /// <summary>The modes the page offers: Off, and Play once the gate lets it run. Real is plan 6 and Gloebit plan 4.</summary>
     public static IReadOnlyList<MoneyMode> Offered(MoneyGate gate) =>
@@ -21,7 +19,7 @@ public static class MoneyPageRules
     public static string? Problem(MoneySettings m, IReadOnlyList<MoneyMode> offered)
     {
         if (!offered.Contains(m.Mode)) return "That money mode isn't available here.";
-        if (m.CurrencySymbol.Length is < 1 or > 4 || m.CurrencySymbol.Any(c => char.IsWhiteSpace(c) || char.IsControl(c) || SymbolForbidden.Contains(c)))
+        if (!MoneySymbolRule.Valid(m.CurrencySymbol))
             return "The currency symbol must be 1 to 4 characters, with no spaces and none of ; \" = [ ] < > & \\.";
         if (m.CurrencyName.Trim().Length is < 1 or > 20 || m.CurrencyName.Any(char.IsControl))
             return "The currency name must be 1 to 20 characters.";
@@ -51,6 +49,7 @@ public static class MoneyPageRules
         MoneyOutcome.Unavailable => "The money database can't be reached. Try again later.",
         MoneyOutcome.BadAmount => "That amount or reason isn't allowed.",
         MoneyOutcome.NoWallet => "That person has no wallet here.",
+        MoneyOutcome.VisitorsOff => "Visitor wallets are off.",
         MoneyOutcome.DuplicateReference => "That entry was already refunded.",
         _ => "That couldn't be done (" + Code(o) + ").",
     };

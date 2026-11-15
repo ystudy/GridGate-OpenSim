@@ -13,7 +13,7 @@ namespace GridGate.Launcher.IntegrationTests;
 /// <summary>
 /// One MariaDB per test class (started once, like <see cref="RegionStoreTests"/> starts one per test). Each test asks
 /// <see cref="FreshAsync"/> for empty <c>money</c> and <c>robust</c> databases; <c>robust</c> holds only <c>Presence</c>
-/// (OpenSim's columns, Presence.migrations) and <c>UserAccounts</c> (the columns the money code reads).
+/// (OpenSim's columns, Presence.migrations) and <c>UserAccounts</c> and <c>GridUser</c> (the columns the money code reads).
 /// </summary>
 public sealed class MoneyMariaDb : IAsyncLifetime
 {
@@ -72,6 +72,20 @@ public sealed class MoneyMariaDb : IAsyncLifetime
               `PrincipalID` char(36) NOT NULL, `FirstName` varchar(64) NOT NULL, `LastName` varchar(64) NOT NULL,
               PRIMARY KEY (`PrincipalID`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+            CREATE TABLE `robust`.`regions` (
+              `uuid` VARCHAR(36) NOT NULL, `regionName` VARCHAR(128) NOT NULL DEFAULT '', `serverIP` VARCHAR(64) NOT NULL DEFAULT '',
+              `serverPort` INT(10) UNSIGNED DEFAULT NULL,
+              PRIMARY KEY (`uuid`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+            CREATE TABLE `robust`.`GridUser` (
+              `UserID` VARCHAR(255) NOT NULL,
+              `HomeRegionID` CHAR(36) NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000',
+              `LastRegionID` CHAR(36) NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000',
+              `Online` CHAR(5) NOT NULL DEFAULT 'false',
+              `Login` CHAR(16) NOT NULL DEFAULT '0',
+              `Logout` CHAR(16) NOT NULL DEFAULT '0',
+              PRIMARY KEY (`UserID`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=latin1;
             """);
         return db;
     }
@@ -168,4 +182,17 @@ public sealed class MoneyTestDatabase(LauncherSettings settings)
     /// <summary>Puts an avatar in a region, as Robust's presence service does at login or the Gatekeeper for a visitor.</summary>
     public Task AddPresence(Guid user, Guid region, Guid session, Guid secure) =>
         Sql($"INSERT INTO `robust`.`Presence` (`UserID`, `RegionID`, `SessionID`, `SecureSessionID`) VALUES ('{user}', '{region}', '{session}', '{secure}')");
+
+    /// <summary>Registers a region with Robust the way a region does: its id, the address it reports (serverIP) and its UDP port (serverPort).</summary>
+    public Task AddRegion(Guid id, string serverIp, int port = 9000) =>
+        Sql($"INSERT INTO `robust`.`regions` (`uuid`, `regionName`, `serverIP`, `serverPort`) VALUES ('{id}', 'R{id.ToString()[..4]}', '{serverIp}', {port})");
+
+    /// <summary>
+    /// Records a hypergrid visitor the way the Gatekeeper does: GridUser.UserID = "uuid;HomeURI;First Last". Like OpenSim's
+    /// GridUserService, a UUID keeps one row: a later arrival from another home updates the first row and keeps its UserID,
+    /// so the first home seen wins (review of plan 3, Important 1).
+    /// </summary>
+    public Task AddVisitor(Guid id, string home, string name = "Ann Smith", long login = 1000) =>
+        Sql($"INSERT INTO `robust`.`GridUser` (`UserID`, `Login`) SELECT '{id};{home};{name}', '{login}' FROM DUAL " +
+            $"WHERE NOT EXISTS (SELECT 1 FROM `robust`.`GridUser` WHERE `UserID` LIKE '{id}%')");
 }

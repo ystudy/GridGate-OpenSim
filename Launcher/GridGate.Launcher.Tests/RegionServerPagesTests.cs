@@ -442,6 +442,26 @@ public sealed class RegionServerPagesTests
     }
 
     [Fact]
+    public async Task Refused_repoint_keeps_the_money_pairing()
+    {
+        var pairing = new Core.Money.ServerPairing("192.168.1.5", new string('A', 64), "k", DateTimeOffset.UtcNow);
+        await using var f = Factory(OwnerPlan.RegionServer, s => s with
+        {
+            RegionPort = 9000,
+            Regions = [new RegionSettings("Home", "Home", HomeId, UdpPort: 9000)],
+            Money = new Core.Money.MoneySettings(Pairing: pairing),
+        });
+        f.Join.Result = Elsewhere();
+        f.Robust.MapRegions.Add(new MapRegion(Guid.NewGuid(), "Hub", 1000, 1000, 1));
+        using var client = await SignedInAsync(f);
+
+        using var resp = await PostAsync(client, "/advanced/join?handler=Confirm", new() { ["Address"] = "192.168.1.9" }, tokenFrom: "/advanced/join");
+
+        Assert.Contains("would overlap Hub", MainText(await resp.Content.ReadAsStringAsync(Ct)));
+        Assert.Equal(pairing, f.Store.LoadOrCreate().Money.Pairing);
+    }
+
+    [Fact]
     public async Task Join_page_confirm_is_saved_when_no_region_overlaps()
     {
         await using var f = WithHome();

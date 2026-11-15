@@ -7,6 +7,8 @@ namespace GridGate.Launcher.Core.Money;
 public interface IMoneyBooks
 {
     Task<MoneyResult> BalanceAsync(AccountRef who, CancellationToken ct);
+    Task<MoneyResult> FindBalanceAsync(AccountRef who, CancellationToken ct);
+    Task<MoneyResult> MergeWalletsAsync(AccountRef from, AccountRef to, StaffAction who, CancellationToken ct);
     Task<IReadOnlyList<HistoryLine>> HistoryAsync(AccountRef who, int max, CancellationToken ct);
     Task<AccountFlags?> AccountFlagsAsync(AccountRef who, CancellationToken ct);
     Task<MoneyTotals> TotalsAsync(CancellationToken ct);

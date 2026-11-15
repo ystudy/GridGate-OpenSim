@@ -141,6 +141,60 @@
                 </form>
             </section>
         }
+        @if (Model.ShowServers)
+        {
+            <section class="work-panel" id="money-servers" aria-labelledby="money-servers-title">
+                <h2 id="money-servers-title" class="panel-title">Region Servers<help-tip>A Region Server's regions take payments once it is paired here. Make a code here and type it on the Region Server's Money page.</help-tip></h2>
+                <p>A Region Server's key works only for its own regions, never for this computer's.</p>
+                @if (Model.NewCode is { } code)
+                {
+                    <div id="money-pairing-code" class="alert alert-info" role="status">
+                        <p class="fs-4 mb-1"><code>@code</code></p>
+                        <p class="mb-0">Type this on the Region Server's Money page within 15 minutes. It works once.</p>
+                    </div>
+                }
+                else if (Model.PairingUntil is { } until)
+                {
+                    <p id="money-pairing-waiting">A pairing code is waiting until @until.ToString("HH:mm") UTC.</p>
+                }
+                @if (Model.CanChange)
+                {
+                    <div class="d-flex flex-wrap gap-2 mb-3">
+                        <form method="post" action="/money?handler=PairingCode" asp-antiforgery="true">
+                            <button type="submit" class="btn btn-outline-secondary">Make a pairing code</button>
+                        </form>
+                        @if (Model.PairingUntil is not null && Model.NewCode is null)
+                        {
+                            <form method="post" action="/money?handler=PairingCancel" asp-antiforgery="true">
+                                <button type="submit" class="btn btn-outline-secondary">Cancel the code</button>
+                            </form>
+                        }
+                    </div>
+                }
+                @if (Model.Servers.Count == 0)
+                {
+                    <p class="mb-0">No Region Server is paired.</p>
+                }
+                else
+                {
+                    <ul id="money-paired" class="mb-0">
+                        @foreach (var server in Model.Servers)
+                        {
+                            <li>
+                                @server.Host@(server.FirstPort > 0 ? $", region ports from {server.FirstPort}" : ""), paired @server.PairedAt.ToString("yyyy-MM-dd")
+                                @if (Model.CanChange)
+                                {
+                                    <form method="post" action="/money?handler=RemoveServer" asp-antiforgery="true" class="d-inline">
+                                        <input type="hidden" name="Server" value="@server.Id">
+                                        <button type="submit" class="btn btn-sm btn-outline-danger">Remove</button>
+                                    </form>
+                                }
+                            </li>
+                        }
+                    </ul>
+                }
+            </section>
+        }
         <section class="work-panel" aria-labelledby="money-find-title">
             <h2 id="money-find-title" class="panel-title">Find a person</h2>
             <form method="get" action="/money" role="search">
@@ -158,6 +212,10 @@
                     @foreach (var p in Model.Found)
                     {
                         <li><a href="/money/person?id=@p.Account.PrincipalId">@p.Account.FullName()</a></li>
+                    }
+                    @foreach (var v in Model.FoundVisitors)
+                    {
+                        <li><a href="/money/person?id=@v.Id&home=@Uri.EscapeDataString(v.Home)">@IndexModel.VisitorLabel(v)</a></li>
                     }
                 </ul>
             }

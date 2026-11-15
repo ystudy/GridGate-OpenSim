@@ -73,6 +73,14 @@ public sealed class StaffMenuTests
     }
 
     [Fact]
+    public void Region_server_settings_have_its_money_page()
+    {
+        var money = StaffMenu.For(StaffRole.Admin, On(OwnerPlan.RegionServer), false).Single(g => g.Text == "Settings").Items.Single(i => i.Text == "Money");
+        Assert.Equal("/advanced/money", money.Href);
+        Assert.DoesNotContain("Money", Inside(StaffRole.Owner, OwnerPlan.Connected, "Settings"));
+    }
+
+    [Fact]
     public void Only_one_badge_shows()
     {
         foreach (var role in new[] { StaffRole.Owner, StaffRole.Admin, StaffRole.Supervisor })

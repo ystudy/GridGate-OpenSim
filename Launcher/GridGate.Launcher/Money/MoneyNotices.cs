@@ -2,8 +2,8 @@ using GridGate.Launcher.Core.Money;
 
 namespace GridGate.Launcher.Money;
 
-/// <summary>One red notice on the dashboard: its element id and its words.</summary>
-public sealed record MoneyNotice(string Id, string Text);
+/// <summary>One notice on the dashboard: its element id and its words. Red unless <paramref name="Info"/>.</summary>
+public sealed record MoneyNotice(string Id, string Text, bool Info = false);
 
 /// <summary>
 /// The dashboard's money notices (money plan 2, task 9; plan 1's deferred findings): the service didn't start, every
@@ -13,7 +13,10 @@ public sealed class MoneyNotices(MoneyGate gate, IMoneyBooks books, MoneyStatus 
 {
     public async Task<IReadOnlyList<MoneyNotice>> CurrentAsync(CancellationToken ct)
     {
-        if (!gate.On) return [];
+        if (!gate.ServiceHere) return [];
+        // Turned on after GridGate started: nothing has failed, the service and its database start with GridGate.
+        if (!status.ServiceRunning && status.ServiceError is null)
+            return [new("money-restart", "Money was turned on after GridGate started. Payments start when GridGate restarts.", Info: true)];
         var notices = new List<MoneyNotice>();
         if (status.ServiceError is not null)
             notices.Add(new("money-service",
