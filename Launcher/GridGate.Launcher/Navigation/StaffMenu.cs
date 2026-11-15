@@ -79,6 +79,8 @@ public static class StaffMenu
             (admin, new("Database", "/advanced/database", "/advanced/database")),
             (admin, new("Region defaults", "/advanced/regions", "/advanced/regions")),
             (staffPlans, new("Money", "/money", "/money")),
+            // A Region Server pairs with its grid's money here (money plan 3).
+            (admin && s.Plan == OwnerPlan.RegionServer, new("Money", "/advanced/money", "/advanced/money")),
             (admin, new("Logs", "/logs", "/logs")))));
 
         groups.Add(new(You, "/profile/sessions", Items(

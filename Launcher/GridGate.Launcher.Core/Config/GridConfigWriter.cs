@@ -49,7 +49,8 @@ public sealed class GridConfigWriter(LauncherPaths paths, Func<MoneySettings, Mo
         // Money and its helper belong to the grid that runs Robust; a server joined to another grid gets them by pairing
         // (money plan 3).
         var moneyHere = PlanCatalog.RunsRobust(s);
-        var money = MoneyPlace.ServiceHere(s, effective ?? MoneyRelease.Effective) ? MoneyFor(s) : null;
+        var gate = effective ?? MoneyRelease.Effective;
+        var money = MoneyPlace.ServiceHere(s, gate) ? MoneyFor(s) : RegionServerMoney(s, gate);
 
         // 1. Robust.HG.ini
         var robust = LoadProto(Path.Combine(rt, "Robust.HG.ini.proto"));
@@ -95,14 +96,16 @@ public sealed class GridConfigWriter(LauncherPaths paths, Func<MoneySettings, Mo
         // What a Region Server's regions need to follow this grid's money and to pair with it (money plan 3). No secret.
         if (moneyHere)
         {
-            robust.Set("GridInfoService", GridInfoKeys.Money, MoneyPlace.GridMode(s, effective ?? MoneyRelease.Effective).ToString().ToLowerInvariant());
-            if (money is not null)
+            robust.Set("GridInfoService", GridInfoKeys.Money, MoneyPlace.GridMode(s, gate).ToString().ToLowerInvariant());
+            if (money is { Fingerprint: not null })
             {
                 robust.Set("GridInfoService", GridInfoKeys.MoneyPort, s.MoneyPort.ToString(CultureInfo.InvariantCulture));
                 robust.Set("GridInfoService", GridInfoKeys.MoneyFingerprint, money.Fingerprint);
             }
         }
-        if (money is not null) robust.Set("LoginService", "Currency", s.Money.CurrencySymbol);
+        // Re-checked here as well as on the Money page: a hand-edited settings file must not break Robust's INI line.
+        if (moneyHere && money is not null)
+            robust.Set("LoginService", "Currency", MoneySymbolRule.Valid(s.Money.CurrencySymbol) ? s.Money.CurrencySymbol : MoneySymbolRule.Fallback);
         Finish(robust, "robust", extra, Path.Combine(rt, "Robust.HG.ini"));
 
         // 2. GridCommon.ini. A preset grid's own names each of its services; every other builds them from [Const].
@@ -114,6 +117,8 @@ public sealed class GridConfigWriter(LauncherPaths paths, Func<MoneySettings, Mo
         if (preset is null) SetOtherGatekeeper(common, s);
         // A region advertises this as currency-base-uri when no money module sets one (Scene.AllModulesLoaded).
         if (moneyHere) common.Set("GridInfo", "economy", WebsiteAddress.Economy(s));
+        // A Region Server's regions advertise its grid's helper, so visitors' Buy windows reach the right grid (money plan 3).
+        else if (s.Plan == OwnerPlan.RegionServer && s.Join?.Economy is { Length: > 0 } gridHelper) common.Set("GridInfo", "economy", gridHelper);
         Finish(common, "region", extra, Path.Combine(rt, "config-include", "GridCommon.ini"), applyExtra: false);
 
         // 3. FlotsamCache.ini
@@ -134,8 +139,12 @@ public sealed class GridConfigWriter(LauncherPaths paths, Func<MoneySettings, Mo
 
     private static readonly IReadOnlySet<Guid> NoRegions = new HashSet<Guid>();
 
-    /// <summary>What every program's money section shares: the service's address, its fingerprint and the helper's.</summary>
-    private sealed record MoneyIni(string ServiceUri, string Fingerprint, string HelperUri);
+    /// <summary>
+    /// What every program's money section shares: the service's address, its fingerprint and the helper's. A Region Server
+    /// gives every program its one <paramref name="SharedKey"/>; this computer's own programs each have their own key.
+    /// Not <paramref name="Paired"/>: a Region Server that hasn't paired yet, whose regions refuse payments (money plan 3).
+    /// </summary>
+    private sealed record MoneyIni(string? ServiceUri, string? Fingerprint, string HelperUri, string? SharedKey = null, bool Paired = true);
 
     private MoneyIni MoneyFor(LauncherSettings s)
     {
@@ -144,12 +153,36 @@ public sealed class GridConfigWriter(LauncherPaths paths, Func<MoneySettings, Mo
     }
 
     /// <summary>
+    /// A Region Server's money (money plan 3): its grid's service, when its grid has GridGate coins on. The pairing counts
+    /// only for the Grid Asset Server it joined and the certificate that server still publishes; otherwise the regions run
+    /// unpaired. Null when there is nothing to write (another plan, the grid's money off or Gloebit, or no helper known).
+    /// </summary>
+    private static MoneyIni? RegionServerMoney(LauncherSettings s, Func<MoneySettings, MoneyMode> gate)
+    {
+        if (s.Plan != OwnerPlan.RegionServer || s.Join is not { Economy: { Length: > 0 } helper } join) return null;
+        if (MoneyPlace.GridMode(s, gate) is not (MoneyMode.Play or MoneyMode.Real)) return null;
+        return s.Money.Pairing is { } p && p.Key.Length > 0 && string.Equals(p.GridHost, join.Host, StringComparison.OrdinalIgnoreCase)
+               && join.MoneyPort is { } port && join.MoneyFingerprint is { } published && string.Equals(p.Fingerprint, published, StringComparison.OrdinalIgnoreCase)
+            ? new MoneyIni($"https://{join.Host}:{port}/money/v1/", p.Fingerprint, helper, p.Key)
+            : new MoneyIni(null, null, helper, Paired: false);
+    }
+
+    /// <summary>
     /// The program's money settings (money plan 2, task 2), written last so the economymodule blanking and the owner's
     /// overrides can't undo them. A program without a key stays on OpenSim's own module.
     /// </summary>
     private static Action<IniDocument>? MoneySection(LauncherSettings s, string instance, MoneyIni? money)
     {
-        if (money is null || !s.Money.Keys.TryGetValue(instance, out var key) || key.Length == 0) return null;
+        if (money is null) return null;
+        if (!money.Paired)
+            return doc =>
+            {
+                doc.Set("Economy", "EconomyModule", MoneyModuleName);
+                doc.Set("GridGateMoney", "Paired", "false");
+                doc.Set("GridGateMoney", "HelperURI", money.HelperUri);
+            };
+        var key = money.SharedKey ?? (s.Money.Keys.TryGetValue(instance, out var own) ? own : null);
+        if (string.IsNullOrEmpty(key) || money.ServiceUri is null || money.Fingerprint is null) return null;
         return doc =>
         {
             doc.Set("Economy", "EconomyModule", MoneyModuleName);

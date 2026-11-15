@@ -17,6 +17,55 @@ public sealed class GridJoinTests
             GridJoin.Parse("192.168.1.5", 8002, Xml()));
 
     [Fact]
+    public void Parse_reads_the_grids_money()
+    {
+        var xml = Xml().Replace("</gridinfo>", "<economy>http://192.168.1.5:8001/economy/</economy><gridgate_money>play</gridgate_money>"
+            + "<gridgate_money_port>8000</gridgate_money_port><gridgate_money_fingerprint>ABCDEF</gridgate_money_fingerprint></gridinfo>");
+
+        var join = GridJoin.Parse("192.168.1.5", 8002, xml);
+
+        Assert.Equal(Core.Money.MoneyMode.Play, join.Money);
+        Assert.Equal(8000, join.MoneyPort);
+        Assert.Equal("ABCDEF", join.MoneyFingerprint);
+        Assert.Equal("http://192.168.1.5:8001/economy/", join.Economy);
+    }
+
+    [Fact]
+    public void Parse_older_grid_asset_has_no_money()
+    {
+        var join = GridJoin.Parse("192.168.1.5", 8002, Xml());
+
+        Assert.Null(join.Money);
+        Assert.Null(join.MoneyPort);
+        Assert.Null(join.MoneyFingerprint);
+        Assert.Null(join.Economy);
+    }
+
+    [Fact]
+    public void Parse_unreadable_money_reads_as_off()
+    {
+        var xml = Xml().Replace("</gridinfo>", "<gridgate_money>lots</gridgate_money><gridgate_money_port>x</gridgate_money_port></gridinfo>");
+
+        var join = GridJoin.Parse("192.168.1.5", 8002, xml);
+
+        Assert.Equal(Core.Money.MoneyMode.Off, join.Money);
+        Assert.Null(join.MoneyPort);
+    }
+
+    [Fact]
+    public void Joining_another_grid_drops_the_money_pairing()
+    {
+        var paired = TestSettings.Create() with
+        {
+            Join = GridJoin.Parse("192.168.1.5", 8002, Xml()),
+            Money = new Core.Money.MoneySettings(Pairing: new Core.Money.ServerPairing("192.168.1.5", "F", "K", DateTimeOffset.UtcNow)),
+        };
+
+        Assert.NotNull(GridGate.Launcher.Setup.JoinForm.Apply(paired, GridJoin.Parse("192.168.1.5", 8002, Xml())).Money.Pairing);
+        Assert.Null(GridGate.Launcher.Setup.JoinForm.Apply(paired, GridJoin.Parse("192.168.1.9", 8002, Xml())).Money.Pairing);
+    }
+
+    [Fact]
     public void Parse_reads_empty_region_ports()
     {
         var xml = Xml().Replace("<gridgate_region_ports>8004-8006</gridgate_region_ports>", "<gridgate_region_ports></gridgate_region_ports>");

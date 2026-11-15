@@ -13,6 +13,7 @@ using GridGate.Launcher.Endpoints;
 using GridGate.Launcher.Core.ModelImport;
 using GridGate.Launcher.Core.Modules;
 using GridGate.Launcher.Core.Money;
+using GridGate.Launcher.Core.Plans;
 using GridGate.Launcher.Core.OpenSim;
 using GridGate.Launcher.Core.Settings;
 using GridGate.Launcher.Core.Security;
@@ -421,6 +422,7 @@ builder.Services.AddSingleton<Func<CpuPriority, string?>>(_ => RegionSettingsRul
 builder.Services.AddSingleton(sp => new MoneyGate(sp.GetRequiredService<Func<LauncherSettings>>()));
 builder.Services.AddSingleton<MoneyStatus>();
 builder.Services.AddSingleton(sp => new MoneyPairing(sp.GetRequiredService<TimeProvider>()));
+builder.Services.AddSingleton<IMoneyPairClient>(sp => new MoneyPairClient(sp.GetRequiredService<IGridJoinClient>(), sp.GetRequiredService<TimeProvider>()));
 builder.Services.AddSingleton(sp => new RegionHosts(MoneyConnections.Robust(sp.GetRequiredService<Func<LauncherSettings>>())));
 builder.Services.AddSingleton<ISecureSessionCheck>(sp => sp.GetRequiredService<PresenceCheck>());
 builder.Services.AddSingleton(sp => new EconomyLimits(sp.GetRequiredService<TimeProvider>()));

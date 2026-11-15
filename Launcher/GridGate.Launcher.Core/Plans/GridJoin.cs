@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Xml;
 using System.Xml.Linq;
+using GridGate.Launcher.Core.Money;
 using GridGate.Launcher.Core.Settings;
 
 namespace GridGate.Launcher.Core.Plans;
@@ -159,7 +160,13 @@ public static class GridJoin
 
         var gridName = Get("gridname") ?? host;
         var login = Get("login") ?? $"http://{host}:{publicPort}/";
-        return new JoinedGrid(host, publicPort, privatePort, gridName, login, Get(GridInfoKeys.Version)!, hypergrid, from, to);
+        // Money (money plan 3): missing from an older Grid Asset Server (null); a mode this launcher can't read is Off.
+        MoneyMode? money = Get(GridInfoKeys.Money) is { } m ? Enum.TryParse<MoneyMode>(m, ignoreCase: true, out var mode) && Enum.IsDefined(mode) ? mode : MoneyMode.Off : null;
+        int? moneyPort = int.TryParse(Get(GridInfoKeys.MoneyPort), NumberStyles.None, CultureInfo.InvariantCulture, out var mp) && mp is > 0 and <= 65535 ? mp : null;
+        var fingerprint = Get(GridInfoKeys.MoneyFingerprint) is { Length: > 0 } fp ? fp : null;
+        var economy = Get("economy") is { Length: > 0 } e ? e : null;
+        return new JoinedGrid(host, publicPort, privatePort, gridName, login, Get(GridInfoKeys.Version)!, hypergrid, from, to,
+            money, moneyPort, fingerprint, economy);
     }
 }
 
