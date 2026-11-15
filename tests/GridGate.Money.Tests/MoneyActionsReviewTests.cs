@@ -166,4 +166,54 @@ public sealed class MoneyActionsReviewTests
 
     private MoneyActions ActionsWithFee(long fee) =>
         new(_service, Region, () => new EconomyInfo("C$", 0, fee, true, true, 1_000_000), _view);
+
+    // ---- money review 2026-11-15 --------------------------------------------------------------------
+
+    private MoneyActions BeforeEconomy() => new(_service, Region, () => null, _view);
+
+    [Fact]
+    public void Before_the_first_economy_answer_no_upload_is_free()
+    {
+        // R-8: until the service answered, uploads were offered for nothing.
+        Assert.False(BeforeEconomy().UploadCovered(A, 0));
+
+        Assert.Empty(_service.Calls);
+        Assert.Equal(MoneyRules.NoEconomyText, Assert.Single(_view.Told).Text);
+    }
+
+    [Fact]
+    public void Before_the_first_economy_answer_no_classified_is_free()
+    {
+        Assert.False(BeforeEconomy().ClassifiedCovered(A));
+        Assert.Empty(_service.Calls);
+    }
+
+    [Fact]
+    public void Before_the_first_economy_answer_visitors_get_no_payouts()
+    {
+        var paid = BeforeEconomy().Payout(Me, new MoneyWho(Other, "http://other.example:8002"), 5, Root, "box", Guid.NewGuid(), out var reason);
+
+        Assert.False(paid);
+        Assert.Equal("LINDENDOLLAR_ENTITYDOESNOTEXIST", reason);
+        Assert.Empty(_service.Calls);
+    }
+
+    [Fact]
+    public void Once_the_fee_is_known_an_upload_checks_the_balance()
+    {
+        _service.Queue("balance", new MoneyAnswer("ok", 10));
+
+        Assert.True(ActionsWithFee(0).UploadCovered(A, 10));
+        Assert.Single(_service.Of("balance"));
+    }
+
+    [Fact]
+    public void A_pass_to_group_land_is_refused_by_the_module()
+    {
+        // R-9: OpenSim's land module refuses this first today; the module no longer relies on it.
+        Assert.False(_actions.MovePass(A, new MoneyWho(Group, ""), 5, groupLand: true));
+
+        Assert.Empty(_service.Calls);
+        Assert.Equal(MoneyRules.GroupPassText, Assert.Single(_view.Told).Text);
+    }
 }

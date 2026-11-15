@@ -44,7 +44,7 @@ internal interface IMoneyView
 /// <see cref="MoneyRules"/> run first; then the service decides. Every call gets a fresh transaction id; a retried step
 /// reuses its own.
 /// </summary>
-internal sealed class MoneyActions(IMoneyService service, Guid regionId, Func<EconomyInfo> economy, IMoneyView view)
+internal sealed class MoneyActions(IMoneyService service, Guid regionId, Func<EconomyInfo?> economy, IMoneyView view)
 {
     /// <summary>libomv's transaction types, which the viewer's notices are keyed by.</summary>
     public static readonly Type TransactionTypes = typeof(MoneyTransactionType);
@@ -209,9 +209,16 @@ internal sealed class MoneyActions(IMoneyService service, Guid regionId, Func<Ec
     }
 
     /// <summary>A parcel pass, for the land module's synchronous <c>MoveMoney</c>; true only when the coins moved.</summary>
-    public bool MovePass(Payer p, MoneyWho parcelOwner, int amount)
+    public bool MovePass(Payer p, MoneyWho parcelOwner, int amount, bool groupLand = false)
     {
         if (amount < 0) return false;
+        // A group holds no coins on this grid (money design §7.3; money review 2026-11-15, R-9). OpenSim's land module
+        // refuses this first today; this doesn't rely on it.
+        if (groupLand)
+        {
+            view.Tell(p.AgentId, MoneyRules.GroupPassText);
+            return false;
+        }
         if (amount == 0) return true;
         var answer = Wait(service.TransferAsync(Guid.NewGuid(), "parcel_pass", p.Who, parcelOwner, amount, regionId, null, null, CancellationToken.None));
         if (!answer.Ok)
@@ -235,7 +242,7 @@ internal sealed class MoneyActions(IMoneyService service, Guid regionId, Func<Ec
             reason = "INVALID_AMOUNT";
             return false;
         }
-        if (to.Home.Length > 0 && !economy().VisitorWallets)
+        if (to.Home.Length > 0 && economy()?.VisitorWallets != true)
         {
             reason = "LINDENDOLLAR_ENTITYDOESNOTEXIST";
             return false;
@@ -289,10 +296,24 @@ internal sealed class MoneyActions(IMoneyService service, Guid regionId, Func<Ec
     }
 
     /// <summary>The grid's classified fee, never negative.</summary>
-    public int ClassifiedFee() => (int)Math.Clamp(economy().ClassifiedFee, 0, int.MaxValue);
+    public int ClassifiedFee() => (int)Math.Clamp(economy()?.ClassifiedFee ?? 0, 0, int.MaxValue);
 
     /// <summary>Whether <paramref name="p"/> can pay the grid's classified fee: the check before the ad is saved.</summary>
-    public bool ClassifiedCovered(Payer p) => Covered(p, ClassifiedFee());
+    /// <summary>
+    /// Whether the classified fee is covered. Before the service's first economy answer the fee isn't known, so nothing is
+    /// offered free (money review 2026-11-15, R-8): the answer is no.
+    /// </summary>
+    public bool ClassifiedCovered(Payer p) => FeesKnown(p) && Covered(p, ClassifiedFee());
+
+    /// <summary>Whether an upload's fee is covered; no before the fee is known, as for <see cref="ClassifiedCovered"/>.</summary>
+    public bool UploadCovered(Payer p, int amount) => FeesKnown(p) && Covered(p, amount);
+
+    private bool FeesKnown(Payer p)
+    {
+        if (economy() is not null) return true;
+        view.Tell(p.AgentId, MoneyRules.NoEconomyText);
+        return false;
+    }
 
     /// <summary>
     /// The balance shown on arrival. Robust may not have moved the avatar's Presence here yet, so a wrong_region is

@@ -1,3 +1,4 @@
+using GridGate.Launcher.Core.Money;
 using GridGate.Launcher.Core.OpenSim;
 using GridGate.Launcher.Core.Plans;
 using GridGate.Launcher.Core.Processes;
@@ -165,9 +166,54 @@ public sealed partial class GridController
                     _log?.LogInformation("{Grid} at {Address} {State}.", s.Plan == OwnerPlan.Connected ? OtherGridName(s) : "The Grid Asset Server",
                         OtherGridAddressOf(s), up ? "answers again" : "stopped answering");
                 _gridAsset = now;
+                if (up && s.Plan == OwnerPlan.RegionServer) await FollowGridMoneyAsync(s, ct);
             }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+    }
+
+    /// <summary>
+    /// A Region Server follows its grid's money mode while it runs (money review 2026-11-15, H-4). The mode was read only at
+    /// start, and Gloebit needs nothing from the Grid Asset Server, so a grid that left Gloebit kept taking real-dollar
+    /// payments here until this computer restarted. Each check reads the grid's mode again and saves a change. When that
+    /// switches Gloebit off here, this computer's running region programs restart without it; their avatars are logged
+    /// out and may log back in. Any other change takes effect at the next restart, as before: coins fail closed, since the
+    /// grid's money service refuses them.
+    /// </summary>
+    private async Task FollowGridMoneyAsync(LauncherSettings s, CancellationToken ct)
+    {
+        if (s.Join is not { } joined) return;
+        JoinedGrid read;
+        try { read = await join.ReadAsync(joined.Host, joined.PublicPort, ct); }
+        catch (Exception e) when (e is GridJoinException or HttpRequestException && !ct.IsCancellationRequested) { return; }
+        if (read.Money == joined.Money) return;
+
+        var gloebitBefore = MoneyPlace.GloebitHere(s, _money);
+        // Saved only while the join still names the server this check read, as at start.
+        var latest = UpdateSettings(l => l.Join is not { } current || current.Host != joined.Host || current.PublicPort != joined.PublicPort
+            ? l
+            : l with { Join = current with { Money = read.Money } }, writeConfig: false);
+        _log?.LogInformation("The Grid Asset Server's money is now {Mode}.", read.Money ?? MoneyMode.Off);
+        if (!gloebitBefore || MoneyPlace.GloebitHere(latest, _money)) return;
+
+        _log?.LogWarning("The grid left Gloebit: restarting this computer's regions so Gloebit stops taking payments here.");
+        await ExclusiveAsync(GridActivity.Restarting, async () =>
+        {
+            var now = LoadSettings();
+            var running = _programs.Values.Where(p => RegionPowerPlan.IsActive(p.Process.State)).ToList();
+            foreach (var program in Enumerable.Reverse(running)) await StopProgramAsync(program, ct);
+            // Nothing holds Gloebit's DLL now, so it can go along with its INI settings.
+            lock (_configGate) WriteConfig(ReloadSettings());
+            foreach (var program in running)
+            {
+                EnsureComponents(now);
+                try { await StartProgramAsync(now, _programs[program.Instance!], ct); }
+                catch (Exception e) when (e is not OperationCanceledException)
+                {
+                    _log?.LogError("{Program} didn't start again after the grid left Gloebit: {Error}", program.Instance, e.Message);
+                }
+            }
+        }, ct);
     }
 
     /// <summary>

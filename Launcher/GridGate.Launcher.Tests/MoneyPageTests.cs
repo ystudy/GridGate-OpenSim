@@ -781,6 +781,36 @@ public sealed class MoneyPageTests
     }
 
     [Fact]
+    public async Task Going_to_gloebit_through_off_still_needs_the_tick()
+    {
+        // Money review 2026-11-15, H-5: Play, then Off, then Gloebit never asked.
+        await using var f = Make(new FakeBooks(), money: m => m with { Mode = MoneyMode.Off, Gloebit = GApp });
+        f.Grid.UpdateSettings(s => s with { Db = s.Db with { MoneyPassword = "made-when-play-ran" } }, writeConfig: false);
+        var c = await SignedInAsync(f);
+
+        using var refused = await PostAsync(c, "/money", "Settings", Settings(mode: "Gloebit"));
+
+        Assert.Contains("GridGate coin balances don't move to Gloebit", (await ParseAsync(refused)).QuerySelector(".alert-danger")!.TextContent);
+        Assert.Equal(MoneyMode.Off, f.Grid.CurrentSettings().Money.Mode);
+    }
+
+    [Theory]
+    // from, to, coins ran here before, a Gloebit app was saved, asks
+    [InlineData(MoneyMode.Play, MoneyMode.Gloebit, true, true, true)]
+    [InlineData(MoneyMode.Gloebit, MoneyMode.Play, true, true, true)]
+    [InlineData(MoneyMode.Off, MoneyMode.Gloebit, true, true, true)]
+    [InlineData(MoneyMode.Off, MoneyMode.Gloebit, false, true, false)]
+    [InlineData(MoneyMode.Off, MoneyMode.Play, true, true, true)]
+    [InlineData(MoneyMode.Off, MoneyMode.Play, true, false, false)]
+    [InlineData(MoneyMode.Off, MoneyMode.Real, false, true, true)]
+    [InlineData(MoneyMode.Play, MoneyMode.Real, true, true, false)]
+    [InlineData(MoneyMode.Play, MoneyMode.Off, true, true, false)]
+    [InlineData(MoneyMode.Gloebit, MoneyMode.Off, true, true, false)]
+    [InlineData(MoneyMode.Gloebit, MoneyMode.Gloebit, true, true, false)]
+    public void Which_switches_cross_coins_and_gloebit(MoneyMode from, MoneyMode to, bool coinsUsed, bool gloebitUsed, bool asks) =>
+        Assert.Equal(asks, MoneyPageRules.CrossesGloebit(from, to, coinsUsed, gloebitUsed));
+
+    [Fact]
     public async Task Mode_change_says_restart_the_world()
     {
         await using var f = Make(new FakeBooks(), money: m => m with { Mode = MoneyMode.Off });

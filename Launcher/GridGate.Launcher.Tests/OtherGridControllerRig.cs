@@ -59,17 +59,21 @@ public abstract class OtherGridControllerRig : IAsyncLifetime
         RigProcesses.DeleteFolder(_root);
     }
 
-    /// <summary>A controller whose database is a stand-in that counts as healthy, and whose programs crash at once.</summary>
-    private protected GridController NewGrid(TimeSpan? watchEvery = null)
+    /// <summary>
+    /// A controller whose database is a stand-in that counts as healthy, and whose programs crash at once unless
+    /// <paramref name="programStart"/> says how to start them.
+    /// </summary>
+    private protected GridController NewGrid(TimeSpan? watchEvery = null, Func<Core.Money.MoneySettings, Core.Money.MoneyMode>? moneyEffective = null,
+        Func<string, ProcessStartInfo>? programStart = null)
     {
         var missing = Path.Combine(_root, "no-such-dir", "mariadbd");
         var marker = Path.Combine(_root, "stand-in-mariadb");
         var grid = new GridController(_paths, _store, new MariaDbBinaries(missing, missing, null),
-            [new LogLevelModule()], _robust, _join, _otherGrid, _consoles, TimeProvider.System, cpu: (_, _, _) => { })
+            [new LogLevelModule()], _robust, _join, _otherGrid, _consoles, TimeProvider.System, cpu: (_, _, _) => { }, moneyEffective: moneyEffective)
         {
             DatabaseSpecForTests = _ => new ProcessSpec("MariaDB", () => StandIn(marker), Path.Combine(_paths.Pids, "mariadb.pid"),
                 _ => Task.FromResult(true), _ => Task.CompletedTask, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(1), marker),
-            ProgramStartForTests = _ => Crash(),
+            ProgramStartForTests = programStart ?? (_ => Crash()),
             GridAssetWatchInterval = watchEvery ?? TimeSpan.FromSeconds(30),
         };
         _grids.Add(grid);

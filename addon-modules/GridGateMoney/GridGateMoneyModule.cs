@@ -29,7 +29,8 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
     private static readonly ILog Log = LogManager.GetLogger(MethodBase.GetCurrentMethod()!.DeclaringType);
     private static readonly TimeSpan EconomyFresh = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan LandHoldLimit = TimeSpan.FromSeconds(3);
-    private static readonly EconomyInfo NoEconomy = new("C$", 0, 0, true, true, 1_000_000);
+    // Until the service first answers: no fees are known (so none are offered free, R-8), and visitors and payouts are off.
+    private static readonly EconomyInfo NoEconomy = new("C$", 0, 0, false, false, 1_000_000);
 
     private readonly List<Scene> _scenes = [];
     private readonly ConcurrentDictionary<UUID, MoneyActions> _actions = new();
@@ -113,7 +114,7 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
         scene.RegisterModuleInterface<IMoneyModule>(this);
         lock (_scenes) _scenes.Add(scene);
         var regionId = scene.RegionInfo.RegionID;
-        _actions[regionId] = new MoneyActions(_client!, regionId.Guid, Economy, new View(this));
+        _actions[regionId] = new MoneyActions(_client!, regionId.Guid, KnownEconomy, new View(this));
         scene.EventManager.OnNewClient += OnNewClient;
         scene.EventManager.OnClientClosed += OnClientClosed;
     }
@@ -143,15 +144,18 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
 
     // ---- economy settings ----------------------------------------------------------------------------
 
-    /// <summary>The service's settings, at most a minute old; the last known ones (or none) while it can't be reached.</summary>
-    private EconomyInfo Economy()
+    /// <summary>The service's settings, at most a minute old; the last known ones while it can't be reached; null before it ever answered.</summary>
+    private EconomyInfo? KnownEconomy()
     {
         lock (_economyGate)
         {
             if (DateTime.UtcNow - _economyAt > EconomyFresh) RefreshEconomy();
-            return _economy ?? NoEconomy;
+            return _economy;
         }
     }
+
+    /// <summary><see cref="KnownEconomy"/>, or <see cref="NoEconomy"/> before the service ever answered.</summary>
+    private EconomyInfo Economy() => KnownEconomy() ?? NoEconomy;
 
     private void RefreshEconomy()
     {
@@ -329,7 +333,8 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
 
     public int GetBalance(UUID agentID) => _balances.TryGetValue(agentID, out var b) ? (int)Math.Clamp(b, 0, int.MaxValue) : 0;
 
-    public bool UploadCovered(UUID agentID, int amount) => AmountCovered(agentID, amount);
+    public bool UploadCovered(UUID agentID, int amount) =>
+        FindClient(agentID) is { } c && ActionsFor(c) is { } actions && actions.UploadCovered(PayerOf(c), amount);
 
     public bool AmountCovered(UUID agentID, int amount) =>
         FindClient(agentID) is { } c && ActionsFor(c) is { } actions && actions.Covered(PayerOf(c), amount);
@@ -377,7 +382,8 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
     public bool MoveMoney(UUID fromUser, UUID toUser, int amount, MoneyTransactionType type, string text)
     {
         if (type != MoneyTransactionType.LandPassSale) return false;
-        return FindClient(fromUser) is { } c && ActionsFor(c) is { } actions && actions.MovePass(PayerOf(c), WhoOf(toUser), amount);
+        return FindClient(fromUser) is { } c && ActionsFor(c) is { } actions
+            && actions.MovePass(PayerOf(c), WhoOf(toUser), amount, groupLand: GroupLand(c, toUser));
     }
 
     public void MoveMoney(UUID fromUser, UUID toUser, int amount, string text) =>
@@ -406,6 +412,11 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
         }
         return actions.Payout(fromID.Guid, WhoOf(toID), amount, root.UUID.Guid, root.Name, txn.Guid, out reason);
     }
+
+    /// <summary>Whether <paramref name="owner"/> is a group that owns land in the client's region: a pass's payee.</summary>
+    private static bool GroupLand(IClientAPI client, UUID owner) =>
+        client.Scene is Scene s && s.LandChannel?.AllParcels() is { } parcels
+        && parcels.Any(p => p.LandData is { IsGroupOwned: true } d && (d.OwnerID == owner || d.GroupID == owner));
 
     // ---- IVisitorMoneyModule ------------------------------------------------------------------------
 

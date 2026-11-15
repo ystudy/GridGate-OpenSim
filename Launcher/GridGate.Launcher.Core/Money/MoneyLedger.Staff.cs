@@ -14,13 +14,13 @@ public sealed partial class MoneyLedger
             return await MoveBetweenAsync(conn, tx, MoneySchema.BankId, account.Id, amount, StaffEntry(EntryType.StaffGift, who), guarded: true, ct);
         });
 
-    /// <summary>Staff take coins back into the Grid bank; never below zero.</summary>
+    /// <summary>Staff take coins back into the Grid bank; never below zero, but from a frozen account too.</summary>
     public Task<MoneyResult> TakeAsync(AccountRef from, long amount, StaffAction who, CancellationToken ct) =>
         StaffMoveAsync(who, amount, ct, async (conn, tx) =>
         {
             var (account, refusal) = await ResolveAsync(conn, tx, from, ct, staff: true);
             if (account is null) return MoneyResult.Of(refusal);
-            return await MoveBetweenAsync(conn, tx, account.Id, MoneySchema.BankId, amount, StaffEntry(EntryType.StaffTake, who), guarded: true, ct);
+            return await MoveBetweenAsync(conn, tx, account.Id, MoneySchema.BankId, amount, StaffEntry(EntryType.StaffTake, who), guarded: true, ct, staffTakes: true);
         });
 
     /// <summary>Moves coins out of Fees to an account.</summary>
@@ -33,8 +33,8 @@ public sealed partial class MoneyLedger
         });
 
     /// <summary>
-    /// Reverses one entry: the same amount back from its payee to its payer, guarded. An entry already refunded, or a hold's
-    /// own movement (settled through the hold), can't be refunded.
+    /// Reverses one entry: the same amount back from its payee to its payer, guarded (from a frozen payee too). An entry
+    /// already refunded, or a hold's own movement (settled through the hold), can't be refunded.
     /// </summary>
     public Task<MoneyResult> RefundAsync(long entryId, StaffAction who, CancellationToken ct) =>
         StaffMoveAsync(who, 1, ct, async (conn, tx) =>
@@ -52,7 +52,7 @@ public sealed partial class MoneyLedger
                 return MoneyResult.Of(MoneyOutcome.NotAllowed);
             if (await ScalarAsync(conn, tx, "SELECT COUNT(*) FROM entries WHERE reverses = @id", ct, ("@id", entryId)) > 0)
                 return MoneyResult.Of(MoneyOutcome.HoldClosed);
-            return await MoveBetweenAsync(conn, tx, toId, fromId, amount, StaffEntry(EntryType.Refund, who) with { Reverses = entryId }, guarded: true, ct);
+            return await MoveBetweenAsync(conn, tx, toId, fromId, amount, StaffEntry(EntryType.Refund, who) with { Reverses = entryId }, guarded: true, ct, staffTakes: true);
         });
 
     /// <summary>Moves a visitor's whole balance to their wallet under a new home address, and freezes the old one.</summary>
