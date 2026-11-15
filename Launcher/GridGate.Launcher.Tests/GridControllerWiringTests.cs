@@ -645,7 +645,7 @@ public sealed class GridControllerWiringTests : IAsyncDisposable
         psi.ArgumentList.Add("--serve");
         psi.ArgumentList.Add(StandInPort().ToString());
         psi.ArgumentList.Add(Path.Combine(_paths.RuntimeOpenSim, "Robust.dll"));
-        using var fake = Process.Start(psi)!;
+        using var fake = StartStandIn(psi);
         try
         {
             _paths.EnsureCreated();
@@ -683,7 +683,7 @@ public sealed class GridControllerWiringTests : IAsyncDisposable
         psi.ArgumentList.Add("--serve");
         psi.ArgumentList.Add(StandInPort().ToString());
         psi.ArgumentList.Add(Path.Combine(_paths.RuntimeOpenSim, "Robust.dll"));
-        using var fake = Process.Start(psi)!;
+        using var fake = StartStandIn(psi);
         try
         {
             _paths.EnsureCreated();
@@ -715,9 +715,27 @@ public sealed class GridControllerWiringTests : IAsyncDisposable
     /// </summary>
     private Process StartLeftoverRegion(string instance = "Welcome")
     {
-        var fake = Process.Start(StandIn())!;
+        var fake = StartStandIn(StandIn());
         _paths.EnsureCreated();
         PidFile.Write(Path.Combine(_paths.Pids, instance + ".pid"), fake.Id);
+        return fake;
+    }
+
+    /// <summary>
+    /// Starts a stand-in and waits until its own command line shows. On Linux, Process.Start returns before the child has
+    /// replaced its image, and until then /proc/{pid}/cmdline is the test host's, so the controller wouldn't take it for a
+    /// region program and wouldn't adopt it (a Debian 13 CI flake).
+    /// </summary>
+    private static Process StartStandIn(ProcessStartInfo psi)
+    {
+        var fake = Process.Start(psi)!;
+        var deadline = DateTime.UtcNow.AddSeconds(15);
+        while (!ProcessImage.Matches(fake.Id, "--serve"))
+        {
+            if (fake.HasExited || DateTime.UtcNow > deadline)
+                throw new InvalidOperationException("The stand-in never showed its own command line.");
+            Thread.Sleep(10);
+        }
         return fake;
     }
 
