@@ -172,6 +172,85 @@ public sealed class RegionServerControllerTests : OtherGridControllerRig
     }
 
     [Fact]
+    public async Task First_region_spot_is_the_square_the_region_would_take()
+    {
+        _robust.Map.Add(new MapRegion(Guid.NewGuid(), "Hub", 1000, 1000, 1));
+        var grid = NewGrid();
+
+        Assert.Equal((1001, 1000), await grid.FirstRegionSpotAsync("Welcome", TestContext.Current.CancellationToken));
+        Assert.Empty(_store.LoadOrCreate().Regions);
+    }
+
+    [Fact]
+    public async Task First_region_spot_ignores_what_an_earlier_attempt_left()
+    {
+        // The earlier attempt saved Welcome at 1000,1000 and registered it on the map; this run replaces it.
+        var id = AddWelcome(created: false);
+        _robust.Map.Add(new MapRegion(id, "Welcome", 1000, 1000, 1));
+        var grid = NewGrid();
+        var ct = TestContext.Current.CancellationToken;
+
+        Assert.Equal((1000, 1000), await grid.FirstRegionSpotAsync("Welcome", ct));
+        Assert.Null(await grid.FirstRegionSpotErrorAsync("Welcome", 1000, 1000, ct));
+    }
+
+    [Fact]
+    public async Task First_region_goes_to_the_chosen_square()
+    {
+        _robust.Map.Add(new MapRegion(Guid.NewGuid(), "Hub", 1000, 1000, 1));
+        var grid = NewGrid();
+        var ct = TestContext.Current.CancellationToken;
+
+        Assert.Null(await grid.FirstRegionSpotErrorAsync("Welcome", 1005, 1002, ct));
+        // The program can't come up in this rig; the region is saved before it starts.
+        await Record.ExceptionAsync(() => grid.CreateRegionAsync("Welcome", "island", ct, at: (1005, 1002)));
+
+        var region = Assert.Single(_store.LoadOrCreate().Regions);
+        Assert.Equal((1005, 1002), (region.X, region.Y));
+    }
+
+    [Fact]
+    public async Task First_region_on_a_square_used_elsewhere_is_refused_like_the_add_page()
+    {
+        _robust.Map.Add(new MapRegion(Guid.NewGuid(), "Hub", 1004, 1002, 2));
+        var grid = NewGrid();
+        var ct = TestContext.Current.CancellationToken;
+        var before = File.ReadAllText(_paths.SettingsFile);
+
+        var text = await grid.FirstRegionSpotErrorAsync("Welcome", 1005, 1003, ct);
+        var e = await Assert.ThrowsAsync<ArgumentException>(() => grid.CreateRegionAsync("Welcome", "island", ct, at: (1005, 1003)));
+
+        // The Add page's words, from the same rule.
+        Assert.Equal("That spot is taken by Hub.", text);
+        Assert.Equal(text, e.Message);
+        Assert.Equal(before, File.ReadAllText(_paths.SettingsFile));
+    }
+
+    [Fact]
+    public async Task First_region_off_the_map_is_refused_without_asking_the_map()
+    {
+        var grid = NewGrid();
+        var ct = TestContext.Current.CancellationToken;
+
+        Assert.Equal(RegionPlacement.OffMap, await grid.FirstRegionSpotErrorAsync("Welcome", -1, 1000, ct));
+        var e = await Assert.ThrowsAsync<ArgumentException>(() => grid.CreateRegionAsync("Welcome", "island", ct, at: (65535, 1000)));
+        Assert.Equal(RegionPlacement.OffMap, e.Message);
+        Assert.Empty(_robust.MapQueries);
+        Assert.Empty(_store.LoadOrCreate().Regions);
+    }
+
+    [Fact]
+    public async Task First_region_spot_says_when_the_grid_asset_server_is_off()
+    {
+        _robust.MapError = new HttpRequestException("Connection refused");
+        var grid = NewGrid();
+        var ct = TestContext.Current.CancellationToken;
+
+        await Assert.ThrowsAsync<GridAssetUnreachableException>(() => grid.FirstRegionSpotAsync("Welcome", ct));
+        await Assert.ThrowsAsync<GridAssetUnreachableException>(() => grid.FirstRegionSpotErrorAsync("Welcome", 1005, 1002, ct));
+    }
+
+    [Fact]
     public async Task First_region_is_not_placed_blindly_when_the_grid_asset_server_is_off()
     {
         _robust.MapError = new HttpRequestException("Connection refused");

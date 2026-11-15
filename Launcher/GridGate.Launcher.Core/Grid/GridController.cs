@@ -1062,30 +1062,67 @@ public sealed partial class GridController(
         lock (_configGate) return RegionTypes.IsContent(ReloadSettings(), content);
     }
 
-    public async Task CreateRegionAsync(string name, string content, CancellationToken ct, IProgress<string>? progress = null)
+    /// <summary>
+    /// What the first region called <paramref name="name"/> is placed against: its UUID (a retry for the same name keeps
+    /// it), the settings as if what an earlier attempt left had gone already (CreateRegionAsync removes it), and, on a plan
+    /// that uses another computer's grid, that grid's other regions in <paramref name="area"/> (one an earlier attempt
+    /// registered isn't theirs).
+    /// </summary>
+    private async Task<(Guid Uuid, LauncherSettings Kept, IReadOnlyList<MapRegion>? Elsewhere)> FirstRegionPlaceAsync(
+        LauncherSettings s, string name, MapArea area, CancellationToken ct)
+    {
+        var uuid = RegionModel.FindByName(s, name) is { } old && old.Name == name ? old.Uuid : Guid.NewGuid();
+        var elsewhere = (await RegionsElsewhereAsync(s, area, ct))?.Where(m => m.Uuid != uuid).ToList();
+        var kept = s.Setup.RegionCreated ? s : s with { Programs = [], Regions = [] };
+        return (uuid, kept, elsewhere);
+    }
+
+    /// <summary>
+    /// The first free square from 1000,1000 (<paramref name="elsewhere"/> read with <see cref="MapArea.Start"/>). A Connected
+    /// Server's grid may be too big to read whole, so only the window near 1000,1000 is searched: null when it is full.
+    /// </summary>
+    private static (int X, int Y)? AutomaticSpot(LauncherSettings s, LauncherSettings kept, IReadOnlyList<MapRegion>? elsewhere) =>
+        elsewhere is null ? (1000, 1000)
+        : s.Plan == OwnerPlan.Connected ? RegionPlacement.FirstFreeIn(kept, elsewhere, MapArea.Start)
+        : RegionPlacement.FirstFree(kept, elsewhere);
+
+    public async Task<(int X, int Y)?> FirstRegionSpotAsync(string name, CancellationToken ct)
+    {
+        var s = CurrentSettings();
+        var (_, kept, elsewhere) = await FirstRegionPlaceAsync(s, name, MapArea.Start, ct);
+        return AutomaticSpot(s, kept, elsewhere);
+    }
+
+    public async Task<string?> FirstRegionSpotErrorAsync(string name, int x, int y, CancellationToken ct)
+    {
+        if (!RegionPlacement.OnMap(x, y, 1)) return RegionPlacement.OffMap;
+        var (_, kept, elsewhere) = await FirstRegionPlaceAsync(CurrentSettings(), name, MapArea.Around(x, y, 1), ct);
+        return RegionPlacement.SpotError(kept, x, y, 1, elsewhere: elsewhere);
+    }
+
+    public async Task CreateRegionAsync(string name, string content, CancellationToken ct, IProgress<string>? progress = null, (int X, int Y)? at = null)
     {
         if (!IsValidRegionName(name))
             throw new ArgumentException(NameRule, nameof(name));
         if (!IsContent(content))
             throw new ArgumentException(ContentError, nameof(content));
+        if (at is { } off && !RegionPlacement.OnMap(off.X, off.Y, 1))
+            throw new ArgumentException(RegionPlacement.OffMap);
 
         await ExclusiveAsync(GridActivity.Starting, async () =>
         {
             progress?.Report(SetupProgress.CreatingRegion);
             var s = LoadSettings();
-            // A retry for the same name keeps the region's UUID.
-            var uuid = RegionModel.FindByName(s, name) is { } old && old.Name == name ? old.Uuid : Guid.NewGuid();
-            // On a plan that uses another computer's grid, that grid's other regions hold squares too (one an earlier
-            // attempt registered isn't theirs).
-            var elsewhere = (await RegionsElsewhereAsync(s, MapArea.Start, ct))?.Where(m => m.Uuid != uuid).ToList();
-            // Placed as if what an earlier attempt left had gone already (it goes below), before anything is stopped. A
-            // Connected Server's grid may be too big to read whole, so only the window near 1000,1000 is searched.
-            var kept = s.Setup.RegionCreated ? s : s with { Programs = [], Regions = [] };
-            var (x, y) = elsewhere is null ? (1000, 1000)
-                : s.Plan == OwnerPlan.Connected
-                    ? RegionPlacement.FirstFreeIn(kept, elsewhere, MapArea.Start) ?? throw new ArgumentException(
-                        $"The squares near 1000,1000 on {OtherGridName(s)}'s map are all taken. Add your region from the Regions page at a spot you choose.")
-                    : RegionPlacement.FirstFree(kept, elsewhere);
+            // Placed before anything is stopped. On a plan that uses another computer's grid, that grid's other regions
+            // hold squares too: around the chosen square, else near 1000,1000.
+            var area = at is { } a ? MapArea.Around(a.X, a.Y, 1) : MapArea.Start;
+            var (uuid, kept, elsewhere) = await FirstRegionPlaceAsync(s, name, area, ct);
+            var (x, y) = at is { } chosen
+                ? RegionPlacement.SpotError(kept, chosen.X, chosen.Y, 1, elsewhere: elsewhere) is { } taken
+                    ? throw new ArgumentException(taken)
+                    : chosen
+                : AutomaticSpot(s, kept, elsewhere) ?? throw new ArgumentException(
+                    $"The squares near 1000,1000 on {OtherGridName(s)}'s map are all taken. Type a map square further away below, then try again.");
             if (!s.Setup.RegionCreated)
             {
                 // What an earlier attempt left goes: its program stops unless the new region takes over its folder.

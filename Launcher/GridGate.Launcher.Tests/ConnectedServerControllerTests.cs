@@ -208,9 +208,38 @@ public sealed class ConnectedServerControllerTests : OtherGridControllerRig
         var e = await Assert.ThrowsAsync<ArgumentException>(() =>
             grid.CreateRegionAsync("Welcome", "island", TestContext.Current.CancellationToken));
 
-        Assert.Equal("The squares near 1000,1000 on Elsewhere's map are all taken. Add your region from the Regions page at a spot you choose.",
+        Assert.Equal("The squares near 1000,1000 on Elsewhere's map are all taken. Type a map square further away below, then try again.",
             e.Message);
         Assert.Empty(_store.LoadOrCreate().Regions);
+    }
+
+    [Fact]
+    public async Task First_region_spot_is_null_when_the_window_is_full()
+    {
+        for (var x = 1000; x < 1064; x += 16)
+            for (var y = 1000; y < 1064; y += 16)
+                _robust.Map.Add(new MapRegion(Guid.NewGuid(), $"Big {x},{y}", x, y, 16));
+        var grid = NewGrid();
+
+        Assert.Null(await grid.FirstRegionSpotAsync("Welcome", TestContext.Current.CancellationToken));
+        Assert.Equal(new MapArea?[] { MapArea.Start }, _robust.MapQueries);
+    }
+
+    [Fact]
+    public async Task First_region_at_a_chosen_square_reads_only_the_map_around_it()
+    {
+        _robust.Map.Add(new MapRegion(Guid.NewGuid(), "Hub", 2000, 2000, 1));
+        var grid = NewGrid();
+        var ct = TestContext.Current.CancellationToken;
+
+        Assert.Equal("That spot is taken by Hub.", await grid.FirstRegionSpotErrorAsync("Welcome", 2000, 2000, ct));
+        Assert.Null(await grid.FirstRegionSpotErrorAsync("Welcome", 2001, 2000, ct));
+        await Record.ExceptionAsync(() => grid.CreateRegionAsync("Welcome", "island", ct, at: (2001, 2000)));
+
+        var region = Assert.Single(_store.LoadOrCreate().Regions);
+        Assert.Equal((2001, 2000), (region.X, region.Y));
+        Assert.Equal(new MapArea?[] { MapArea.Around(2000, 2000, 1), MapArea.Around(2001, 2000, 1), MapArea.Around(2001, 2000, 1) },
+            _robust.MapQueries);
     }
 
     [Fact]

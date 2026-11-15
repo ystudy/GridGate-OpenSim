@@ -1,3 +1,4 @@
+using System.Globalization;
 using GridGate.Launcher.Core;
 using GridGate.Launcher.Core.Grid;
 using GridGate.Launcher.Core.Settings;
@@ -9,8 +10,10 @@ using Microsoft.AspNetCore.Mvc.RazorPages;
 namespace GridGate.Launcher.Pages.Setup;
 
 /// <summary>
-/// Step 3: the region's name and content. Posting starts the region in the background (one at a time) and shows its
-/// progress at /setup/region?working=1; a failure shows the message and a log excerpt, and the form again to retry.
+/// Step 3: the region's name, content and map square (prefilled with the one the region would take; blank lets the
+/// controller place it). A square off the map or taken is refused at its field with the Add page's words. Posting starts
+/// the region in the background (one at a time) and shows its progress at /setup/region?working=1; a failure shows the
+/// message and a log excerpt, and the form again to retry.
 /// </summary>
 public sealed class RegionModel(Func<LauncherSettings> settings, LauncherPaths paths, SetupProgress progress, SetupRunner runner, IGridController grid) : PageModel
 {
@@ -18,6 +21,8 @@ public sealed class RegionModel(Func<LauncherSettings> settings, LauncherPaths p
 
     [BindProperty] public string? RegionName { get; set; }
     [BindProperty(Name = "Content")] public string? RegionContent { get; set; }
+    [BindProperty] public string? X { get; set; }
+    [BindProperty] public string? Y { get; set; }
 
     public bool StarterAvailable { get; private set; }
     public SetupProgressSnapshot Progress { get; private set; } = new("", 0, false, null, null);
@@ -30,17 +35,31 @@ public sealed class RegionModel(Func<LauncherSettings> settings, LauncherPaths p
     public bool CanSkip { get; private set; }
     public bool ShowForm => !Progress.Running && !Ready;
 
-    public IActionResult OnGet(string? working)
+    public async Task<IActionResult> OnGetAsync(string? working, CancellationToken ct)
     {
         if (Closed() is { } closed) return closed;
         Load();
         ShowProgress = working is not null || Progress.Running;
-        RegionName = Core.Settings.RegionModel.First(settings())?.Name ?? "Welcome";
+        // What an earlier attempt saved (its name and square), else the defaults.
+        var earlier = Core.Settings.RegionModel.First(settings());
+        RegionName = earlier?.Name ?? "Welcome";
         RegionContent = StarterAvailable ? "starter" : "island";
+        if (ShowForm)
+        {
+            var spot = earlier is not null ? (earlier.X, earlier.Y) : await FreeSpotAsync(RegionName, ct);
+            (X, Y) = (spot?.X.ToString(CultureInfo.InvariantCulture), spot?.Y.ToString(CultureInfo.InvariantCulture));
+        }
         return Page();
     }
 
-    public IActionResult OnPost()
+    /// <summary>The square the region would take; null (the fields stay blank) when the grid doesn't answer or has none near 1000,1000.</summary>
+    private async Task<(int X, int Y)?> FreeSpotAsync(string name, CancellationToken ct)
+    {
+        try { return await grid.FirstRegionSpotAsync(name, ct); }
+        catch (GridUnreachableException) { return null; }
+    }
+
+    public async Task<IActionResult> OnPostAsync(CancellationToken ct)
     {
         if (Closed() is { } closed) return closed;
         if (progress.Running) return Redirect(WorkingUrl);
@@ -56,8 +75,31 @@ public sealed class RegionModel(Func<LauncherSettings> settings, LauncherPaths p
             ModelState.AddModelError(nameof(RegionContent), "Pick what your region should look like.");
         if (!ModelState.IsValid) return Page();
 
-        runner.TryStartRegion(RegionName!, RegionContent!); // false: one is already running, whose progress is shown
+        // Both fields blank: the controller places the region, as before there were fields.
+        (int X, int Y)? at = null;
+        if (!string.IsNullOrWhiteSpace(X) || !string.IsNullOrWhiteSpace(Y))
+        {
+            if (!RegionPlacement.TryParse(X, out var x) || !RegionPlacement.TryParse(Y, out var y))
+                ModelState.AddModelError(nameof(X), RegionPlacement.OffMap);
+            else if (await SpotErrorAsync(RegionName!, x, y, ct) is { } error)
+                ModelState.AddModelError(nameof(X), error);
+            else
+                at = (x, y);
+            if (!ModelState.IsValid) return Page();
+        }
+
+        runner.TryStartRegion(RegionName!, RegionContent!, at); // false: one is already running, whose progress is shown
         return Redirect(WorkingUrl);
+    }
+
+    /// <summary>
+    /// The Add page's refusal for the square (off the map, or taken here or on the joined grid's map), or null. A grid that
+    /// doesn't answer lets the run start: it reaches the grid first, says so, and the controller checks the square again.
+    /// </summary>
+    private async Task<string?> SpotErrorAsync(string name, int x, int y, CancellationToken ct)
+    {
+        try { return await grid.FirstRegionSpotErrorAsync(name, x, y, ct); }
+        catch (GridUnreachableException) { return null; }
     }
 
     /// <summary>A Grid Asset Server may have no regions of its own; other plans always need one.</summary>

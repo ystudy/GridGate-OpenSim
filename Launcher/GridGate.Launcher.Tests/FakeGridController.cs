@@ -73,17 +73,44 @@ internal sealed class FakeGridController : IGridController
         return Task.CompletedTask;
     };
 
-    /// <summary>Like the controller: saves the region, then Setup.RegionCreated, through <see cref="UpdateSettings"/>.</summary>
-    public async Task CreateRegionAsync(string name, string content, CancellationToken ct, IProgress<string>? progress = null)
+    /// <summary>
+    /// Like the controller: saves the region (at <paramref name="at"/>, else <see cref="FirstRegionSpot"/>), then
+    /// Setup.RegionCreated, through <see cref="UpdateSettings"/>. A chosen square is recorded as " at X,Y".
+    /// </summary>
+    public async Task CreateRegionAsync(string name, string content, CancellationToken ct, IProgress<string>? progress = null, (int X, int Y)? at = null)
     {
-        Record("CreateRegion " + name + " " + content);
+        Record("CreateRegion " + name + " " + content + (at is { } chosen ? $" at {chosen.X},{chosen.Y}" : ""));
         await OnCreateRegion(progress, ct);
+        var (x, y) = at ?? FirstRegionSpot ?? (1000, 1000);
         UpdateSettings(l => l with
         {
             Programs = [new ProgramSettings(GridController.SafeFolderName(name), l.RegionPort, l.RegionConsolePort)],
-            Regions = [new RegionSettings(GridController.SafeFolderName(name), name, Guid.NewGuid(), Content: content, UdpPort: l.RegionPort)],
+            Regions = [new RegionSettings(GridController.SafeFolderName(name), name, Guid.NewGuid(), x, y, Content: content, UdpPort: l.RegionPort)],
             Setup = l.Setup with { RegionCreated = true },
         });
+    }
+
+    /// <summary>What <see cref="FirstRegionSpotAsync"/> returns; it throws <see cref="SpotFailure"/> instead when set.</summary>
+    public (int X, int Y)? FirstRegionSpot { get; set; } = (1000, 1000);
+
+    /// <summary>Thrown by <see cref="FirstRegionSpotAsync"/> and <see cref="FirstRegionSpotErrorAsync"/> when set (a grid that doesn't answer).</summary>
+    public Exception? SpotFailure { get; set; }
+
+    /// <summary>Regions on the joined grid's map, which <see cref="FirstRegionSpotErrorAsync"/> counts like the controller does.</summary>
+    public List<MapRegion> MapRegions { get; } = [];
+
+    public Task<(int X, int Y)?> FirstRegionSpotAsync(string name, CancellationToken ct)
+    {
+        Record("FirstRegionSpot " + name);
+        return SpotFailure is { } e ? Task.FromException<(int X, int Y)?>(e) : Task.FromResult(FirstRegionSpot);
+    }
+
+    /// <summary>The controller's rule (<see cref="RegionPlacement.SpotError"/>) against the settings and <see cref="MapRegions"/>.</summary>
+    public Task<string?> FirstRegionSpotErrorAsync(string name, int x, int y, CancellationToken ct)
+    {
+        Record($"FirstRegionSpotError {name} {x},{y}");
+        return SpotFailure is { } e ? Task.FromException<string?>(e)
+            : Task.FromResult(RegionPlacement.SpotError(CurrentSettings(), x, y, 1, elsewhere: MapRegions));
     }
 
     /// <summary>The <see cref="GridStatus.StartFailure"/> of the status built from the other properties.</summary>

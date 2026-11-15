@@ -250,7 +250,8 @@ Reached only through the one-time setup link. Steps, each saved as it completes 
    - This avatar also becomes the estate owner.
 3. **Choose your first region:**
    - its name,
-   - the content: the starter region (§6.3) or an empty island.
+   - the content: the starter region (§6.3) or an empty island,
+   - its map square (X, Y), optional: prefilled with the first free square from 1000,1000 (on a Region Server or a Connected Server, clear of the other grid's regions too). A square off the map or taken is refused with the Add Region page's words; clearing both boxes lets the launcher pick.
 
    The launcher writes the region INI, boots Robust and the region, creates the estate non-interactively (no console prompts), and loads the OAR.
 4. **Connect with Firestorm:**
