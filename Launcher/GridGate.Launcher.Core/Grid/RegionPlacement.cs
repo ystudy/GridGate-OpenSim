@@ -1,3 +1,4 @@
+using System.Globalization;
 using GridGate.Launcher.Core.Settings;
 
 namespace GridGate.Launcher.Core.Grid;
@@ -36,6 +37,24 @@ public static class RegionPlacement
     /// <summary>True when a region of <paramref name="size"/> at (x, y) lies wholly on the map: positions run 0 to 65535 minus size.</summary>
     public static bool OnMap(int x, int y, int size) =>
         x >= 0 && y >= 0 && x <= MaxCoordinate - size && y <= MaxCoordinate - size;
+
+    /// <summary>A number the owner typed for a position or size: spaces around it and a sign allowed, digits only.</summary>
+    public static bool TryParse(string? text, out int value) =>
+        int.TryParse(text?.Trim(), NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out value);
+
+    /// <summary>What the website says about a spot off the map.</summary>
+    public const string OffMap = "That spot is off the map.";
+
+    /// <summary>
+    /// Why a region of <paramref name="size"/> can't go at (x, y), in the words the website shows: <see cref="OffMap"/>, or
+    /// the region it would overlap (<see cref="RegionAdvice.Placement"/>); null when it fits. The other arguments are
+    /// <see cref="Check"/>'s.
+    /// </summary>
+    public static string? SpotError(LauncherSettings s, int x, int y, int size, Guid? ignore = null,
+        IReadOnlyList<MapRegion>? elsewhere = null) =>
+        !OnMap(x, y, size) ? OffMap
+        : Check(s, x, y, size, ignore, elsewhere) is { Ok: false } taken ? RegionAdvice.Placement(taken)
+        : null;
 
     /// <summary>
     /// Whether a region of <paramref name="size"/> at (x, y) fits. <paramref name="elsewhere"/> is the grid's map from

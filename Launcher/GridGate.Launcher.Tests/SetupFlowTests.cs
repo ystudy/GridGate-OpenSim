@@ -616,6 +616,181 @@ public sealed class SetupFlowTests
         Assert.DoesNotContain(f.Grid.Snapshot(), c => c.StartsWith("CreateRegion", StringComparison.Ordinal));
     }
 
+    /// <summary>At the region step on <paramref name="plan"/>: every earlier step done, with the join or connection that plan needs.</summary>
+    private static LauncherFactory AtRegionStep(OwnerPlan plan, Func<LauncherSettings, LauncherSettings>? more = null) => new(s =>
+    {
+        var seeded = s with
+        {
+            GridName = "Avalon",
+            SetupToken = null,
+            Plan = plan,
+            Join = plan == OwnerPlan.RegionServer
+                ? new JoinedGrid("192.168.1.5", 8002, 8003, "Hub World", "http://192.168.1.5:8002/", Core.LauncherVersion.Current, false, 8004, 8006)
+                : null,
+            Connected = plan == OwnerPlan.Connected
+                ? new ConnectedGrid("osgrid", "OSGrid", "http://login.osgrid.org/", "http://login.osgrid.org/", "http://grid.osgrid.org/", null)
+                : null,
+            Setup = new SetupState(WorldNamed: true, OwnerCreated: true,
+                Owner: new OwnerInfo("Test", "Owner", Guid.NewGuid()), NetworkSet: true),
+            Recovery = HomeLab,
+        };
+        return more is null ? seeded : more(seeded);
+    })
+    {
+        Before = TestAuth.Apply,
+    };
+
+    private static Dictionary<string, string> RegionForm(string? x = null, string? y = null)
+    {
+        var form = new Dictionary<string, string> { ["RegionName"] = "Welcome", ["Content"] = "island" };
+        if (x is not null) form["X"] = x;
+        if (y is not null) form["Y"] = y;
+        return form;
+    }
+
+    [Theory]
+    [InlineData(OwnerPlan.Local)]
+    [InlineData(OwnerPlan.SimplePublic)]
+    [InlineData(OwnerPlan.GridAsset)]
+    [InlineData(OwnerPlan.RegionServer)]
+    [InlineData(OwnerPlan.Connected)]
+    public async Task Region_step_offers_the_map_square_prefilled_with_the_free_one(OwnerPlan plan)
+    {
+        await using var f = AtRegionStep(plan);
+        f.Grid.FirstRegionSpot = (1003, 1001);
+        using var client = await SignedInClientAsync(f);
+
+        var page = new HtmlParser().ParseDocument(await client.GetStringAsync("/setup/region", Ct));
+
+        Assert.Equal("1003", page.QuerySelector("main > form input[name=X]")?.GetAttribute("value"));
+        Assert.Equal("1001", page.QuerySelector("main > form input[name=Y]")?.GetAttribute("value"));
+        Assert.Contains("FirstRegionSpot Welcome", f.Grid.Snapshot());
+    }
+
+    [Fact]
+    public async Task Region_step_offers_the_square_an_earlier_attempt_chose()
+    {
+        // A failed attempt leaves its region saved (with its name and square); the retry offers both again.
+        await using var f = AtRegionStep(OwnerPlan.RegionServer, s => s with
+        {
+            Programs = [new ProgramSettings("Home", s.RegionPort, s.RegionConsolePort)],
+            Regions = [new RegionSettings("Home", "Home", Guid.NewGuid(), 1007, 1003, UdpPort: s.RegionPort)],
+        });
+        using var client = await SignedInClientAsync(f);
+
+        var page = new HtmlParser().ParseDocument(await client.GetStringAsync("/setup/region", Ct));
+
+        Assert.Equal("Home", page.QuerySelector("input[name=RegionName]")?.GetAttribute("value"));
+        Assert.Equal("1007", page.QuerySelector("input[name=X]")?.GetAttribute("value"));
+        Assert.Equal("1003", page.QuerySelector("input[name=Y]")?.GetAttribute("value"));
+        Assert.DoesNotContain(f.Grid.Snapshot(), c => c.StartsWith("FirstRegionSpot ", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Region_step_leaves_the_square_blank_when_the_grid_does_not_answer()
+    {
+        await using var f = AtRegionStep(OwnerPlan.RegionServer);
+        f.Grid.SpotFailure = new GridAssetUnreachableException("192.168.1.5", 8002);
+        using var client = await SignedInClientAsync(f);
+
+        using var resp = await client.GetAsync("/setup/region", Ct);
+
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+        var page = new HtmlParser().ParseDocument(await resp.Content.ReadAsStringAsync(Ct));
+        Assert.NotNull(page.QuerySelector("input[name=X]"));
+        Assert.True(string.IsNullOrEmpty(page.QuerySelector("input[name=X]")!.GetAttribute("value")));
+        Assert.True(string.IsNullOrEmpty(page.QuerySelector("input[name=Y]")!.GetAttribute("value")));
+    }
+
+    [Theory]
+    [InlineData(OwnerPlan.Local)]
+    [InlineData(OwnerPlan.RegionServer)]
+    [InlineData(OwnerPlan.Connected)]
+    public async Task Region_step_uses_a_chosen_free_square(OwnerPlan plan)
+    {
+        await using var f = AtRegionStep(plan);
+        f.Grid.MapRegions.Add(new MapRegion(Guid.NewGuid(), "Hub", 1000, 1000, 1));
+        using var client = await SignedInClientAsync(f);
+
+        using (var resp = await PostFormAsync(client, "/setup/region", RegionForm(" 1005", "1002 ")))
+            Assert.Equal("/setup/region?working=1", Location(resp));
+
+        await WaitForProgressAsync(client, p => !p.GetProperty("running").GetBoolean());
+        Assert.Contains("FirstRegionSpotError Welcome 1005,1002", f.Grid.Snapshot());
+        Assert.Contains("CreateRegion Welcome island at 1005,1002", f.Grid.Snapshot());
+        var region = Assert.Single(f.Store.LoadOrCreate().Regions);
+        Assert.Equal((1005, 1002), (region.X, region.Y));
+    }
+
+    [Theory]
+    [InlineData(OwnerPlan.RegionServer)]
+    [InlineData(OwnerPlan.Connected)]
+    public async Task Region_step_refuses_a_square_taken_on_the_grids_map_like_the_add_page(OwnerPlan plan)
+    {
+        await using var f = AtRegionStep(plan);
+        f.Grid.MapRegions.Add(new MapRegion(Guid.NewGuid(), "Hub", 1000, 1000, 2));
+        using var client = await SignedInClientAsync(f);
+
+        using var resp = await PostFormAsync(client, "/setup/region", RegionForm("1001", "1001"));
+
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+        var page = new HtmlParser().ParseDocument(await resp.Content.ReadAsStringAsync(Ct));
+        Assert.Equal(RegionAdvice.Placement(new PlacementCheck(false, "Hub", [])), page.QuerySelector("[data-valmsg-for=X]")?.TextContent.Trim());
+        Assert.Equal("That spot is taken by Hub.", page.QuerySelector("[data-valmsg-for=X]")?.TextContent.Trim());
+        // The owner's choices stay in the form.
+        Assert.Equal("1001", page.QuerySelector("input[name=X]")?.GetAttribute("value"));
+        Assert.Equal("Welcome", page.QuerySelector("input[name=RegionName]")?.GetAttribute("value"));
+        Assert.DoesNotContain(f.Grid.Snapshot(), c => c.StartsWith("CreateRegion", StringComparison.Ordinal));
+        Assert.False(f.Store.LoadOrCreate().Setup.RegionCreated);
+    }
+
+    [Theory]
+    [InlineData("abc", "1000")]
+    [InlineData("1000", "")]
+    [InlineData("65535", "1000")]
+    [InlineData("-1", "1000")]
+    public async Task Region_step_refuses_a_square_off_the_map_like_the_add_page(string x, string y)
+    {
+        await using var f = AtRegionStep(OwnerPlan.Local);
+        using var client = await SignedInClientAsync(f);
+
+        using var resp = await PostFormAsync(client, "/setup/region", RegionForm(x, y));
+
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+        var page = new HtmlParser().ParseDocument(await resp.Content.ReadAsStringAsync(Ct));
+        Assert.Equal(RegionPlacement.OffMap, page.QuerySelector("[data-valmsg-for=X]")?.TextContent.Trim());
+        Assert.DoesNotContain(f.Grid.Snapshot(), c => c.StartsWith("CreateRegion", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Region_step_without_a_square_places_the_region_itself()
+    {
+        await using var f = AtRegionStep(OwnerPlan.RegionServer);
+        using var client = await SignedInClientAsync(f);
+
+        using (var resp = await PostFormAsync(client, "/setup/region", RegionForm("", " ")))
+            Assert.Equal("/setup/region?working=1", Location(resp));
+
+        await WaitForProgressAsync(client, p => !p.GetProperty("running").GetBoolean());
+        Assert.Contains("CreateRegion Welcome island", f.Grid.Snapshot());
+        Assert.DoesNotContain(f.Grid.Snapshot(), c => c.StartsWith("FirstRegionSpotError", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Region_step_starts_with_the_chosen_square_when_the_grid_does_not_answer_the_check()
+    {
+        // The run itself then reaches the grid first and says it doesn't answer, as without a chosen square.
+        await using var f = AtRegionStep(OwnerPlan.RegionServer);
+        using var client = await SignedInClientAsync(f);
+        f.Grid.SpotFailure = new GridAssetUnreachableException("192.168.1.5", 8002);
+
+        using (var resp = await PostFormAsync(client, "/setup/region", RegionForm("1005", "1002")))
+            Assert.Equal("/setup/region?working=1", Location(resp));
+
+        await WaitForProgressAsync(client, p => !p.GetProperty("running").GetBoolean());
+        Assert.Contains("CreateRegion Welcome island at 1005,1002", f.Grid.Snapshot());
+    }
+
     [Fact]
     public async Task Region_step_runs_in_the_background_once_and_reports_ready()
     {

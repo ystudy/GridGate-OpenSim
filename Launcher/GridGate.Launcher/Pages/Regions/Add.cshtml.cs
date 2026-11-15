@@ -87,10 +87,10 @@ public sealed class AddModel(IGridController grid, RegionJob job, Func<long?> fr
             ModelState.AddModelError(nameof(Type), "Pick what your region should look like.");
         else if (!TryParse(Size, out size) || size is < 1 or > RegionPlacement.MaxSize)
             ModelState.AddModelError(nameof(Size), "A region is 1 to 16 squares on each side.");
-        else if (!TryParse(X, out x) || !TryParse(Y, out y) || !RegionPlacement.OnMap(x, y, size))
-            ModelState.AddModelError(nameof(X), "That spot is off the map.");
-        else if (RegionPlacement.Check(s, x, y, size) is { Ok: false } taken)
-            ModelState.AddModelError(nameof(X), RegionAdvice.Placement(taken));
+        else if (!TryParse(X, out x) || !TryParse(Y, out y))
+            ModelState.AddModelError(nameof(X), RegionPlacement.OffMap);
+        else if (RegionPlacement.SpotError(s, x, y, size) is { } spotError)
+            ModelState.AddModelError(nameof(X), spotError);
         else if (Group != OwnValue && Groups.FirstOrDefault(g => g.Value == Group) is null)
             ModelState.AddModelError(nameof(Group), "Pick how the region should run.");
         else if (Groups.FirstOrDefault(g => g.Value == Group) is { Running: true } running && !Confirm.Contains(running.Value))
@@ -104,8 +104,7 @@ public sealed class AddModel(IGridController grid, RegionJob job, Func<long?> fr
         return Redirect(WorkingUrl);
     }
 
-    private static bool TryParse(string? text, out int value) =>
-        int.TryParse(text?.Trim(), NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out value);
+    private static bool TryParse(string? text, out int value) => RegionPlacement.TryParse(text, out value);
 
     /// <summary>The job's state, and the groups of regions that can be shared with.</summary>
     private void Load(bool showResult)
@@ -133,7 +132,7 @@ public sealed class AddModel(IGridController grid, RegionJob job, Func<long?> fr
         if (TryParse(X, out var x) && TryParse(Y, out var y))
         {
             PlacementText = !RegionPlacement.OnMap(x, y, size)
-                ? "That spot is off the map."
+                ? RegionPlacement.OffMap
                 : RegionAdvice.Placement(RegionPlacement.Check(grid.CurrentSettings(), x, y, size));
         }
     }

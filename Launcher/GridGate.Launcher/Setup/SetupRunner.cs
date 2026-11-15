@@ -139,20 +139,23 @@ public sealed class SetupRunner(
         finally { Volatile.Write(ref _creatingOwner, 0); }
     }
 
-    /// <summary>Step 3: creates the region in the background, reporting to <see cref="SetupProgress"/>; false while one is already being created.</summary>
-    public bool TryStartRegion(string name, string content)
+    /// <summary>
+    /// Step 3: creates the region in the background, at the map square <paramref name="at"/> when the owner chose one,
+    /// reporting to <see cref="SetupProgress"/>; false while one is already being created.
+    /// </summary>
+    public bool TryStartRegion(string name, string content, (int X, int Y)? at = null)
     {
         if (!progress.TryBegin()) return false;
-        background.Run("setup region", ct => CreateRegionAsync(name, content, ct));
+        background.Run("setup region", ct => CreateRegionAsync(name, content, at, ct));
         return true;
     }
 
-    private async Task CreateRegionAsync(string name, string content, CancellationToken ct)
+    private async Task CreateRegionAsync(string name, string content, (int X, int Y)? at, CancellationToken ct)
     {
         try
         {
             await EnsureGridAsync(progress, ct);
-            await grid.CreateRegionAsync(name, content, ct, progress);
+            await grid.CreateRegionAsync(name, content, ct, progress, at);
             progress.Complete();
             log.LogInformation("Setup: the region {Name} is ready.", name);
         }

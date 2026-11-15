@@ -112,9 +112,26 @@ public interface IGridController
     /// <summary>
     /// <paramref name="content"/> is "starter" or "island". <paramref name="progress"/> hears the plain-language stage
     /// as each real step begins: "Creating your region", "Loading the region content",
-    /// "Waiting for the region to accept logins".
+    /// "Waiting for the region to accept logins". <paramref name="at"/> is the map square the owner chose; without it the
+    /// region takes <see cref="FirstRegionSpotAsync"/>'s. A chosen square that is off the map or taken (by this computer or,
+    /// on a plan that uses another computer's grid, by a region on that grid's map) throws <see cref="ArgumentException"/>
+    /// with <see cref="FirstRegionSpotErrorAsync"/>'s text, before anything changes.
     /// </summary>
-    Task CreateRegionAsync(string name, string content, CancellationToken ct, IProgress<string>? progress = null);
+    Task CreateRegionAsync(string name, string content, CancellationToken ct, IProgress<string>? progress = null, (int X, int Y)? at = null);
+
+    /// <summary>
+    /// The square <see cref="CreateRegionAsync"/> gives the first region called <paramref name="name"/> when the owner
+    /// chooses none: the first free one from 1000,1000. Null on a Connected Server whose squares near 1000,1000 are all
+    /// taken. Throws a <see cref="GridUnreachableException"/> when the other computer's grid doesn't answer.
+    /// </summary>
+    Task<(int X, int Y)?> FirstRegionSpotAsync(string name, CancellationToken ct);
+
+    /// <summary>
+    /// Why the first region called <paramref name="name"/> can't go at (<paramref name="x"/>, <paramref name="y"/>), in the
+    /// Add page's words (<see cref="RegionPlacement.SpotError"/>), or null when it can. Throws a
+    /// <see cref="GridUnreachableException"/> when the other computer's grid doesn't answer.
+    /// </summary>
+    Task<string?> FirstRegionSpotErrorAsync(string name, int x, int y, CancellationToken ct);
 
     GridStatus GetStatus();
 

@@ -112,6 +112,30 @@ public sealed class RegionPlacementTests
     }
 
     [Fact]
+    public void SpotError_says_what_holds_the_square_here_or_on_the_grids_map()
+    {
+        IReadOnlyList<MapRegion> elsewhere = [new(Guid.NewGuid(), "Hub", 1005, 1000, 2)];
+
+        Assert.Equal("That spot is taken by Home.", RegionPlacement.SpotError(With(Home), 1000, 1000, 1, elsewhere: elsewhere));
+        Assert.Equal("That spot is taken by Hub.", RegionPlacement.SpotError(With(Home), 1006, 1001, 1, elsewhere: elsewhere));
+        Assert.Null(RegionPlacement.SpotError(With(Home), 1001, 1000, 1, elsewhere: elsewhere)); // a neighbour is fine
+        Assert.Null(RegionPlacement.SpotError(With(Home), 1000, 1000, 1, ignore: Home.Uuid));
+        // Our own region on the grid's map is the local one, not someone else's.
+        Assert.Null(RegionPlacement.SpotError(With(Home), 1001, 1000, 1, elsewhere: [new(Home.Uuid, "Home", 1001, 1000, 1)]));
+    }
+
+    [Theory]
+    [InlineData(-1, 1000, 1)]
+    [InlineData(1000, -1, 1)]
+    [InlineData(65535, 1000, 1)]
+    [InlineData(65534, 1000, 2)]
+    public void SpotError_says_a_square_off_the_map_is_off_the_map(int x, int y, int size)
+    {
+        Assert.Equal(RegionPlacement.OffMap, RegionPlacement.SpotError(With(), x, y, size));
+        Assert.Equal("That spot is off the map.", RegionPlacement.OffMap);
+    }
+
+    [Fact]
     public void FirstFreeIn_skips_used_squares()
     {
         IReadOnlyList<MapRegion> elsewhere = [new(Guid.NewGuid(), "Hub", 1000, 1000, 2)];
