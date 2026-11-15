@@ -35,6 +35,7 @@ public sealed class MoneyServiceTests(MoneyMariaDb maria) : IClassFixture<MoneyM
     private HttpClient? _http;
     private string _fingerprint = "";
     private int _port;
+    private MoneyMode _mode;
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
@@ -49,6 +50,7 @@ public sealed class MoneyServiceTests(MoneyMariaDb maria) : IClassFixture<MoneyM
     private async Task<MoneyTestDatabase> StartAsync(MoneyMode mode = MoneyMode.Play, Func<LauncherSettings, LauncherSettings>? dbOverride = null,
         Func<X509Certificate2>? certificate = null, int? port = null, OwnerPlan? plan = null)
     {
+        _mode = mode;
         var db = await maria.FreshAsync();
         await db.EnsureSchemaAsync();
         await db.AddUser(A);
@@ -67,12 +69,12 @@ public sealed class MoneyServiceTests(MoneyMariaDb maria) : IClassFixture<MoneyM
         var dbSettings = dbOverride?.Invoke(settings) ?? settings;
         var time = TimeProvider.System;
         var presence = new PresenceCheck(MoneyConnections.Robust(() => dbSettings));
-        var ledger = new MoneyLedger(MoneyConnections.Money(() => dbSettings), () => settings.Money, () => mode, presence.IsLocalUserAsync, presence.IsKnownVisitorAsync, time);
+        var ledger = new MoneyLedger(MoneyConnections.Money(() => dbSettings), () => settings.Money, () => _mode, presence.IsLocalUserAsync, presence.IsKnownVisitorAsync, time);
         var loggers = LoggerFactory.Create(b => b.AddProvider(new QueueLoggerProvider(_logs)).SetMinimumLevel(LogLevel.Trace));
         Directory.CreateDirectory(_dir);
         var cert = MoneyCertificate.LoadOrCreate(Path.Combine(_dir, MoneyCertificate.FileName), time);
         _fingerprint = MoneyCertificate.Fingerprint(cert);
-        _host = new MoneyServiceHost(ledger, presence, () => settings, () => mode, certificate ?? (() => cert), new MoneyAuthFailures(time, loggers.CreateLogger<MoneyAuthFailures>()), loggers, _status);
+        _host = new MoneyServiceHost(ledger, presence, () => settings, () => _mode, certificate ?? (() => cert), new MoneyAuthFailures(time, loggers.CreateLogger<MoneyAuthFailures>()), loggers, _status);
         await _host.StartAsync(Ct);
         _http = new HttpClient(new SocketsHttpHandler
         {
@@ -357,6 +359,45 @@ public sealed class MoneyServiceTests(MoneyMariaDb maria) : IClassFixture<MoneyM
         });
         Assert.Equal("ok", (string?)hold!["code"]);
         return hold["holdId"]!.GetValue<long>();
+    }
+
+    [Theory]
+    [InlineData(MoneyMode.Off)]
+    [InlineData(MoneyMode.Gloebit)]
+    public async Task Payments_stop_as_soon_as_coins_are_switched_off(MoneyMode next)
+    {
+        // Money review 2026-11-15, L-6: the mode was read only when the service started.
+        await StartAsync();
+        var (_, open, _) = await Post("hold", new
+        {
+            txnId = Guid.NewGuid(), kind = "object", buyer = WhoA(), seller = new { agentId = B, home = "" }, amount = 25, regionId = Here,
+            objectId = Guid.NewGuid(), objectName = "dress",
+        });
+        var holdId = open!["holdId"]!.GetValue<long>();
+
+        _mode = next;
+
+        foreach (var (path, body) in new (string, object)[]
+        {
+            ("transfer", new { txnId = Guid.NewGuid(), type = "pay_avatar", from = WhoA(), to = new { agentId = B, home = "" }, amount = 10, regionId = Here }),
+            ("balance", WhoA()),
+            ("economy", new { }),
+            ("health", new { }),
+        })
+        {
+            var (status, answer, _) = await Post(path, body);
+            Assert.Equal(HttpStatusCode.OK, status);
+            Assert.Equal("unavailable", (string?)answer!["code"]);
+        }
+        // A bad key is still refused as one.
+        Assert.Equal(HttpStatusCode.Unauthorized, (await Post("balance", WhoA(), key: "wrong")).Status);
+        // A purchase already paid for still finishes.
+        var (_, done, _) = await Post("hold/complete", new { txnId = Guid.NewGuid(), holdId });
+        Assert.Equal("ok", (string?)done!["code"]);
+
+        _mode = MoneyMode.Play;
+        var (_, again, _) = await Post("transfer", new { txnId = Guid.NewGuid(), type = "pay_avatar", from = WhoA(), to = new { agentId = B, home = "" }, amount = 10, regionId = Here });
+        Assert.Equal("ok", (string?)again!["code"]);
     }
 
     [Fact]

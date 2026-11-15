@@ -87,9 +87,12 @@ public sealed partial class MoneyLedger(
 
     /// <summary>
     /// Locks both accounts in id order, applies any allowance due, then debits (guarded unless <paramref name="guarded"/> is
-    /// false: settling a hold), credits and writes the entry.
+    /// false: settling a hold), credits and writes the entry. <paramref name="staffTakes"/> is staff taking coins back or
+    /// refunding: the balance is still checked, but a frozen account isn't refused, since freezing an account is how staff
+    /// stop it spending while they claw coins back (money review 2026-11-15, L-7).
     /// </summary>
-    private async Task<MoneyResult> MoveBetweenAsync(MySqlConnection conn, MySqlTransaction tx, long fromId, long toId, long amount, Entry entry, bool guarded, CancellationToken ct)
+    private async Task<MoneyResult> MoveBetweenAsync(MySqlConnection conn, MySqlTransaction tx, long fromId, long toId, long amount, Entry entry, bool guarded, CancellationToken ct,
+        bool staffTakes = false)
     {
         var first = await LockAsync(conn, tx, Math.Min(fromId, toId), ct);
         var second = await LockAsync(conn, tx, Math.Max(fromId, toId), ct);
@@ -98,10 +101,10 @@ public sealed partial class MoneyLedger(
 
         if (guarded)
         {
-            if (payer.Frozen) return MoneyResult.Of(MoneyOutcome.AccountFrozen);
+            if (payer.Frozen && !staffTakes) return MoneyResult.Of(MoneyOutcome.AccountFrozen);
             var debited = await ExecAsync(conn, tx,
-                "UPDATE accounts SET balance = balance - @amt WHERE id = @id AND frozen = 0 AND (kind = 'Bank' OR balance >= @amt)",
-                ct, ("@amt", amount), ("@id", payer.Id));
+                "UPDATE accounts SET balance = balance - @amt WHERE id = @id AND (frozen = 0 OR @staff) AND (kind = 'Bank' OR balance >= @amt)",
+                ct, ("@amt", amount), ("@id", payer.Id), ("@staff", staffTakes));
             if (debited != 1) return MoneyResult.Of(MoneyOutcome.NotEnough);
         }
         else

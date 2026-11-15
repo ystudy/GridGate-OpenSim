@@ -116,6 +116,33 @@ public sealed class MoneyLedgerStaffTests(MoneyMariaDb maria) : IClassFixture<Mo
     }
 
     [Fact]
+    public async Task Staff_take_back_from_a_frozen_account()
+    {
+        // Money review 2026-11-15, L-7: freezing an account is how staff stop it spending while they claw coins back.
+        var (ledger, db, _) = await MoneyLedgerTransferTests.Setup(maria);
+        await ledger.BalanceAsync(AccountRef.Resident(A), Ct);
+        await ledger.SetAccountFrozenAsync(AccountRef.Resident(A), true, Ct);
+
+        Assert.Equal(MoneyOutcome.Ok, (await ledger.TakeAsync(AccountRef.Resident(A), 40, Staff, Ct)).Outcome);
+        Assert.Equal(60, await Of(db, A));
+        // Still never below zero.
+        Assert.Equal(MoneyOutcome.NotEnough, (await ledger.TakeAsync(AccountRef.Resident(A), 61, Staff, Ct)).Outcome);
+        Assert.Equal(MoneyOutcome.AccountFrozen, (await ledger.TransferAsync(Pay(A, B, 1), Ct)).Outcome);
+    }
+
+    [Fact]
+    public async Task Staff_refund_from_a_frozen_account()
+    {
+        var (ledger, db, _) = await MoneyLedgerTransferTests.Setup(maria);
+        var paid = await ledger.TransferAsync(Pay(A, B, 30), Ct);
+        await ledger.SetAccountFrozenAsync(AccountRef.Resident(B), true, Ct);
+
+        Assert.Equal(MoneyOutcome.Ok, (await ledger.RefundAsync(paid.EntryId!.Value, Staff, Ct)).Outcome);
+        Assert.Equal(100, await Of(db, A));
+        Assert.Equal(100, await Of(db, B));
+    }
+
+    [Fact]
     public async Task Totals_add_up()
     {
         var (ledger, _, _) = await MoneyLedgerTransferTests.Setup(maria);

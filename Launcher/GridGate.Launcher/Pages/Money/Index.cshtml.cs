@@ -91,7 +91,9 @@ public sealed class IndexModel(IGridController grid, MoneyGate gate, IMoneyBooks
         if (!ModelState.IsValid) Error = "Every number must be a whole number.";
         else Error = MoneyPageRules.Problem(next, MoneyPageRules.Offered(gate));
         // Coins and Gloebit are separate books (design §10): the owner confirms that before switching.
-        if (Error is null && MoneyPageRules.CrossesGloebit(before.Mode, next.Mode) && !ConfirmSwitch)
+        // A money database is made the first time coins run (money design §7.1).
+        var coinsUsed = grid.CurrentSettings().Db.MoneyPassword != "";
+        if (Error is null && MoneyPageRules.CrossesGloebit(before.Mode, next.Mode, coinsUsed, before.Gloebit is { Key.Length: > 0 }) && !ConfirmSwitch)
             Error = MoneyPageRules.SwitchWarning + " Tick the box to switch.";
         if (Error is not null) _refused = next;
         if (Error is null)

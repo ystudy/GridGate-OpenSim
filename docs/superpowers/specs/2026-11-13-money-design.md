@@ -229,9 +229,9 @@ What it handles (research notes in `SampleMoneyModule.cs`, Gloebit's module, and
 | Buy object | client `OnObjectBuy` | Use `remoteClient.AgentId`, not the packet's. Check the part is a root, is for sale, and that price and sale type match. For "contents", check there is something transferable. Hold, then call `IBuySellModule.BuyObject`. **True: complete. False: return at once.** |
 | Buy land | scene `OnValidateLandBuy` / `OnLandBuy` | The buyer is never charged for land they don't get. The seller is the parcel's owner at the time of sale. Hold, and complete only once the new owner is confirmed; otherwise return. The builder chooses the sequencing. Gloebit re-runs the land validation itself, then confirms the new owner (Gloebit `GloebitMoneyModule.cs:3166`). |
 | `llGiveMoney`, `llTransferLindenDollars` | `ObjectGiveMoney` | Refuse an amount of 0 or less. Transfer from the object owner, with type "script payout", the object id and name. The service refuses unless the owner opted in, the daily limit allows it, and grid-wide script payouts are on (§7.2, §7.5). |
-| Upload fee | `UploadCovered` / `ApplyUploadCharge` | Check, then charge to Fees. |
+| Upload fee | `UploadCovered` / `ApplyUploadCharge` | Check, then charge to Fees. Until the money service first answers with the grid's fees, uploads and classifieds aren't covered, so nothing is offered free; visitor payments and payouts are off too (money review 2026-11-15, R-8). |
 | Group join fee, classified ads | `AmountCovered` / `ApplyCharge` | Check first. OpenSim charges *after* the action (`GroupsModule.cs:1151`, `UserProfileModule.cs:812`). If the charge then fails, the entry is recorded as uncollected and isn't retried. Group creation is always free (§8.8). |
-| Parcel pass | `MoveMoney` (bool) | Transfer. |
+| Parcel pass | `MoveMoney` (bool) | Transfer. The module refuses a pass to group-owned land itself (money review 2026-11-15, R-9). |
 | Economy data | client `OnEconomyDataRequest` | Send the prices the owner set, the same numbers the service charges. The sample sends prices it never charges (`SampleMoneyModule.cs:114`). |
 | Region entry | `OnCompleteMovementToRegion` (as Gloebit) | Push the balance, so the status bar is right after a teleport. |
 
@@ -503,7 +503,8 @@ audit log.
 - **Settings** (§7.5).
 - **Totals:** coins in existence, coins held by residents, by visitors, in Fees, and today's movements.
 - **People:** search an avatar and see their balance and history. **Give** and **take back** coins, with a required reason.
-  **Freeze** or unfreeze one account.
+  **Freeze** or unfreeze one account. A frozen account can't spend, but staff can still take coins back from it or refund
+  an entry paid to it, so freezing comes first when they respond to fraud (money review 2026-11-15, L-7).
 - **Freeze all payments:** an emergency switch, with the reason shown on the dashboard.
 - **Refund an entry:** reverses one movement, with a reason. The original stays in the history.
 - **Region Servers** (Grid Asset Server only): pairing code, paired servers, remove.
@@ -556,11 +557,18 @@ Visitors have no website account, so they see only the viewer's balance, and the
 | Off → Play or Real | Creates the `money` database the first time. Existing residents get the starting balance the first time they appear. |
 | Play → Real | §9.2 first. Balances carry over. A warning repeats that coin games now count as gambling. |
 | Real → Play | Allowed, with a strong warning that people paid real money for coins. Balances are kept. |
-| Play or Real → Off | Payments stop. All data is kept; turning back on restores everything. |
-| Play or Real → Gloebit | Warning: GridGate coin balances don't move to Gloebit. They are kept, not shown, and come back if the owner switches back. |
+| Play or Real → Off | Payments stop at once: the money service refuses everything but finishing a purchase already paid into Holding (money review 2026-11-15, L-6). All data is kept; turning back on restores everything. |
+| Play or Real → Gloebit | Warning: GridGate coin balances don't move to Gloebit. They are kept, not shown, and come back if the owner switches back. Coin payments stop at once, as for Off. |
 | Gloebit → Play or Real | Same warning the other way. Gloebit balances belong to Gloebit. |
 
-A mode change takes effect when regions restart. The page says so, and offers to restart them (call).
+The warning is asked for whatever the previous mode: going through Off doesn't skip it (money review 2026-11-15, H-5). It is
+asked when switching to Gloebit once coins have ever run here, and when switching to coins once a Gloebit app was ever saved.
+
+A mode change takes effect when regions restart. The page says so, and offers to restart them (call). A Region Server reads
+its grid's mode again each time it checks that the Grid Asset Server answers (every 30 seconds). When its grid leaves
+Gloebit, it restarts its own running regions without Gloebit at once, since Gloebit needs nothing from the Grid Asset
+Server and would otherwise keep taking real-dollar payments there (money review 2026-11-15, H-4). Coins need no such
+restart: the grid's money service already refuses them.
 
 ## 11. Threats and how the design answers them
 
