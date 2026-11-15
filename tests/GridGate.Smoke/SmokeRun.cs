@@ -38,7 +38,9 @@ public sealed class SmokeRun
         string root = Path.Combine(Path.GetTempPath(), $"gg smoke {DateTime.Now:yyyyMMdd-HHmmss}");
         _sandboxBin = Path.Combine(root, "bin");
         _httpPort = FreeTcpPort();
-        _regionPort = FreeTcpPort();
+        // The region listens for viewers on UDP, on every address. A free TCP port can still be refused for UDP on Windows
+        // (error 10013: a port in a range the system reserved), which failed the smoke run at random.
+        _regionPort = FreeUdpPort();
     }
 
     public string SandboxBin => _sandboxBin;
@@ -216,6 +218,12 @@ public sealed class SmokeRun
         int port = ((IPEndPoint)l.LocalEndpoint).Port;
         l.Stop();
         return port;
+    }
+
+    static int FreeUdpPort()
+    {
+        using var u = new UdpClient(new IPEndPoint(IPAddress.Any, 0));
+        return ((IPEndPoint)u.Client.LocalEndPoint!).Port;
     }
 
     // Skips state a previous run may have left in bin/: the Mono.Addins registry, the asset cache, logs, databases, and output of retired add-ons.
