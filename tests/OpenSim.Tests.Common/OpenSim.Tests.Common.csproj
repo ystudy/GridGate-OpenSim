@@ -3,7 +3,7 @@
   <!--
     OpenSim's own test helpers (OpenSim/Tests/Common), built as the library upstream's tests expect. It must be named
     OpenSim.Tests.Common: SceneHelpers loads its storage plugins from "OpenSim.Tests.Common.dll". Used by
-    GridGate.Lsl.Tests only; it is not shipped and doesn't build into bin/.
+    GridGate.Lsl.Tests and GridGate.Money.Tests only; it is not shipped and doesn't build into bin/.
   -->
   <PropertyGroup>
     <OutputType>Library</OutputType>
