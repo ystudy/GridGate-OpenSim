@@ -18,7 +18,8 @@ namespace GridGate.Region.Money;
 /// <para>A teleport or crossing within the grid is handed off only once it has completed: when the region left lets the
 /// avatar go, or, when the destination is one of this program's regions, when the avatar arrives there, ahead of that
 /// arrival. A teleport or crossing that fails hands nobody over. A teleport to another grid is handed off when it starts.</para>
-/// <para>Reports go oldest first, except that a waiting handoff goes ahead of other people's waiting arrivals. A send
+/// <para>Reports go oldest first, except that a waiting handoff goes ahead of other people's waiting arrivals (and the
+/// reports behind them), never ahead of an earlier report of its own session. A send
 /// answered "unavailable" is tried again after 1, 3, 9 and 17 seconds with the same id, then dropped; any other answer is
 /// final. NPCs are never reported.</para>
 /// <para>While the service can't be reached the queue is kept short. A report other than health that is older than
@@ -53,10 +54,12 @@ internal sealed class PlaceReporter : IDisposable
     private readonly object _gate = new();
     // Guarded by _gate: the reports waiting, oldest first; how many the cap dropped since the loop last said so.
     private readonly LinkedList<Report> _waiting = new();
-    private readonly SemaphoreSlim _queued = new(0);
+    // Set when a report is queued; the loop waits on it only when it finds nothing to send. Never above 1.
+    private readonly SemaphoreSlim _queued = new(0, 1);
     // Guarded by _gate: by avatar, the teleport or crossing each is in the middle of, until it is handed off or fails.
     private readonly Dictionary<Guid, Leaving> _leaving = new();
     private int _overflowed;
+    private int _emptyPasses;
     private bool _disposed;
     private TaskCompletionSource _idle = Idle();
 
@@ -92,8 +95,13 @@ internal sealed class PlaceReporter : IDisposable
     {
         if (sp.IsNPC) return;
         var (id, session, agent, region) = (Guid.NewGuid(), sp.ControllingClient.SessionId.Guid, sp.UUID.Guid, sp.Scene.RegionInfo.RegionID.Guid);
-        if (Take(agent, l => l.To == region) is { } leaving) Handoff(leaving);
-        Enqueue("an arrival", Kind.Arrival, session, ct => _service.ArrivedAsync(id, session, agent, region, ct));
+        // Taken and queued under one lock: the region left, letting the avatar go on another thread, either finds the move
+        // already taken or has queued its handoff before this arrival is queued.
+        lock (_gate)
+        {
+            if (Take(agent, l => l.To == region) is { } leaving) Handoff(leaving);
+            Enqueue("an arrival", Kind.Arrival, session, ct => _service.ArrivedAsync(id, session, agent, region, ct));
+        }
     }
 
     /// <summary>
@@ -146,7 +154,11 @@ internal sealed class PlaceReporter : IDisposable
     public void Released(ScenePresence sp)
     {
         if (sp.IsNPC) return;
-        if (Take(sp.UUID.Guid, l => l.From == sp.Scene.RegionInfo.RegionID.Guid) is { } leaving) Handoff(leaving);
+        var (agent, region) = (sp.UUID.Guid, sp.Scene.RegionInfo.RegionID.Guid);
+        // Taken and queued under one lock, so the arrival it vouches for, in another of this program's regions, is never
+        // queued between the two.
+        lock (_gate)
+            if (Take(agent, l => l.From == region) is { } leaving) Handoff(leaving);
     }
 
     /// <summary>The regions this program runs, at <see cref="Protocol"/>. Replaces a health report still waiting.</summary>
@@ -155,6 +167,12 @@ internal sealed class PlaceReporter : IDisposable
         var copy = regions.ToArray();
         Enqueue("a health report", Kind.Health, Guid.Empty, ct => _service.HealthAsync(Protocol, copy, ct));
     }
+
+    /// <summary>Runs right after a move is taken to be handed off, before its reports are queued (for tests).</summary>
+    internal Action? AfterTake { get; set; }
+
+    /// <summary>How many times the loop has looked for a report and found none (for tests).</summary>
+    internal int EmptyPasses => Volatile.Read(ref _emptyPasses);
 
     /// <summary>Completes once every report queued so far has been answered or dropped (for tests).</summary>
     public Task FlushAsync()
@@ -220,15 +238,16 @@ internal sealed class PlaceReporter : IDisposable
         lock (_gate) _leaving.Remove(agent);
     }
 
-    /// <summary>Takes what <paramref name="agent"/> is leaving by, when it <paramref name="matches"/>; null otherwise.</summary>
+    /// <summary>
+    /// Takes what <paramref name="agent"/> is leaving by, when it <paramref name="matches"/>; null otherwise. The caller
+    /// holds <c>_gate</c> until it has queued what follows.
+    /// </summary>
     private Leaving? Take(Guid agent, Func<Leaving, bool> matches)
     {
-        lock (_gate)
-        {
-            if (!_leaving.TryGetValue(agent, out var leaving) || !matches(leaving)) return null;
-            _leaving.Remove(agent);
-            return leaving;
-        }
+        if (!_leaving.TryGetValue(agent, out var leaving) || !matches(leaving)) return null;
+        _leaving.Remove(agent);
+        AfterTake?.Invoke();
+        return leaving;
     }
 
     private static TaskCompletionSource Idle()
@@ -257,8 +276,10 @@ internal sealed class PlaceReporter : IDisposable
                 _overflowed++;
             }
             _waiting.AddLast(report);
-            // Inside the lock: Dispose, which disposes the semaphore, can't come between the check above and this.
-            _queued.Release();
+            // One signal at most: the loop looks at the whole queue each time it wakes, so signals that pile up would only
+            // make it spin through empty passes later. Inside the lock: Dispose, which disposes the semaphore, can't come
+            // between the check above and this, and no other Enqueue can see the count between the check and the release.
+            if (_queued.CurrentCount == 0) _queued.Release();
         }
     }
 
@@ -270,18 +291,20 @@ internal sealed class PlaceReporter : IDisposable
     }
 
     /// <summary>
-    /// The report to send next: the oldest, except that waiting arrivals let a handoff of someone else's go first. Each of
-    /// those arrivals may be held at the service for up to 10 seconds while its own handoff is on its way. A handoff never
-    /// goes ahead of an arrival of its own session, which may be what places the session where the handoff starts.
+    /// The report to send next: the oldest, except that waiting arrivals let a handoff go first. Each of those arrivals may
+    /// be held at the service for up to 10 seconds while its own handoff is on its way. A handoff goes ahead of other
+    /// sessions' reports only, never an earlier report of its own session: an arrival may be what places the session where
+    /// the handoff starts, and a cancel takes back an earlier teleport to another grid. Health belongs to no session and
+    /// holds nobody back.
     /// </summary>
     private LinkedListNode<Report>? Next()
     {
         if (_waiting.First is not { Value.Kind: Kind.Arrival } first) return _waiting.First;
-        var arriving = new HashSet<Guid>();
+        var waitingFor = new HashSet<Guid>();
         for (var node = first; node is not null; node = node.Next)
         {
-            if (node.Value.Kind == Kind.Handoff && !arriving.Contains(node.Value.Session)) return node;
-            if (node.Value.Kind == Kind.Arrival) arriving.Add(node.Value.Session);
+            if (node.Value.Kind == Kind.Handoff && !waitingFor.Contains(node.Value.Session)) return node;
+            if (node.Value.Session != Guid.Empty) waitingFor.Add(node.Value.Session);
         }
         return first;
     }
@@ -350,6 +373,7 @@ internal sealed class PlaceReporter : IDisposable
         if (stale > 0) Warn($"Dropped {Reports(stale)} older than {MaxAge.TotalMinutes:0} minutes, unsent.");
         if (report is null)
         {
+            Interlocked.Increment(ref _emptyPasses);
             lock (_gate)
                 if (_waiting.Count == 0) _idle.TrySetResult();
             await _queued.WaitAsync(ct).ConfigureAwait(false);

@@ -507,6 +507,82 @@ public sealed class PlaceReporterTests
     }
 
     /// <summary>
+    /// A handoff goes ahead of other people's waiting reports only. An earlier cancel of its own session holds it back: a
+    /// failed teleport to another grid is taken back before the next teleport's handoff goes.
+    /// </summary>
+    [Fact]
+    public async Task A_handoff_waits_behind_its_own_sessions_cancel()
+    {
+        using var held = new HeldReporter();
+        held.Here.Arrive(Stranger);
+        held.Places.Arrived(held.Here.Scene.GetScenePresence(Stranger));
+        held.Places.TeleportStarting(held.Client, Region.Guid, HeldReporter.To(1), gridLogout: true);
+        held.Places.TeleportFailed(held.Client, Region.Guid);
+        held.Teleport(2);
+
+        await held.ReleaseAndFlushAsync();
+
+        Assert.Equal(new[] { "handoff", "handoff", "arrived", "cancel", "handoff" }, held.Service.Places.Select(c => c.Method));
+        Assert.Equal(new[] { 0, 1, 2 }, held.HandedTo());
+    }
+
+    /// <summary>
+    /// A move between two of this program's regions: the region left lets the avatar go on one thread while the region
+    /// reached makes it root on another. Whichever way the two interleave, the handoff is queued before that arrival.
+    /// </summary>
+    [Fact]
+    public async Task A_handoff_being_queued_is_never_overtaken_by_the_arrival_it_vouches_for()
+    {
+        var here = Build();
+        here.Arrive(Buyer);
+        var leaving = here.Scene.GetScenePresence(Buyer);
+        var next = new SceneHelpers().SetupScene("Next region", TestHelpers.ParseTail(0x200), 1001, 1000);
+        try
+        {
+            var data = SceneHelpers.GenerateAgentData(Buyer);
+            var arriving = SceneHelpers.AddScenePresence(next, new TestClient(data, next), data);
+            var service = new FakeMoneyService();
+            using var places = new PlaceReporter(service, TimeProvider.System, _ => { });
+            Task? arrival = null;
+            places.AfterTake = () =>
+            {
+                // The region reached reports the arrival right after the region left has taken the move to hand off.
+                arrival = Task.Run(() => places.Arrived(arriving));
+                arrival.Wait(TimeSpan.FromMilliseconds(500));
+            };
+
+            places.Crossing(leaving, new GridRegion(next.RegionInfo));
+            places.Released(leaving);
+            await arrival!.WaitAsync(TimeSpan.FromSeconds(15), TestContext.Current.CancellationToken);
+            await places.FlushAsync().WaitAsync(TimeSpan.FromSeconds(15), TestContext.Current.CancellationToken);
+
+            Assert.Equal(new[] { "handoff", "arrived" }, service.Places.Select(c => c.Method));
+        }
+        finally
+        {
+            next.Close();
+        }
+    }
+
+    /// <summary>
+    /// A burst of reports leaves nothing behind for the loop: once they are sent it waits for the next one, after at most a
+    /// pass or two that find nothing to send.
+    /// </summary>
+    [Fact]
+    public async Task A_burst_of_reports_leaves_the_loop_waiting_not_spinning()
+    {
+        using var held = new HeldReporter();
+        for (var n = 1; n <= 200; n++) held.Teleport(n);
+        var before = held.Places.EmptyPasses;
+
+        await held.ReleaseAndFlushAsync();
+        await Task.Delay(200, TestContext.Current.CancellationToken);
+
+        Assert.Equal(201, held.HandedTo().Count);
+        Assert.InRange(held.Places.EmptyPasses - before, 0, 2);
+    }
+
+    /// <summary>
     /// No slower teleports: letting the avatar go returns at once while the service holds an earlier report, and reports go
     /// out one at a time.
     /// </summary>
