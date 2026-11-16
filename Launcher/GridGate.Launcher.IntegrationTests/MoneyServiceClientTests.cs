@@ -128,12 +128,16 @@ public sealed class MoneyServiceClientTests(MoneyMariaDb maria) : IClassFixture<
         Assert.Equal("ok", (await p2.ChargeAsync(Guid.NewGuid(), "upload_fee", ClientA, 3, null, There, Ct)).Code);
         Assert.Equal("wrong_region", (await p1.ChargeAsync(Guid.NewGuid(), "upload_fee", ClientA, 3, null, Here, Ct)).Code);
 
+        // Time passes between one move and the next, as it does in the world.
+        _rig!.LocationClock.Advance(TimeSpan.FromSeconds(5));
         Assert.Equal("ok", (await p2.HandoffAsync(Guid.NewGuid(), SessionA, There, Here, "crossing", Ct)).Code);
         Assert.Equal("ok", (await p1.ArrivedAsync(Guid.NewGuid(), SessionA, A, Here, Ct)).Code);
         // A teleport to another grid that fails is taken back; one that goes through leaves nothing to charge.
+        _rig.LocationClock.Advance(TimeSpan.FromSeconds(5));
         Assert.Equal("ok", (await p1.HandoffAsync(Guid.NewGuid(), SessionA, Here, Guid.NewGuid(), "other_grid", Ct)).Code);
         Assert.Equal("ok", (await p1.CancelHandoffAsync(SessionA, Here, Ct)).Code);
         Assert.Equal("ok", (await p1.ChargeAsync(Guid.NewGuid(), "upload_fee", ClientA, 3, null, Here, Ct)).Code);
+        _rig.LocationClock.Advance(TimeSpan.FromSeconds(5));
         Assert.Equal("ok", (await p1.HandoffAsync(Guid.NewGuid(), SessionA, Here, Guid.NewGuid(), "other_grid", Ct)).Code);
         Assert.Equal("unverified_avatar", (await p1.ChargeAsync(Guid.NewGuid(), "upload_fee", ClientA, 3, null, Here, Ct)).Code);
     }

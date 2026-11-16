@@ -440,6 +440,28 @@ public sealed class MoneyLocationsTests(MoneyMariaDb maria) : IClassFixture<Mone
         Assert.Equal(LocationState.LeftGrid, (await Where())!.State);
     }
 
+    /// <summary>
+    /// A cancel takes back the handoff that sent the session to another grid, even when an earlier handoff of the same
+    /// session was made at the same moment: which one is "newest" is never guessed from the time.
+    /// </summary>
+    [Fact]
+    public async Task Cancel_restores_even_when_handoffs_share_a_timestamp()
+    {
+        await StartAsync();
+        await LoggedInAtR1();
+        // The clock stands still: the teleport, its arrival and the teleport to another grid all happen at one moment.
+        var teleport = Guid.Parse("ffffffff-0000-0000-0000-000000000001");
+        var otherGrid = Guid.Parse("00000000-0000-0000-0000-000000000001");
+        Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, R5, id: teleport));
+        Assert.Equal(PlaceOutcome.Ok, (await _locations.ArrivedAsync(P1, SessionU, U, R5, Ct)).Outcome);
+        Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R5, Elsewhere, HandoffKind.OtherGrid, id: otherGrid));
+        Assert.Equal(1, await _db.Scalar($"SELECT COUNT(DISTINCT created) FROM `money`.`handoffs` WHERE session_id = '{SessionU}'"));
+
+        await _locations.CancelHandoffAsync(P1, SessionU, R5, Ct);
+
+        AssertAt(await Where(), R5, "p1", LocationState.Verified);
+    }
+
     [Fact]
     public async Task Gatekeeper_start_replaces_a_handed_place()
     {

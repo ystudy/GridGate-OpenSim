@@ -117,22 +117,25 @@ public sealed class MoneyLocations(Func<CancellationToken, Task<MySqlConnection>
                 // recognised.
                 await ExecAsync(conn, tx, $"UPDATE handoffs SET kind = @replaced WHERE session_id = @s AND kind IN {OpenKinds}", ct,
                     ("@replaced", Replaced), ("@s", sessionId.ToString()));
+                // One reading of the clock for the handoff and the location it moves: a cancel finds the handoff that made the
+                // session "left the grid" by that shared time.
+                var now = Now;
                 await ExecAsync(conn, tx, """
                     INSERT INTO handoffs (id, session_id, from_key, from_region, to_region, kind, created)
                     VALUES (@id, @s, @k, @from, @to, @kind, @t)
                     """, ct, ("@id", handoffId.ToString()), ("@s", sessionId.ToString()), ("@k", grant.KeyId), ("@from", fromRegion.ToString()),
-                    ("@to", toRegion.ToString()), ("@kind", kind.ToString()), ("@t", Now));
+                    ("@to", toRegion.ToString()), ("@kind", kind.ToString()), ("@t", now));
 
                 // A teleport to another grid is "left the grid" at once. Its handoff row is kept so a retry is recognised and
                 // a failed teleport can be taken back: arrivals never match that kind.
                 if (kind == HandoffKind.OtherGrid)
                     await ExecAsync(conn, tx, "UPDATE session_locations SET region_id = NULL, key_id = NULL, state = @st, updated = @t WHERE session_id = @s", ct,
-                        ("@st", LocationState.LeftGrid.ToString()), ("@t", Now), ("@s", sessionId.ToString()));
+                        ("@st", LocationState.LeftGrid.ToString()), ("@t", now), ("@s", sessionId.ToString()));
                 // A teleport or crossing has completed (the region left lets the avatar go only then): the session is no longer
                 // there, and nobody may charge it until the region it went to reports the arrival.
                 else
                     await ExecAsync(conn, tx, "UPDATE session_locations SET region_id = @to, state = @st, updated = @t WHERE session_id = @s", ct,
-                        ("@to", toRegion.ToString()), ("@st", LocationState.Handed.ToString()), ("@t", Now), ("@s", sessionId.ToString()));
+                        ("@to", toRegion.ToString()), ("@st", LocationState.Handed.ToString()), ("@t", now), ("@s", sessionId.ToString()));
                 return (PlaceOutcome.Ok, true);
             }, ct);
         }
@@ -155,18 +158,15 @@ public sealed class MoneyLocations(Func<CancellationToken, Task<MySqlConnection>
         {
             await InTransactionAsync(async (conn, tx) =>
             {
-                if (await LockAsync(conn, tx, sessionId, ct) is not { IsPlaceholder: false, Location.State: LocationState.LeftGrid }) return (false, false);
-                // The session's newest handoff, whatever its kind, must be this key's teleport to another grid from there.
-                string? id = null;
-                await using (var cmd = Command(conn, tx, """
-                    SELECT id, from_key, from_region, kind, created FROM handoffs WHERE session_id = @s ORDER BY created DESC LIMIT 1
-                    """, ("@s", sessionId.ToString())))
-                await using (var r = await cmd.ExecuteReaderAsync(ct))
-                    if (await r.ReadAsync(ct) && r.GetString(1) == grant.KeyId && ToGuid(r.GetValue(2)) == fromRegion
-                        && r.GetString(3) == nameof(HandoffKind.OtherGrid) && r.GetDateTime(4) > Now - HandoffLife)
-                        id = r.GetValue(0).ToString();
-                if (id is null) return (false, false);
-                await ExecAsync(conn, tx, "UPDATE handoffs SET kind = @cancelled WHERE id = @id", ct, ("@cancelled", Cancelled), ("@id", id));
+                if (await LockAsync(conn, tx, sessionId, ct) is not { IsPlaceholder: false, Location.State: LocationState.LeftGrid } row) return (false, false);
+                // Only the handoff that made the session "left the grid" may be taken back: it was written in the same
+                // transaction as the location, with the same time. Any later move would have changed the location since.
+                var taken = await ExecAsync(conn, tx, """
+                    UPDATE handoffs SET kind = @cancelled
+                    WHERE session_id = @s AND from_key = @k AND from_region = @from AND kind = @otherGrid AND created = @left AND created > @since
+                    """, ct, ("@cancelled", Cancelled), ("@s", sessionId.ToString()), ("@k", grant.KeyId), ("@from", fromRegion.ToString()),
+                    ("@otherGrid", nameof(HandoffKind.OtherGrid)), ("@left", row.Location.Updated), ("@since", Now - HandoffLife));
+                if (taken == 0) return (false, false);
                 await ExecAsync(conn, tx, "UPDATE session_locations SET region_id = @r, key_id = @k, state = @st, updated = @t WHERE session_id = @s", ct,
                     ("@r", fromRegion.ToString()), ("@k", grant.KeyId), ("@st", LocationState.Verified.ToString()), ("@t", Now), ("@s", sessionId.ToString()));
                 return (true, true);
@@ -481,10 +481,11 @@ public sealed class MoneyLocations(Func<CancellationToken, Task<MySqlConnection>
         return cmd;
     }
 
-    private static async Task ExecAsync(MySqlConnection conn, MySqlTransaction tx, string sql, CancellationToken ct, params (string Name, object? Value)[] args)
+    /// <summary>Runs <paramref name="sql"/>; the number of rows it matched.</summary>
+    private static async Task<int> ExecAsync(MySqlConnection conn, MySqlTransaction tx, string sql, CancellationToken ct, params (string Name, object? Value)[] args)
     {
         await using var cmd = Command(conn, tx, sql, args);
-        await cmd.ExecuteNonQueryAsync(ct);
+        return await cmd.ExecuteNonQueryAsync(ct);
     }
 
     /// <summary>"<paramref name="sql"/> (@p0, @p1, ...)" over <paramref name="ids"/>.</summary>
