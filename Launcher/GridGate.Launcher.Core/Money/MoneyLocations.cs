@@ -16,14 +16,21 @@ public enum HandoffKind { Teleport, Crossing, OtherGrid }
 /// <summary>
 /// The answer to a handoff or an arrival. <see cref="PlacedUnverified"/>: the session is placed, but money is off for it.
 /// <see cref="NotHeld"/>: the key's regions don't hold the session. <see cref="Refused"/>: an arrival nothing vouches for,
-/// while the session is verified elsewhere.
+/// while the session is verified elsewhere under the same key, or from a region that isn't verified; nothing changes.
+/// <see cref="Conflict"/>: an arrival nothing vouches for, from a verified region, while the session is verified under
+/// another key. Two keys disagree about where the avatar is, so it is placed unverified at the arriving region and nobody
+/// can charge it until a new start verifies it (Ruling 12).
 /// </summary>
-public enum PlaceOutcome { Ok, PlacedUnverified, NoSession, NotCovered, NotHeld, Refused, Unavailable }
+public enum PlaceOutcome { Ok, PlacedUnverified, NoSession, NotCovered, NotHeld, Refused, Unavailable, Conflict }
 
 /// <summary>Where a session is, as the money service recorded it. <paramref name="KeyId"/> is the key that placed it; both are null once it left the grid.</summary>
 public sealed record SessionLocation(Guid SessionId, Guid AgentId, Guid? RegionId, string? KeyId, LocationState State, DateTime Updated);
 
-/// <summary>An arrival's answer; <paramref name="VerifiedElsewhere"/> is set when it is <see cref="PlaceOutcome.Refused"/>.</summary>
+/// <summary>
+/// An arrival's answer. <paramref name="VerifiedElsewhere"/> is the verified place the session had before, set when the
+/// answer is <see cref="PlaceOutcome.Refused"/> or <see cref="PlaceOutcome.Conflict"/>, so the caller can count it against
+/// the key and raise the alert (§8.8).
+/// </summary>
 public sealed record ArrivalResult(PlaceOutcome Outcome, SessionLocation? VerifiedElsewhere);
 
 /// <summary>
@@ -276,10 +283,22 @@ public sealed class MoneyLocations(Func<CancellationToken, Task<MySqlConnection>
 
             if (time.GetUtcNow() < deadline) return (null, false);
 
-            // §8.4: "An arrival with no start or handoff, while the avatar has a verified location elsewhere: Refused. The
-            // location doesn't change." This is the Neon Pier attack.
             if (here is { State: LocationState.Verified })
+            {
+                // Ruling 12: a verified region of another key says the avatar is here. One of the two keys is wrong. It may
+                // be a region the avatar really left that withholds its handoff to keep charging them, or Neon Pier claiming
+                // someone it only saw next door. Trust neither: place the session unverified here, so nobody can charge
+                // it until a new start verifies it, and report the old place so the caller can raise the alert.
+                if (here.KeyId != grant.KeyId && await verification.IsVerifiedAsync(grant, regionId, ct))
+                {
+                    await PlaceAsync(conn, tx, sessionId, agentId, regionId, grant.KeyId, LocationState.Unverified, row.LastStartId, ct);
+                    return (new ArrivalResult(PlaceOutcome.Conflict, here), true);
+                }
+                // §8.4: "An arrival with no start or handoff, while the avatar has a verified location elsewhere: Refused.
+                // The location doesn't change." For the same key (it can't disagree with itself) and for a region that
+                // isn't verified, which must not be able to knock anyone out.
                 return (new ArrivalResult(PlaceOutcome.Refused, here), false);
+            }
 
             // §8.4: from a region that isn't verified "nobody can vouch for them": unverified, money off until next login.
             await PlaceAsync(conn, tx, sessionId, agentId, regionId, grant.KeyId, LocationState.Unverified, row.LastStartId, ct);

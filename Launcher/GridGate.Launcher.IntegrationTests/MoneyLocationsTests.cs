@@ -96,6 +96,8 @@ public sealed class MoneyLocationsTests(MoneyMariaDb maria) : IClassFixture<Mone
         Assert.Equal((region, key, state), (location.RegionId, location.KeyId, location.State));
     }
 
+    private Task<long> VerifiedRows() => _db.Scalar("SELECT COUNT(*) FROM `money`.`session_locations` WHERE state = 'Verified'");
+
     private Task<long> OpenHandoffs() =>
         _db.Scalar($"SELECT COUNT(*) FROM `money`.`handoffs` WHERE session_id = '{SessionU}' AND kind IN ('Teleport', 'Crossing')");
 
@@ -117,14 +119,61 @@ public sealed class MoneyLocationsTests(MoneyMariaDb maria) : IClassFixture<Mone
     }
 
     [Fact]
-    public async Task Arrival_without_start_or_handoff_while_verified_elsewhere_is_refused()
+    public async Task Neon_Pier_claim_pauses_money_but_never_verifies_the_claimer()
     {
         await StartAsync();
         await LoggedInAtR1();
         var before = await Where();
 
-        // Neon Pier saw U next door and claims they arrived, to charge them.
+        // Neon Pier saw U next door and claims they arrived, to charge them. Two keys disagree (Ruling 12): U is paused.
         var result = await Arrive(Paired, R3);
+
+        Assert.Equal(PlaceOutcome.Conflict, result.Outcome);
+        Assert.Equal(before, result.VerifiedElsewhere);
+        AssertAt(await Where(), R3, Paired.KeyId, LocationState.Unverified);
+        Assert.Equal(0, await VerifiedRows());
+    }
+
+    [Fact]
+    public async Task Withheld_handoff_cannot_keep_charging_someone_who_left()
+    {
+        await StartAsync();
+        await _db.AddSessionStart(SessionU, U, R3, "login");
+        Assert.Equal(PlaceOutcome.Ok, (await Arrive(Paired, R3)).Outcome); // U really was in Neon Pier
+
+        // U teleports to R2; Neon Pier keeps its handoff back so U would stay its verified, chargeable avatar.
+        var result = await Arrive(P2, R2);
+
+        Assert.Equal(PlaceOutcome.Conflict, result.Outcome);
+        AssertAt(result.VerifiedElsewhere, R3, Paired.KeyId, LocationState.Verified);
+        AssertAt(await Where(), R2, "p2", LocationState.Unverified);
+        Assert.Equal(0, await VerifiedRows());
+    }
+
+    [Fact]
+    public async Task Claim_from_the_same_key_keeps_the_place()
+    {
+        await StartAsync();
+        await LoggedInAtR1();
+        var before = await Where();
+
+        // R5 runs in the same program as R1: one key can't disagree with itself, so there is nothing to pause for.
+        var result = await Arrive(P1, R5);
+
+        Assert.Equal(PlaceOutcome.Refused, result.Outcome);
+        Assert.Equal(before, result.VerifiedElsewhere);
+        Assert.Equal(before, await Where());
+    }
+
+    [Fact]
+    public async Task Claim_from_an_unverified_region_keeps_the_place()
+    {
+        await StartAsync();
+        await LoggedInAtR1();
+        var before = await Where();
+
+        // R4 isn't verified: it must not be able to knock anyone out.
+        var result = await Arrive(P4, R4);
 
         Assert.Equal(PlaceOutcome.Refused, result.Outcome);
         Assert.Equal(before, result.VerifiedElsewhere);
@@ -181,7 +230,7 @@ public sealed class MoneyLocationsTests(MoneyMariaDb maria) : IClassFixture<Mone
         await StartAsync();
         await LoggedInAtR1();
 
-        var arrival = _locations.ArrivedAsync(P2, SessionU, U, R2, Ct);
+        var arrival = _locations.ArrivedAsync(P1, SessionU, U, R5, Ct); // the same key: refused, not paused (Ruling 12)
         for (var i = 0; i < 19; i++) // 9.5 s
         {
             await Task.Delay(30, Ct);
@@ -202,11 +251,11 @@ public sealed class MoneyLocationsTests(MoneyMariaDb maria) : IClassFixture<Mone
     {
         await StartAsync();
         await LoggedInAtR1();
-        Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, R2));
+        Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, R5));
 
         _clock.Advance(MoneyLocations.HandoffLife + TimeSpan.FromSeconds(1));
 
-        Assert.Equal(PlaceOutcome.Refused, (await Arrive(P2, R2)).Outcome);
+        Assert.Equal(PlaceOutcome.Refused, (await Arrive(P1, R5)).Outcome);
         AssertAt(await Where(), R1, "p1", LocationState.Verified);
     }
 
@@ -215,14 +264,14 @@ public sealed class MoneyLocationsTests(MoneyMariaDb maria) : IClassFixture<Mone
     {
         await StartAsync();
         await LoggedInAtR1();
-        // A teleport to R2 that was cancelled without an event, then one to R5.
-        Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, R2));
+        // A teleport to R5 that was cancelled without an event, then one to R2.
         Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, R5));
+        Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, R2));
 
         Assert.Equal(1, await OpenHandoffs());
-        Assert.Equal(PlaceOutcome.Refused, (await Arrive(P2, R2)).Outcome);
-        Assert.Equal(PlaceOutcome.Ok, (await Arrive(P1, R5)).Outcome);
-        AssertAt(await Where(), R5, "p1", LocationState.Verified);
+        Assert.Equal(PlaceOutcome.Refused, (await Arrive(P1, R5)).Outcome);
+        Assert.Equal(PlaceOutcome.Ok, (await Arrive(P2, R2)).Outcome);
+        AssertAt(await Where(), R2, "p2", LocationState.Verified);
     }
 
     [Fact]
@@ -230,14 +279,14 @@ public sealed class MoneyLocationsTests(MoneyMariaDb maria) : IClassFixture<Mone
     {
         await StartAsync();
         await LoggedInAtR1();
-        Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, R2));
+        Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, R5));
 
         await _locations.CancelHandoffAsync(P2, SessionU, R1, Ct); // not p2's region: ignored
         Assert.Equal(1, await OpenHandoffs());
         await _locations.CancelHandoffAsync(P1, SessionU, R1, Ct);
 
         Assert.Equal(0, await OpenHandoffs());
-        Assert.Equal(PlaceOutcome.Refused, (await Arrive(P2, R2)).Outcome);
+        Assert.Equal(PlaceOutcome.Refused, (await Arrive(P1, R5)).Outcome);
     }
 
     [Fact]
@@ -326,9 +375,11 @@ public sealed class MoneyLocationsTests(MoneyMariaDb maria) : IClassFixture<Mone
         await _db.AddSessionStart(SessionV, V, R1, "gatekeeper");
         Assert.Equal(PlaceOutcome.Ok, (await Arrive(P1, R1, SessionV, V)).Outcome);
 
-        // V's own grid asks our Gatekeeper to send them to R2 while they are still in R1.
-        await _db.AddSessionStart(SessionV, V, R2, "gatekeeper");
-        var result = await Arrive(P2, R2, SessionV, V);
+        // V's own grid asks our Gatekeeper to send them to R5 (same program) while they are still in R1. Through another
+        // key's region the same replay pauses V instead (Ruling 12, as the Neon Pier test shows); either way no start
+        // moves a verified session.
+        await _db.AddSessionStart(SessionV, V, R5, "gatekeeper");
+        var result = await Arrive(P1, R5, SessionV, V);
 
         Assert.Equal(PlaceOutcome.Refused, result.Outcome);
         AssertAt(await Where(SessionV), R1, "p1", LocationState.Verified);
@@ -429,7 +480,7 @@ public sealed class MoneyLocationsTests(MoneyMariaDb maria) : IClassFixture<Mone
 
         var results = await Settle(Task.WhenAll(
             _locations.ArrivedAsync(P2, SessionU, U, R2, Ct),
-            _locations.ArrivedAsync(Paired, SessionU, U, R3, Ct)));
+            _locations.ArrivedAsync(P4, SessionU, U, R4, Ct))); // unverified: refused, not paused (Ruling 12)
 
         Assert.Equal(PlaceOutcome.Ok, results[0].Outcome);
         Assert.Equal(PlaceOutcome.Refused, results[1].Outcome);
@@ -478,13 +529,13 @@ public sealed class MoneyLocationsTests(MoneyMariaDb maria) : IClassFixture<Mone
         await StartAsync();
         await LoggedInAtR1();
         var id = Guid.NewGuid();
-        Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, R2, id: id));
+        Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, R5, id: id));
         await _locations.CancelHandoffAsync(P1, SessionU, R1, Ct); // the teleport failed
 
-        Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, R2, id: id)); // the module's late retry of the same send
+        Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, R5, id: id)); // the module's late retry of the same send
 
         Assert.Equal(0, await OpenHandoffs());
-        Assert.Equal(PlaceOutcome.Refused, (await Arrive(P2, R2)).Outcome);
+        Assert.Equal(PlaceOutcome.Refused, (await Arrive(P1, R5)).Outcome);
         AssertAt(await Where(), R1, "p1", LocationState.Verified);
     }
 
@@ -607,17 +658,17 @@ public sealed class MoneyLocationsTests(MoneyMariaDb maria) : IClassFixture<Mone
         await StartAsync();
         await LoggedInAtR1();
         var first = Guid.NewGuid();
-        Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, R2, id: first));
-        Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, R5)); // replaces the first
+        Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, R5, id: first));
+        Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, R2)); // replaces the first
 
-        Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, R2, id: first)); // the module's late retry of the first
+        Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, R5, id: first)); // the module's late retry of the first
 
         Assert.Equal(1, await OpenHandoffs());
-        Assert.Equal(R5.ToString(), await _db.Text($"SELECT to_region FROM `money`.`handoffs` WHERE session_id = '{SessionU}' AND kind IN ('Teleport', 'Crossing')"));
-        // The teleport to R5 fails too; a retry of the first still can't reopen R2.
+        Assert.Equal(R2.ToString(), await _db.Text($"SELECT to_region FROM `money`.`handoffs` WHERE session_id = '{SessionU}' AND kind IN ('Teleport', 'Crossing')"));
+        // The teleport to R2 fails too; a retry of the first still can't reopen R5.
         await _locations.CancelHandoffAsync(P1, SessionU, R1, Ct);
-        Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, R2, id: first));
+        Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, R5, id: first));
         Assert.Equal(0, await OpenHandoffs());
-        Assert.Equal(PlaceOutcome.Refused, (await Arrive(P2, R2)).Outcome);
+        Assert.Equal(PlaceOutcome.Refused, (await Arrive(P1, R5)).Outcome);
     }
 }
