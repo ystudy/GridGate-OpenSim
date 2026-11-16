@@ -182,7 +182,7 @@ The money service runs **inside the launcher process**, on **its own listener an
     key, where it is sending them; the destination reports the arrival with its own key. An arrival counts only when a start
     or a handoff to that region vouches for it. Leaving for another grid is recorded as "left the grid".
   - **Robust's `Presence`** is used only to prove that the avatar is logged in with those session ids. Only login and the
-    Gatekeeper write it, so hypergrid visitors are covered too (`OpenSim/Services/HypergridService/GatekeeperService.cs:552`).
+    Gatekeeper create its rows, so hypergrid visitors are covered too (`OpenSim/Services/HypergridService/GatekeeperService.cs:552`).
 
   For anything an avatar pays (pay, buy, land, passes, fees), the payer must be logged in, the record must have them
   **verified** in a region, that region must be covered by the calling key and **verified** (§7.7: its module checks in
@@ -351,8 +351,10 @@ All on the Money page (§9), stored in the launcher settings under the money mod
 - **Verified regions.** Each region program's money module checks in with the service (the health call) when a region
   starts and every 3 minutes, saying which money protocol it speaks and which regions it runs. A region is **verified**
   when it is covered by a key whose module speaks a protocol that reports handoffs (§7.2) and checked in within the last 10
-  minutes. Every other region keeps working without money, and the Money page says why: not paired, moved, no GridGate
-  money (stock OpenSim, or money not set up there), needs an update, or not heard from.
+  minutes. Every other region keeps working without money, and the Money page says why: not paired (on a computer
+  that isn't paired; a computer running stock OpenSim can't be paired, so its regions stay open to visitors, without
+  money), moved, no GridGate money (a region on the Grid Asset Server or a paired Region Server that nothing has checked
+  in for: stock OpenSim, or money not set up there), needs an update, or not heard from.
 - Gloebit on a Region Server: the owner enters the Gloebit settings on that computer too. Gloebit runs inside each region.
 - Plan 3 settled the pairing details: see `docs/superpowers/plans/2026-11-14-money-plan3-visitors-region-servers.md`, Decisions.
 

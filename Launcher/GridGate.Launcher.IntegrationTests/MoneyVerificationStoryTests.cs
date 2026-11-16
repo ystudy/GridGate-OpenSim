@@ -6,9 +6,9 @@ using static GridGate.Launcher.IntegrationTests.MoneyServiceRig;
 namespace GridGate.Launcher.IntegrationTests;
 
 /// <summary>
-/// The verified-regions design's stories, end to end through the money service over HTTPS (design §12, "The Neon Pier and
-/// Market Square stories end to end, as tests"). Here (p1) is the Grid Asset Server's own welcome region and There (p2)
-/// another of its programs' regions; Neon Pier is on Sam's paired Region Server and Market Square on Jo's.
+/// Stories of verified regions and avatars, end to end through the money service over HTTPS. Here (p1) is the Grid Asset
+/// Server's own welcome region and There (p2) another of its programs' regions; Neon Pier is on Sam's paired Region Server
+/// and Market Square on Jo's.
 /// </summary>
 [Collection(GridCollection.Name)]
 public sealed class MoneyVerificationStoryTests(MoneyMariaDb maria) : IClassFixture<MoneyMariaDb>, IAsyncDisposable
@@ -62,9 +62,9 @@ public sealed class MoneyVerificationStoryTests(MoneyMariaDb maria) : IClassFixt
     [Fact]
     public async Task Neon_Pier_night()
     {
-        // Three residents log in at Here. p2's There saw their session ids next door and claims each of them arrived, so it
-        // can charge them (verified-regions design §1, §8.4). It never becomes their verified place: two keys disagree about
-        // where they are, so neither may charge them, and the owner gets one warning for There.
+        // Three residents log in at Here. p2's There claims each of them arrived, though nobody handed them to it. It never
+        // becomes their verified place: two keys disagree about where they are, so neither may charge them, and the owner
+        // gets one warning for There.
         var rig = await StartAsync(place: false);
         await rig.Health(Key);
         await rig.Health(Key2);
@@ -89,7 +89,7 @@ public sealed class MoneyVerificationStoryTests(MoneyMariaDb maria) : IClassFixt
         {
             Assert.Equal("unverified_avatar", CodeOf(await rig.Arrived(Key2, session, agent, There)));
             var charge = await rig.Post("transfer", Pay(Who(agent, session, secure), Resident(B), 50, There), Key2);
-            Assert.True(CodeOf(charge) is "unverified_avatar" or "wrong_region", charge.Raw);
+            Assert.Equal("unverified_avatar", CodeOf(charge));
             Assert.Equal("unverified_avatar", CodeOf(await rig.Post("transfer", Pay(Who(agent, session, secure), Resident(B), 50, Here))));
         }
 
@@ -103,7 +103,7 @@ public sealed class MoneyVerificationStoryTests(MoneyMariaDb maria) : IClassFixt
     [Fact]
     public async Task Market_Square_weekend()
     {
-        // Sam's Region Server re-registers Market Square, Jo's region, at Sam's own address (verified-regions design §8.3, L-4).
+        // Sam's Region Server re-registers Market Square, Jo's region, at Sam's own address.
         // The region stays pinned to Jo's server: neither key may take payments there, and the Money page shows the move.
         var rig = await StartAsync();
         var sam = await PairAsync(rig, SamHost, SamKey, NeonPier);
@@ -136,7 +136,7 @@ public sealed class MoneyVerificationStoryTests(MoneyMariaDb maria) : IClassFixt
     public async Task Grid_H_sends_our_resident_into_a_Region_Server()
     {
         // A visits grid H. While A is still away, grid H asks our Gatekeeper to send A to Neon Pier, on Sam's Region Server,
-        // and Neon Pier reports the arrival (verified-regions design §8.4, the Gatekeeper rule). A Gatekeeper start counts
+        // and Neon Pier reports the arrival. A Gatekeeper start counts
         // only in the Grid Asset Server's own regions, so A travels, but Neon Pier can't charge them.
         var rig = await StartAsync();
         await PairAsync(rig, SamHost, SamKey, NeonPier);
@@ -160,8 +160,7 @@ public sealed class MoneyVerificationStoryTests(MoneyMariaDb maria) : IClassFixt
     public async Task Visitor_from_listed_grid_through_local_welcome_then_teleport_on_pays()
     {
         // V comes from a listed grid through the Gatekeeper into Here, the Grid Asset Server's welcome region, then teleports
-        // on to Neon Pier on Sam's Region Server: the handoff carries V's verified place, so V can be paid and can pay there
-        // (verified-regions design §8.4, "What people notice", and §8.6).
+        // on to Neon Pier on Sam's Region Server: the handoff carries V's verified place, so V can be paid and can pay there.
         var rig = await StartAsync(); // V was placed at Here by a Gatekeeper start
         rig.Settings = rig.Settings with { Money = rig.Settings.Money with { Visitors = VisitorMoney.Listed, ListedGrids = [VisitorHome] } };
         await PairAsync(rig, SamHost, SamKey, NeonPier);

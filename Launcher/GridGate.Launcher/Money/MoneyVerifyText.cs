@@ -56,7 +56,7 @@ public static class MoneyVerifyText
         RegionStatus.Verified =>
             "Money works here: its program runs GridGate's money module, says where people go when they leave, and checked in within the last 10 minutes.",
         RegionStatus.NotPaired =>
-            "This region is on a Region Server that isn't paired with this grid's money, so money is off there. Pair it under Region Servers.",
+            "This region is on a computer that isn't paired with this grid's money, so money is off there. Pair it under Region Servers. If that computer runs stock OpenSim rather than GridGate, it can't be paired; its regions stay open to visitors, without money.",
         RegionStatus.Moved =>
             "This region belongs to another Region Server but now registers from this one, so money is off there. Approve the move, or keep it off: then money comes back if its own server registers it again.",
         RegionStatus.NoGridGateMoney =>

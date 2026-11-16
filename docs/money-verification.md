@@ -32,17 +32,20 @@ anyone anything. Script payouts need a verified region, plus the object owner's 
 payout limits.
 
 The **Regions** list on the Money page shows every region on the grid with a ✔ or a ✖. Each ✖ has one of the reasons below,
-and a **How to fix** link to that reason here. The **Region Servers** list shows each paired server's own status and the
-money protocol its module speaks (2 or later is needed).
+and a **How to fix** link to that reason here. The **Region Servers** list shows each paired server's own status and its
+GridGate money version (2 or later is needed).
 
 When something is missing or unclear, money is refused, never guessed. The reasons below are how you find out why.
 
 ### Not paired
 
-The region runs on a Region Server that isn't paired with this grid's money, so money is off there.
+The region runs on a computer that isn't paired with this grid's money, so money is off there.
 
 **What to do:** pair it. On this Money page, under **Region Servers**, make a pairing code, and type it into that Region
 Server's Money page. Its regions are verified once their programs check in, within a few minutes.
+
+If that computer runs stock OpenSim rather than GridGate, it can't be paired; its regions stay open to visitors, without
+money.
 
 ### Moved, waiting for you
 
@@ -68,10 +71,10 @@ A few things that work the same way:
 
 ### No GridGate money
 
-The grid lists the region, but nothing has checked in with the money service for it. It may run stock OpenSim, or money
-isn't set up on that server. People can visit as usual; only money is off there.
+The region is on this computer or on a paired Region Server, but nothing has checked in with the money service for it.
+It may run stock OpenSim, or money isn't set up for it. People can visit as usual; only money is off there.
 
-**What to do:** install GridGate on that server and pair it, or leave the region without money.
+**What to do:** run the region with GridGate's money set up, or leave it without money.
 
 ### Needs an update
 
@@ -98,10 +101,12 @@ they are:
 - **They arrived from another grid straight into a Region Server's region** (see
   [Visitor money and listed grids](#visitor-money-and-listed-grids)).
 
-In each case money comes back **at their next login**. Nobody can charge them while it is paused.
+For residents, money comes back **at their next login**; for visitors, see
+[Visitor money and listed grids](#visitor-money-and-listed-grids). Nobody can charge them while it is paused.
 
 **Where you see it:** on a person's page (Money page, search the person), "Money here now" says whether money works for
-them now and why not, with a **Why** link here. Residents see a line on their **My coins** page saying money is paused until
+them now and why not, with a **Why** link here. Someone who isn't on this grid right now, including a resident visiting
+another grid, shows "Not in the world right now". Residents see a line on their **My coins** page saying money is paused until
 they next log in, and the viewer tells them when a payment is refused (see
 [What people see in the viewer](#what-people-see-in-the-viewer)).
 
@@ -206,7 +211,9 @@ When money is refused, the viewer shows a short message:
 
 ## Regions and grids without GridGate
 
-- **Stock OpenSim regions** on your grid run as normal. They show as "No GridGate money" and never take part in money.
+- **Stock OpenSim regions** on your grid run as normal and never take part in money. They show as "Not paired" when they
+  are on a computer you haven't paired (a stock OpenSim computer can't be paired), or "No GridGate money" if they are on a
+  paired Region Server or on this computer.
 - **Older GridGate Region Servers** keep running. Their regions show "Needs an update" until updated.
 - **People passing through a region that can't verify** keep travelling normally; money is paused for them until they next
   log in, and they're told why.
