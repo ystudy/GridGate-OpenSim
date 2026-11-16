@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using GridGate.Launcher.Core.Money;
+using GridGate.Launcher.Core.Settings;
 using GridGate.Region.Money;
 using Xunit;
 using static GridGate.Launcher.IntegrationTests.MoneyServiceRig;
@@ -140,6 +142,80 @@ public sealed class MoneyServiceClientTests(MoneyMariaDb maria) : IClassFixture<
         _rig.LocationClock.Advance(TimeSpan.FromSeconds(5));
         Assert.Equal("ok", (await p1.HandoffAsync(Guid.NewGuid(), SessionA, Here, Guid.NewGuid(), "other_grid", Ct)).Code);
         Assert.Equal("unverified_avatar", (await p1.ChargeAsync(Guid.NewGuid(), "upload_fee", ClientA, 3, null, Here, Ct)).Code);
+    }
+
+    private static readonly Guid HereToo = Guid.Parse("e1000000-0000-0000-0000-00000000000e"); // p1's second region
+
+    /// <summary>Program p1 runs a second region, Here too, and its module checks in with both.</summary>
+    private async Task SecondRegionForP1(MoneyServiceClient p1)
+    {
+        _rig!.Settings = _rig.Settings with { Regions = [.. _rig.Settings.Regions, new RegionSettings("p1", "Here too", HereToo, UdpPort: 8006)] };
+        Assert.Equal("ok", (await p1.HealthAsync(2, [Here, HereToo], Ct)).Code);
+    }
+
+    /// <summary>Waits for a held arrival's answer, moving the location clock on in its retry steps, never past its 10-second wait.</summary>
+    private async Task<MoneyAnswer> Settle(Task<MoneyAnswer> arrival)
+    {
+        var moved = TimeSpan.Zero;
+        while (!arrival.IsCompleted)
+        {
+            Assert.True(moved < MoneyLocations.ArrivalWait - MoneyLocations.ArrivalRetry, "the held arrival didn't find its handoff in time");
+            await Task.WhenAny(arrival, Task.Delay(50, Ct));
+            if (arrival.IsCompleted) break;
+            _rig!.LocationClock.Advance(MoneyLocations.ArrivalRetry);
+            moved += MoneyLocations.ArrivalRetry;
+        }
+        return await arrival;
+    }
+
+    /// <summary>A is verified at <paramref name="region"/> under <paramref name="key"/>, and no session or handoff is left handed and waiting.</summary>
+    private async Task AssertVerifiedAndNothingHanded(Guid region, string key)
+    {
+        var at = await _rig!.Locations.WhereAsync(SessionA, Ct);
+        Assert.Equal((region, key, LocationState.Verified), (at?.RegionId, at?.KeyId, at?.State));
+        Assert.Equal(0, await _rig.Db.Scalar("SELECT COUNT(*) FROM `money`.`session_locations` WHERE state = 'Handed'"));
+        Assert.Equal(0, await _rig.Db.Scalar("SELECT COUNT(*) FROM `money`.`handoffs` WHERE kind IN ('Teleport', 'Crossing')"));
+    }
+
+    /// <summary>
+    /// A teleport between two regions of one program, reported as its module sends it: the handoff as soon as the avatar is
+    /// root in the region reached, then the arrival there.
+    /// </summary>
+    [Fact]
+    public async Task A_teleport_within_one_program_ends_verified_where_it_went()
+    {
+        await StartAsync();
+        using var p1 = Client();
+        await SecondRegionForP1(p1);
+
+        Assert.Equal("ok", (await p1.HandoffAsync(Guid.NewGuid(), SessionA, Here, HereToo, "teleport", Ct)).Code);
+        Assert.Equal("ok", (await p1.ArrivedAsync(Guid.NewGuid(), SessionA, A, HereToo, Ct)).Code);
+
+        await AssertVerifiedAndNothingHanded(HereToo, "p1");
+        Assert.Equal("ok", (await p1.ChargeAsync(Guid.NewGuid(), "upload_fee", ClientA, 3, null, HereToo, Ct)).Code);
+    }
+
+    /// <summary>
+    /// A teleport between two programs, when the region reached reports the arrival before the region left has let the
+    /// avatar go: the service holds the arrival, and the handoff that comes within the wait places A there, verified.
+    /// </summary>
+    [Fact]
+    public async Task A_teleport_between_programs_whose_arrival_comes_first_ends_verified_where_it_went()
+    {
+        await StartAsync();
+        using var p1 = Client();
+        using var p2 = Client(key: Key2);
+
+        var arrival = p2.ArrivedAsync(Guid.NewGuid(), SessionA, A, There, Ct);
+        await Task.Delay(300, Ct);
+        _rig!.LocationClock.Advance(TimeSpan.FromSeconds(1));
+        await Task.Delay(100, Ct);
+        Assert.False(arrival.IsCompleted, "the arrival should be held for its handoff");
+        Assert.Equal("ok", (await p1.HandoffAsync(Guid.NewGuid(), SessionA, Here, There, "teleport", Ct)).Code);
+
+        Assert.Equal("ok", (await Settle(arrival)).Code);
+        await AssertVerifiedAndNothingHanded(There, "p2");
+        Assert.Equal("ok", (await p2.ChargeAsync(Guid.NewGuid(), "upload_fee", ClientA, 3, null, There, Ct)).Code);
     }
 
     [Fact]
