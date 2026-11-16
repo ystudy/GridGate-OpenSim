@@ -114,6 +114,26 @@ internal sealed class FakeBooks : IMoneyBooks
     }
 }
 
+/// <summary>The owner's money alerts, faked for the pages: <see cref="Open"/> is what is open.</summary>
+internal sealed class FakeAlerts : IMoneyAlerts
+{
+    public List<MoneyAlert> Open { get; } = [];
+    public List<string> Calls { get; } = [];
+
+    public Task<IReadOnlyList<MoneyAlert>> OpenAsync(CancellationToken ct)
+    {
+        lock (Calls) Calls.Add("open");
+        return Task.FromResult<IReadOnlyList<MoneyAlert>>(Open.ToList());
+    }
+
+    public Task ClearAsync(long id, string staff, CancellationToken ct)
+    {
+        lock (Calls) Calls.Add($"clear {id} {staff}");
+        Open.RemoveAll(a => a.Id == id);
+        return Task.CompletedTask;
+    }
+}
+
 /// <summary>Robust's record of hypergrid visitors, faked for the money pages: answers from <see cref="Known"/>.</summary>
 internal sealed class FakeVisitors : IVisitorDirectory
 {
@@ -141,7 +161,7 @@ public sealed class MoneyPageTests
     private const string HopeHome = "http://grid.example:8002/";
 
     private static LauncherFactory Make(FakeBooks books, bool open = true, Func<MoneySettings, MoneySettings>? money = null, FakeVisitors? visitors = null,
-        OwnerPlan plan = OwnerPlan.Local)
+        OwnerPlan plan = OwnerPlan.Local, FakeAlerts? alerts = null)
     {
         var f = new LauncherFactory(s => s with
         {
@@ -159,6 +179,8 @@ public sealed class MoneyPageTests
                 services.AddSingleton<IMoneyBooks>(books);
                 services.RemoveAll<IVisitorDirectory>();
                 services.AddSingleton<IVisitorDirectory>(visitors ?? new FakeVisitors());
+                services.RemoveAll<IMoneyAlerts>();
+                services.AddSingleton<IMoneyAlerts>(alerts ?? new FakeAlerts());
                 if (open)
                 {
                     services.RemoveAll<MoneyGate>();
@@ -946,6 +968,33 @@ public sealed class MoneyPageTests
         Assert.NotNull(notice);
         Assert.Contains("alert-danger", notice.ClassName);
         Assert.Contains("All payments are frozen: test. Open Money to unfreeze.", notice.TextContent);
+    }
+
+    [Fact]
+    public async Task Warning_alerts_show_on_the_dashboard_with_a_money_link()
+    {
+        var region = Guid.Parse("e0000000-0000-0000-0000-0000000000e1");
+        var alerts = new FakeAlerts();
+        var at = new DateTime(2026, 11, 15, 12, 0, 0, DateTimeKind.Utc);
+        alerts.Open.Add(new MoneyAlert(7, AlertKind.UnhandedArrival, AlertLevel.Warning, "p1", region, Ann, 3, at, at));
+        alerts.Open.Add(new MoneyAlert(8, AlertKind.KeyLimitReached, AlertLevel.Warning, "p1", null, null, 1, at, at));
+        alerts.Open.Add(new MoneyAlert(9, AlertKind.RegionMoved, AlertLevel.Notice, "p1", region, null, 1, at, at));
+        await using var f = Make(new FakeBooks(), alerts: alerts);
+        f.Services.GetRequiredService<MoneyStatus>().ServiceRunning = true;
+
+        var doc = await PageAsync(await SignedInAsync(f), "/dashboard");
+
+        var arrival = doc.QuerySelector("#money-alert-7");
+        Assert.NotNull(arrival);
+        Assert.Contains("alert-danger", arrival.ClassName);
+        Assert.Contains("wasn't handed", arrival.TextContent);
+        Assert.Contains("3 times", arrival.TextContent);
+        Assert.NotNull(arrival.QuerySelector("a[href='/money']"));
+        var limit = doc.QuerySelector("#money-alert-8");
+        Assert.NotNull(limit);
+        Assert.Contains("reached its daily money limit", limit.TextContent);
+        Assert.NotNull(limit.QuerySelector("a[href='/money']"));
+        Assert.Null(doc.QuerySelector("#money-alert-9")); // notices are for the Money page
     }
 
     [Fact]

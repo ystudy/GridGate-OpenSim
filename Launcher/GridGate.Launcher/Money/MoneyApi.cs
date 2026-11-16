@@ -57,7 +57,8 @@ internal static class MoneyApi
     /// </summary>
     internal sealed record Context(MoneyLedger Ledger, PresenceCheck Presence, Func<LauncherSettings> Settings, MoneyAuthFailures Failures, ILogger Log,
         MoneyPairing? Pairing = null, Func<Func<LauncherSettings, LauncherSettings>, LauncherSettings>? Update = null, RegionPins? Pins = null,
-        string Fingerprint = "", Func<MoneyMode>? Mode = null, RegionVerification? Verification = null, MoneyLocations? Locations = null)
+        string Fingerprint = "", Func<MoneyMode>? Mode = null, RegionVerification? Verification = null, MoneyLocations? Locations = null,
+        MoneyAlerts? Alerts = null)
     {
         /// <summary>How many <c>/arrived</c> calls each key (by key id) has open now; see <see cref="MaxOpenArrivals"/>.</summary>
         public ConcurrentDictionary<string, int> OpenArrivals { get; } = new(StringComparer.Ordinal);
@@ -107,7 +108,7 @@ internal static class MoneyApi
             if (!PaymentTypes.Contains(type)) throw new BadRequest();
             var (from, region) = (Need(b.From), Need(b.RegionId));
             var request = new TransferRequest(Scoped(grant, b.TxnId), type, Account(from), Account(Need(b.To)), Need(b.Amount), region, b.ObjectId, b.ObjectName, grant.KeyId);
-            return await WithPayer(c, from, grant, region, ct) is { } refusal ? Code(refusal) : Of(await c.Ledger.TransferAsync(request, ct));
+            return await WithPayer(c, from, grant, region, ct) is { } refusal ? Code(refusal) : Of(await Watched(c, grant, request.From.AgentId, await c.Ledger.TransferAsync(request, ct)));
         });
         // A script payout has no payer in the region (the object's owner is usually offline): it needs a verified region.
         Post(app, "/money/v1/payout", c, async (http, grant, ct) =>
@@ -117,14 +118,15 @@ internal static class MoneyApi
             var request = new PayoutRequest(Scoped(grant, b.TxnId), Need(b.OwnerId), Account(Need(b.To)), Need(b.Amount), region, Need(b.ObjectId), Need(b.ObjectName), grant.KeyId);
             if (!grant.Regions.Contains(region)) return Code("wrong_region");
             if (!await Verification(c).IsVerifiedAsync(grant, region, ct)) return Code("unverified_region");
-            return Of(await c.Ledger.PayoutAsync(request, ct));
+            // The owner's payout limit isn't their spending limit: only the key's limit raises an alert here.
+            return Of(await Watched(c, grant, null, await c.Ledger.PayoutAsync(request, ct)));
         });
         Post(app, "/money/v1/charge", c, async (http, grant, ct) =>
         {
             var b = await Read<ChargeBody>(http, ct);
             var (payer, region) = (Need(b.Payer), Need(b.RegionId));
             var request = new ChargeRequest(Scoped(grant, b.TxnId), Need(b.Type), Account(payer), Need(b.Amount), b.PayTo, grant.KeyId);
-            return await WithPayer(c, payer, grant, region, ct) is { } refusal ? Code(refusal) : Of(await c.Ledger.ChargeAsync(request, ct));
+            return await WithPayer(c, payer, grant, region, ct) is { } refusal ? Code(refusal) : Of(await Watched(c, grant, request.Payer.AgentId, await c.Ledger.ChargeAsync(request, ct)));
         });
         Post(app, "/money/v1/hold", c, async (http, grant, ct) =>
         {
@@ -132,7 +134,9 @@ internal static class MoneyApi
             var (buyer, region) = (Need(b.Buyer), Need(b.RegionId));
             var request = new HoldRequest(Scoped(grant, b.TxnId), Need(b.Kind), Account(buyer), Account(Need(b.Seller)), Need(b.Amount), region, b.ObjectId, b.ObjectName, grant.KeyId);
             // Holding's balance (ToBalance) is nobody's balance: it never leaves the service (plan 1 deferred finding).
-            return await WithPayer(c, buyer, grant, region, ct) is { } refusal ? Code(refusal) : Of(await c.Ledger.HoldAsync(request, ct)) with { ToBalance = null };
+            return await WithPayer(c, buyer, grant, region, ct) is { } refusal
+                ? Code(refusal)
+                : Of(await Watched(c, grant, request.Buyer.AgentId, await c.Ledger.HoldAsync(request, ct))) with { ToBalance = null };
         });
         // Where avatars are (money design §8.4). These keep working while coins are off, so the record still follows everyone
         // when they come back on.
@@ -158,11 +162,12 @@ internal static class MoneyApi
         {
             var b = await Read<ArrivedBody>(http, ct);
             _ = Need(b.Id); // the module's id for this report: required on the wire, not used by the service yet
-            var result = await Locations(c).ArrivedAsync(grant, Need(b.SessionId), Need(b.AgentId), Need(b.RegionId), ct);
-            if (result.Outcome is PlaceOutcome.Refused or PlaceOutcome.Conflict)
-            {
-                // Task 10: raise the alert (Conflict and a refusal with VerifiedElsewhere are warnings)
-            }
+            var (agent, region) = (Need(b.AgentId), Need(b.RegionId));
+            var result = await Locations(c).ArrivedAsync(grant, Need(b.SessionId), agent, region, ct);
+            // A claim nothing vouches for, against someone verified elsewhere (§8.8): counted for the owner, never against
+            // the key, so an honest server isn't slowed down for a lost handoff. Conflict is always another key's place.
+            if (result.Outcome is PlaceOutcome.Refused or PlaceOutcome.Conflict && c.Alerts is { } alerts)
+                await alerts.UnhandedArrivalAsync(grant.KeyId, region, agent, result.VerifiedElsewhere?.KeyId, AlertToken);
             return Code(PlaceCode(result.Outcome));
         }, whileOff: true, arrival: true);
         // A purchase already paid into Holding still finishes after coins are switched off: the buyer gets the item or the
@@ -418,6 +423,26 @@ internal static class MoneyApi
             PresenceOutcome.Unavailable => "unavailable",
             _ => "no_session",
         };
+
+    /// <summary>
+    /// An alert is written even when the caller hangs up first, so dropping the connection can't hide a claim. Raising one
+    /// never fails or changes an answer (<see cref="MoneyAlerts"/> logs a failure and goes on).
+    /// </summary>
+    private static CancellationToken AlertToken => CancellationToken.None;
+
+    /// <summary>
+    /// Raises the alert a payment's answer calls for (money design §8.8): a key over its daily limit, or
+    /// <paramref name="payer"/> over their daily spending limit. Returns <paramref name="r"/> unchanged.
+    /// </summary>
+    private static async Task<MoneyResult> Watched(Context c, RegionKeyGrant grant, Guid? payer, MoneyResult r)
+    {
+        if (c.Alerts is not { } alerts) return r;
+        if (r.Outcome == MoneyOutcome.OverKeyLimit)
+            await alerts.KeyLimitReachedAsync(grant.KeyId, AlertToken);
+        else if (r.Outcome == MoneyOutcome.OverDailyLimit && payer is { } agent)
+            await alerts.PersonLimitHitAsync(agent, grant.KeyId, AlertToken);
+        return r;
+    }
 
     /// <summary>The answer to a handoff or an arrival. Conflict is an unverified place, as the arriving region sees it.</summary>
     private static string PlaceCode(PlaceOutcome outcome) => outcome switch

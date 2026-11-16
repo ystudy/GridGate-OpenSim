@@ -56,6 +56,10 @@ internal sealed class MoneyServiceRig : IAsyncDisposable
     /// <summary>The clock the location record reads: an arrival nothing vouches for is held until a test moves it on.</summary>
     public FakeTimeProvider LocationClock { get; } = new(DateTimeOffset.UtcNow);
     public MoneyLocations Locations { get; private set; } = null!;
+    /// <summary>The owner's alerts (money design §8.8), on the rig's database unless the rig was started with them down.</summary>
+    public MoneyAlerts Alerts { get; private set; } = null!;
+    /// <summary>The wrong-key counter: a test checks that refused claims never count against a key's address.</summary>
+    public MoneyAuthFailures Failures { get; private set; } = null!;
     /// <summary>The money mode the service sees; a test switches coins off while it runs.</summary>
     public MoneyMode Mode { get; set; } = MoneyMode.Play;
     public int Port { get; private set; }
@@ -63,11 +67,14 @@ internal sealed class MoneyServiceRig : IAsyncDisposable
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    /// <summary>A started service; with <paramref name="place"/> false no module has checked in and nobody is placed.</summary>
-    public static async Task<MoneyServiceRig> StartAsync(MoneyMariaDb maria, bool place = true)
+    /// <summary>
+    /// A started service; with <paramref name="place"/> false no module has checked in and nobody is placed. With
+    /// <paramref name="alertsDown"/> the alerts' database can't be reached, while everything else's can.
+    /// </summary>
+    public static async Task<MoneyServiceRig> StartAsync(MoneyMariaDb maria, bool place = true, bool alertsDown = false)
     {
         var rig = new MoneyServiceRig();
-        await rig.InitAsync(maria);
+        await rig.InitAsync(maria, alertsDown);
         if (place)
         {
             await rig.Health(Key);
@@ -79,7 +86,7 @@ internal sealed class MoneyServiceRig : IAsyncDisposable
         return rig;
     }
 
-    private async Task InitAsync(MoneyMariaDb maria)
+    private async Task InitAsync(MoneyMariaDb maria, bool alertsDown)
     {
         Db = await maria.FreshAsync();
         await Db.EnsureSchemaAsync();
@@ -111,12 +118,14 @@ internal sealed class MoneyServiceRig : IAsyncDisposable
         var cert = MoneyCertificate.LoadOrCreate(Path.Combine(_dir, MoneyCertificate.FileName), time);
         Fingerprint = MoneyCertificate.Fingerprint(cert);
         Pairing = new MoneyPairing(time);
-        var pins = new RegionPins(MoneyConnections.Money(() => dbSettings), new RegionHosts(MoneyConnections.Robust(() => dbSettings)), TimeProvider.System);
+        var alertsDb = alertsDown ? dbSettings with { MariaDbPort = MoneyMariaDb.FreePort() } : dbSettings;
+        Alerts = new MoneyAlerts(MoneyConnections.Money(() => alertsDb), time, loggers.CreateLogger<MoneyAlerts>());
+        Failures = new MoneyAuthFailures(FailureClock, loggers.CreateLogger<MoneyAuthFailures>());
+        var pins = new RegionPins(MoneyConnections.Money(() => dbSettings), new RegionHosts(MoneyConnections.Robust(() => dbSettings)), TimeProvider.System, Alerts);
         Verification = new RegionVerification(MoneyConnections.Money(() => dbSettings), MoneyConnections.Robust(() => dbSettings), pins, VerifyClock);
         Locations = new MoneyLocations(MoneyConnections.Money(() => dbSettings), MoneyConnections.Robust(() => dbSettings), Verification, presence, LocationClock);
         _host = new MoneyServiceHost(Ledger, presence, () => Settings, () => Mode, () => cert,
-            new MoneyAuthFailures(FailureClock, loggers.CreateLogger<MoneyAuthFailures>()), loggers, new MoneyStatus(), Pairing,
-            change => Settings = change(Settings), pins, Verification, Locations);
+            Failures, loggers, new MoneyStatus(), Pairing, change => Settings = change(Settings), pins, Verification, Locations, Alerts);
         await _host.StartAsync(Ct);
         _http = new HttpClient(new SocketsHttpHandler
         {

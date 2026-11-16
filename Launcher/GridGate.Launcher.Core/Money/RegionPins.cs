@@ -9,9 +9,10 @@ public sealed record RegionMove(Guid RegionId, Guid PinnedTo, Guid ListedAt);
 /// Which paired Region Server a region id belongs to (money design §8.3, review finding L-4). The first time a region id is
 /// listed in Robust at a paired server's address and ports it is pinned to that server in the money database; after that
 /// only that server's key covers it, however Robust's list changes. A region listed at another server stays uncovered
-/// until the owner approves the move. A database failure is <see cref="MoneyUnavailableException"/>.
+/// until the owner approves the move, and each request that finds it raises a <see cref="AlertKind.RegionMoved"/> alert when
+/// <paramref name="alerts"/> is given. A database failure is <see cref="MoneyUnavailableException"/>.
 /// </summary>
-public sealed class RegionPins(Func<CancellationToken, Task<MySqlConnection>> openMoney, RegionHosts hosts, TimeProvider time)
+public sealed class RegionPins(Func<CancellationToken, Task<MySqlConnection>> openMoney, RegionHosts hosts, TimeProvider time, MoneyAlerts? alerts = null)
 {
     /// <summary>
     /// The regions Robust lists at <paramref name="server"/>'s address and port range, minus <paramref name="ownRegions"/>,
@@ -21,10 +22,11 @@ public sealed class RegionPins(Func<CancellationToken, Task<MySqlConnection>> op
     {
         var listed = (await hosts.RegionsAtAsync(server.Host, fromPort, toPort, ct)).Where(r => !ownRegions.Contains(r)).ToList();
         if (listed.Count == 0) return new HashSet<Guid>();
+        Dictionary<Guid, Guid> pins;
         try
         {
             await using var conn = await openMoney(ct);
-            var pins = await PinsOfAsync(conn, listed, ct);
+            pins = await PinsOfAsync(conn, listed, ct);
             var unpinned = listed.Where(r => !pins.ContainsKey(r)).ToList();
             if (unpinned.Count > 0)
             {
@@ -37,12 +39,17 @@ public sealed class RegionPins(Func<CancellationToken, Task<MySqlConnection>> op
                 }
                 pins = await PinsOfAsync(conn, listed, ct);
             }
-            return listed.Where(r => pins.TryGetValue(r, out var to) && to == server.Id).ToHashSet();
         }
         catch (MySqlException e)
         {
             throw new MoneyUnavailableException(e);
         }
+        // §8.8: a region listed here but pinned to another server has moved; the owner hears of it (counted per region).
+        // Raising it never fails this answer.
+        if (alerts is not null)
+            foreach (var moved in listed.Where(r => pins.TryGetValue(r, out var to) && to != server.Id))
+                await alerts.RegionMovedAsync(moved, "server:" + server.Id.ToString("N"), ct);
+        return listed.Where(r => pins.TryGetValue(r, out var to) && to == server.Id).ToHashSet();
     }
 
     /// <summary>Regions Robust lists at one paired server that are pinned to a different one (which may no longer be paired).</summary>
