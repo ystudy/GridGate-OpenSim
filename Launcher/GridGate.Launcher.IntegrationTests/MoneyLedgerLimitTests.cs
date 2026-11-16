@@ -72,7 +72,7 @@ public sealed class MoneyLedgerLimitTests(MoneyMariaDb maria) : IClassFixture<Mo
     }
 
     [Fact]
-    public async Task Staff_gift_does_not_count()
+    public async Task Staff_entries_do_not_count()
     {
         var (ledger, _, _) = await MoneyLedgerTransferTests.Setup(maria);
         await Fund(ledger, A, 30_000);
@@ -80,6 +80,15 @@ public sealed class MoneyLedgerLimitTests(MoneyMariaDb maria) : IClassFixture<Mo
 
         Assert.Equal(MoneyOutcome.Ok, await Outcome(ledger.TransferAsync(Pay(A, 10_000), Ct)));
         Assert.Equal(10_000, (await ledger.PersonLimitsAsync(AccountRef.Resident(A), Ct))!.SpentToday);
+
+        // B pays A, and staff refund it: the coins go back from A to B, but neither the payer's nor the payee's spending
+        // changes (Ruling 15), nor the key's.
+        var paid = await ledger.TransferAsync(Pay(B, 50), Ct);
+        Assert.Equal(MoneyOutcome.Ok, paid.Outcome);
+        Assert.Equal(MoneyOutcome.Ok, await Outcome(ledger.RefundAsync(paid.EntryId!.Value, Owner, Ct)));
+        Assert.Equal(10_000, (await ledger.PersonLimitsAsync(AccountRef.Resident(A), Ct))!.SpentToday);
+        Assert.Equal(50, (await ledger.PersonLimitsAsync(AccountRef.Resident(B), Ct))!.SpentToday);
+        Assert.Equal(10_050, (await ledger.LimitsAsync(LimitTarget.ForKey(P1), Ct))!.SpentToday);
     }
 
     [Fact]
@@ -242,11 +251,57 @@ public sealed class MoneyLedgerLimitTests(MoneyMariaDb maria) : IClassFixture<Mo
         Assert.Equal(MoneyOutcome.BadAmount, await ledger.SetPersonLimitsAsync(a, -1, null, null, Owner, Ct));
         Assert.Equal(MoneyOutcome.BadAmount, await ledger.SetPersonLimitsAsync(a, null, MoneyLedger.MaxDailyLimit + 1, null, Owner, Ct));
         Assert.Equal(MoneyOutcome.BadAmount, await ledger.SetPersonLimitsAsync(a, 5, null, null, new StaffAction("Owner", " "), Ct));
+        Assert.Equal(MoneyOutcome.BadAmount, await ledger.SetPersonLimitsAsync(a, 5, null, null, new StaffAction("", "test"), Ct));
+        Assert.Equal(MoneyOutcome.BadAmount, await ledger.SetLimitsAsync(key, 5, null, null, new StaffAction(" ", "test"), Ct));
+        Assert.Equal(MoneyOutcome.NotAllowed, await ledger.SetLimitsAsync(LimitTarget.ForKey(""), 5, null, null, Owner, Ct));
+        Assert.Equal(MoneyOutcome.NotAllowed, await ledger.SetLimitsAsync(LimitTarget.ForKey(new string('k', 65)), 5, null, null, Owner, Ct));
         Assert.Equal(0, await db.Scalar("SELECT COUNT(*) FROM `money`.`limit_overrides`"));
 
+        Assert.Equal(MoneyOutcome.Ok, await ledger.SetLimitsAsync(LimitTarget.ForKey(new string('k', 64)), 5, null, null, Owner, Ct));
         Assert.Equal(MoneyOutcome.Ok, await ledger.SetLimitsAsync(key, MoneyLedger.MaxDailyLimit, 0, null, Owner, Ct));
         Assert.Equal(MoneyOutcome.Ok, await ledger.SetPersonLimitsAsync(a, 0, MoneyLedger.MaxDailyLimit, null, Owner, Ct));
         Assert.Equal(MoneyOutcome.NoWallet, await ledger.SetPersonLimitsAsync(AccountRef.Resident(Guid.NewGuid()), 5, null, null, Owner, Ct));
         Assert.Null(await ledger.PersonLimitsAsync(AccountRef.Resident(Guid.NewGuid()), Ct));
+    }
+
+    [Fact]
+    public async Task Owner_limit_end_dates_must_be_UTC_and_still_ahead()
+    {
+        var (ledger, db, time) = await MoneyLedgerTransferTests.Setup(maria);
+        await ledger.BalanceAsync(AccountRef.Resident(A), Ct);
+        var key = LimitTarget.ForKey(P1);
+        var a = AccountRef.Resident(A);
+        var now = time.GetUtcNow().UtcDateTime;
+        var ahead = now.AddHours(2);
+
+        Assert.Equal(MoneyOutcome.BadAmount, await ledger.SetLimitsAsync(key, 5, null, now.AddSeconds(-1), Owner, Ct));
+        Assert.Equal(MoneyOutcome.BadAmount, await ledger.SetLimitsAsync(key, 5, null, now, Owner, Ct));
+        Assert.Equal(MoneyOutcome.BadAmount, await ledger.SetPersonLimitsAsync(a, 5, null, now, Owner, Ct));
+        // A form's date-time is Local or Unspecified: read as UTC it would move the end by the UTC offset.
+        Assert.Equal(MoneyOutcome.BadAmount, await ledger.SetLimitsAsync(key, 5, null, DateTime.SpecifyKind(ahead, DateTimeKind.Local), Owner, Ct));
+        Assert.Equal(MoneyOutcome.BadAmount, await ledger.SetLimitsAsync(key, 5, null, DateTime.SpecifyKind(ahead, DateTimeKind.Unspecified), Owner, Ct));
+        Assert.Equal(MoneyOutcome.BadAmount, await ledger.SetPersonLimitsAsync(a, 5, null, DateTime.SpecifyKind(ahead, DateTimeKind.Local), Owner, Ct));
+        Assert.Equal(0, await db.Scalar("SELECT COUNT(*) FROM `money`.`limit_overrides`"));
+
+        Assert.Equal(MoneyOutcome.Ok, await ledger.SetLimitsAsync(key, 5, null, ahead, Owner, Ct));
+        Assert.Equal(ahead, (await ledger.LimitsAsync(key, Ct))!.Until);
+    }
+
+    [Fact]
+    public async Task Removing_owner_limits_ignores_a_stale_end_date()
+    {
+        var (ledger, db, time) = await MoneyLedgerTransferTests.Setup(maria);
+        await ledger.BalanceAsync(AccountRef.Resident(A), Ct);
+        var key = LimitTarget.ForKey(P1);
+        var a = AccountRef.Resident(A);
+        var until = time.GetUtcNow().UtcDateTime.AddHours(1);
+        Assert.Equal(MoneyOutcome.Ok, await ledger.SetLimitsAsync(key, 5, null, until, Owner, Ct));
+        Assert.Equal(MoneyOutcome.Ok, await ledger.SetPersonLimitsAsync(a, 5, null, until, Owner, Ct));
+        time.Advance(TimeSpan.FromHours(2));
+
+        // The page sends back the end date it showed, now past (or as the form read it): removing still works.
+        Assert.Equal(MoneyOutcome.Ok, await ledger.SetLimitsAsync(key, null, null, until, Owner, Ct));
+        Assert.Equal(MoneyOutcome.Ok, await ledger.SetPersonLimitsAsync(a, null, null, DateTime.SpecifyKind(until, DateTimeKind.Unspecified), Owner, Ct));
+        Assert.Equal(0, await db.Scalar("SELECT COUNT(*) FROM `money`.`limit_overrides`"));
     }
 }

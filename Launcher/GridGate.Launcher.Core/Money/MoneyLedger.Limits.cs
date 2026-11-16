@@ -76,14 +76,18 @@ public sealed partial class MoneyLedger
 
     /// <summary>
     /// Sets the owner's own limits for <paramref name="target"/>; a null limit uses the default, and both null removes them.
-    /// Each limit must be 0 to <see cref="MaxDailyLimit"/>, <paramref name="until"/> (UTC) still ahead, and the staff's name
-    /// and reason given: otherwise <see cref="MoneyOutcome.BadAmount"/>. A person without a wallet is
+    /// Each limit must be 0 to <see cref="MaxDailyLimit"/>, <paramref name="until"/> a UTC time (<see cref="DateTimeKind.Utc"/>,
+    /// so a form's local time can't move the end by the UTC offset) still ahead, and the staff's name and reason given:
+    /// otherwise <see cref="MoneyOutcome.BadAmount"/>. Removing (both limits null) ignores <paramref name="until"/>, so an
+    /// end date the page sends back after it has passed can't stop it. A person without a wallet is
     /// <see cref="MoneyOutcome.NoWallet"/>; a key id that can't be one is <see cref="MoneyOutcome.NotAllowed"/>.
     /// </summary>
     public Task<MoneyOutcome> SetLimitsAsync(LimitTarget target, long? dailySpend, long? dailyPayout, DateTime? until, StaffAction staff, CancellationToken ct)
     {
         static bool Ok(long? limit) => limit is null or (>= 0 and <= MaxDailyLimit);
-        if (!Ok(dailySpend) || !Ok(dailyPayout) || until <= Now || string.IsNullOrWhiteSpace(staff.Reason) || string.IsNullOrWhiteSpace(staff.StaffName))
+        var removing = dailySpend is null && dailyPayout is null;
+        var untilOk = removing || until is null || (until.Value.Kind == DateTimeKind.Utc && until.Value > Now);
+        if (!Ok(dailySpend) || !Ok(dailyPayout) || !untilOk || string.IsNullOrWhiteSpace(staff.Reason) || string.IsNullOrWhiteSpace(staff.StaffName))
             return Task.FromResult(MoneyOutcome.BadAmount);
         if (target.Kind == LimitKind.Key && !KeyIdOk(target.Id)) return Task.FromResult(MoneyOutcome.NotAllowed);
         return OutcomeOf(RunAsync(async (conn, tx) =>
@@ -92,7 +96,7 @@ public sealed partial class MoneyLedger
                 && (!long.TryParse(target.Id, NumberStyles.None, CultureInfo.InvariantCulture, out var id)
                     || await ScalarAsync(conn, tx, "SELECT COUNT(*) FROM accounts WHERE id = @id AND kind IN ('Person', 'Visitor')", ct, ("@id", id)) == 0))
                 return MoneyResult.Of(MoneyOutcome.NoWallet);
-            if (dailySpend is null && dailyPayout is null)
+            if (removing)
                 await ExecAsync(conn, tx, "DELETE FROM limit_overrides WHERE kind = @kind AND target = @target", ct,
                     ("@kind", target.KindText), ("@target", target.Id));
             else
