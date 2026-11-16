@@ -58,7 +58,7 @@ public sealed class MoneySchemaTests(MoneyMariaDb maria) : IClassFixture<MoneyMa
     }
 
     private static readonly string[] V3Tables =
-        ["session_locations", "handoffs", "region_pins", "key_heard", "limit_overrides", "alerts", "key_locks"];
+        ["session_locations", "handoffs", "region_pins", "key_heard", "region_heard", "limit_overrides", "alerts", "key_locks"];
 
     [Fact]
     public async Task Fresh_schema_is_version_3_with_the_new_tables()
@@ -88,7 +88,7 @@ public sealed class MoneySchemaTests(MoneyMariaDb maria) : IClassFixture<MoneyMa
             ALTER TABLE `money`.`entries` DROP INDEX key_type_at;
             ALTER TABLE `money`.`entries` DROP COLUMN key_id;
             ALTER TABLE `money`.`holds` DROP COLUMN key_id;
-            DROP TABLE `money`.`session_locations`, `money`.`handoffs`, `money`.`region_pins`, `money`.`key_heard`,
+            DROP TABLE `money`.`session_locations`, `money`.`handoffs`, `money`.`region_pins`, `money`.`key_heard`, `money`.`region_heard`,
               `money`.`limit_overrides`, `money`.`alerts`, `money`.`key_locks`;
             UPDATE `money`.`state` SET value = '2' WHERE name = 'schema_version';
             """);

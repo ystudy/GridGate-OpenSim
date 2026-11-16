@@ -56,7 +56,11 @@ public static class MoneySchema
           region_id CHAR(36) PRIMARY KEY, server_id CHAR(32) NOT NULL, machine_id VARCHAR(64) NULL, pinned DATETIME(6) NOT NULL)
           ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
         CREATE TABLE IF NOT EXISTS key_heard (
-          key_id VARCHAR(64) PRIMARY KEY, protocol INT NOT NULL, regions TEXT NOT NULL, at DATETIME(6) NOT NULL)
+          key_id VARCHAR(64) PRIMARY KEY, protocol INT NOT NULL, at DATETIME(6) NOT NULL)
+          ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+        CREATE TABLE IF NOT EXISTS region_heard (
+          key_id VARCHAR(64) NOT NULL, region_id CHAR(36) NOT NULL, protocol INT NOT NULL, at DATETIME(6) NOT NULL,
+          PRIMARY KEY (key_id, region_id))
           ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
         CREATE TABLE IF NOT EXISTS limit_overrides (
           kind VARCHAR(8) NOT NULL, target VARCHAR(64) NOT NULL, daily_spend BIGINT NULL, daily_payout BIGINT NULL, until DATETIME(6) NULL,
@@ -98,6 +102,7 @@ public static class MoneySchema
         "SELECT, INSERT, UPDATE, DELETE ON region_pins",
         "SELECT, INSERT, UPDATE, DELETE ON limit_overrides",
         "SELECT, INSERT, UPDATE ON key_heard",
+        "SELECT, INSERT, UPDATE ON region_heard",
         "SELECT, INSERT, UPDATE ON alerts",
         "SELECT, INSERT, UPDATE ON key_locks",
     ];

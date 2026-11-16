@@ -449,13 +449,14 @@ public sealed class MoneyServiceTests(MoneyMariaDb maria) : IClassFixture<MoneyM
             ("transfer", new { txnId = Guid.NewGuid(), type = "pay_avatar", from = WhoA(), to = new { agentId = B, home = "" }, amount = 10, regionId = Here }),
             ("balance", WhoA()),
             ("economy", new { }),
-            ("health", new { }),
         })
         {
             var (status, answer, _) = await Post(path, body);
             Assert.Equal(HttpStatusCode.OK, status);
             Assert.Equal("unavailable", (string?)answer!["code"]);
         }
+        // Health is still heard, so regions are verified the moment coins come back on.
+        Assert.True((bool?)(await Post("health", new { }))!.Body!["ok"]);
         // A bad key is still refused as one.
         Assert.Equal(HttpStatusCode.Unauthorized, (await Post("balance", WhoA(), key: "wrong")).Status);
         // A purchase already paid for still finishes.

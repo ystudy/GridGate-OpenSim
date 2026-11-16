@@ -3,23 +3,25 @@ using MySqlConnector;
 
 namespace GridGate.Launcher.Core.Money;
 
-/// <summary>Why money does or doesn't work in a region (money design §8.2); the website shows each in words.</summary>
+/// <summary>Why money does or doesn't work in a region; the website shows each in words.</summary>
 public enum RegionStatus { Verified, NotPaired, Moved, NoGridGateMoney, NeedsUpdate, NotHeardFrom }
 
 /// <summary>One region Robust lists, with whether money works there and, if not, why. <paramref name="KeyId"/> is the key that covers it, if any; for a moved region <paramref name="PinnedKeyId"/> is the key of the server it is pinned to.</summary>
 public sealed record RegionState(Guid RegionId, string Name, string ServerIp, int Port, string? KeyId, RegionStatus Status, string? PinnedKeyId = null);
 
 /// <summary>
-/// A key's last health call, for the Region Servers list (money design §8.12): the money protocol its module speaks, when it
+/// A key's last health call, for the Region Servers list: the money protocol its module speaks, when it
 /// called (UTC), and what that makes it: <see cref="RegionStatus.Verified"/>, <see cref="RegionStatus.NeedsUpdate"/> or
 /// <see cref="RegionStatus.NotHeardFrom"/>. A key that never called has none.
 /// </summary>
 public sealed record KeyHeard(int Protocol, DateTime At, RegionStatus Status);
 
 /// <summary>
-/// Which regions the money service treats as verified (money design §8.2): covered by a key (pinned, for a Region Server),
-/// whose program called <c>/money/v1/health</c> recently with a protocol that has handoffs, listing the region. The last
-/// health call of each key is kept in the money database. A database failure is <see cref="MoneyUnavailableException"/>.
+/// Which regions the money service treats as verified: covered by a key (pinned, for a Region Server), whose program called
+/// <c>/money/v1/health</c> recently with a protocol that has handoffs, listing the region. Each region's last health call is
+/// kept on its own, by key and region, since several programs of one Region Server share its key and each lists only its
+/// own regions; so is each key's last call, for the Region Servers list. A database failure is
+/// <see cref="MoneyUnavailableException"/>.
 /// </summary>
 public sealed class RegionVerification(Func<CancellationToken, Task<MySqlConnection>> openMoney,
     Func<CancellationToken, Task<MySqlConnection>> openRobust, RegionPins pins, TimeProvider time)
@@ -30,22 +32,45 @@ public sealed class RegionVerification(Func<CancellationToken, Task<MySqlConnect
     /// <summary>A key counts as checked in for this long after its last health call (modules call every 3 minutes).</summary>
     public static readonly TimeSpan HeardWithin = TimeSpan.FromMinutes(10);
 
-    private sealed record Heard(int Protocol, HashSet<Guid> Regions, DateTime At);
+    /// <summary>A health call heard: the money protocol it spoke, and when (UTC).</summary>
+    private sealed record Heard(int Protocol, DateTime At);
 
-    /// <summary>Records a health call: the protocol the key's program speaks and the regions it runs. The caller passes only regions the key covers.</summary>
+    /// <summary>What was heard from one key: its last health call, and each region's.</summary>
+    private sealed record KeyRecord(Heard? Key, Dictionary<Guid, Heard> Regions);
+
+    /// <summary>
+    /// Records a health call: the protocol the key's program speaks and the regions it runs. The caller passes only regions
+    /// the key covers. Each region listed is heard now; regions another program of the same key runs keep their own record.
+    /// </summary>
     public async Task HeardAsync(string keyId, int protocol, IReadOnlyCollection<Guid> regions, CancellationToken ct)
     {
+        var now = time.GetUtcNow().UtcDateTime;
         try
         {
             await using var conn = await openMoney(ct);
-            await using var cmd = new MySqlCommand(
-                "INSERT INTO key_heard (key_id, protocol, regions, at) VALUES (@k, @p, @r, @t) " +
-                "ON DUPLICATE KEY UPDATE protocol = @p, regions = @r, at = @t", conn);
-            cmd.Parameters.AddWithValue("@k", keyId);
-            cmd.Parameters.AddWithValue("@p", protocol);
-            cmd.Parameters.AddWithValue("@r", string.Join(",", regions.Distinct()));
-            cmd.Parameters.AddWithValue("@t", time.GetUtcNow().UtcDateTime);
-            await cmd.ExecuteNonQueryAsync(ct);
+            await using var tx = await conn.BeginTransactionAsync(ct);
+            await using (var cmd = new MySqlCommand(
+                "INSERT INTO key_heard (key_id, protocol, at) VALUES (@k, @p, @t) ON DUPLICATE KEY UPDATE protocol = @p, at = @t", conn, tx))
+            {
+                cmd.Parameters.AddWithValue("@k", keyId);
+                cmd.Parameters.AddWithValue("@p", protocol);
+                cmd.Parameters.AddWithValue("@t", now);
+                await cmd.ExecuteNonQueryAsync(ct);
+            }
+            var list = regions.Distinct().ToList();
+            if (list.Count > 0)
+            {
+                await using var cmd = new MySqlCommand(
+                    "INSERT INTO region_heard (key_id, region_id, protocol, at) VALUES " +
+                    string.Join(", ", list.Select((_, i) => $"(@k, @r{i}, @p, @t)")) +
+                    " ON DUPLICATE KEY UPDATE protocol = VALUES(protocol), at = VALUES(at)", conn, tx);
+                cmd.Parameters.AddWithValue("@k", keyId);
+                cmd.Parameters.AddWithValue("@p", protocol);
+                cmd.Parameters.AddWithValue("@t", now);
+                for (var i = 0; i < list.Count; i++) cmd.Parameters.AddWithValue("@r" + i, list[i].ToString());
+                await cmd.ExecuteNonQueryAsync(ct);
+            }
+            await tx.CommitAsync(ct);
         }
         catch (MySqlException e)
         {
@@ -55,7 +80,8 @@ public sealed class RegionVerification(Func<CancellationToken, Task<MySqlConnect
 
     /// <summary>
     /// True when <paramref name="grant"/> covers <paramref name="regionId"/> (a paired server's grant already reflects pins),
-    /// its last health call speaks <see cref="HandoffProtocol"/>, came within <see cref="HeardWithin"/> and listed the region.
+    /// and that key's last health call listing the region speaks <see cref="HandoffProtocol"/> and came within
+    /// <see cref="HeardWithin"/>.
     /// </summary>
     public async Task<bool> IsVerifiedAsync(RegionKeyGrant grant, Guid regionId, CancellationToken ct) =>
         grant.Regions.Contains(regionId) && StatusOf((await HeardByKeyAsync(grant.KeyId, ct)).GetValueOrDefault(grant.KeyId), regionId) == RegionStatus.Verified;
@@ -100,15 +126,28 @@ public sealed class RegionVerification(Func<CancellationToken, Task<MySqlConnect
     }
 
     /// <summary>Every key's last health call, by key id. A database failure is <see cref="MoneyUnavailableException"/>.</summary>
-    public async Task<IReadOnlyDictionary<string, KeyHeard>> KeysAsync(CancellationToken ct) =>
-        (await HeardByKeyAsync(null, ct)).ToDictionary(k => k.Key, k => new KeyHeard(k.Value.Protocol, Utc(k.Value.At),
-            k.Value.Protocol < HandoffProtocol ? RegionStatus.NeedsUpdate : Recent(k.Value) ? RegionStatus.Verified : RegionStatus.NotHeardFrom));
+    public async Task<IReadOnlyDictionary<string, KeyHeard>> KeysAsync(CancellationToken ct)
+    {
+        var keys = new Dictionary<string, KeyHeard>();
+        foreach (var (key, record) in await HeardByKeyAsync(null, ct))
+            if (record.Key is { } heard)
+                keys[key] = new KeyHeard(heard.Protocol, Utc(heard.At),
+                    heard.Protocol < HandoffProtocol ? RegionStatus.NeedsUpdate : Recent(heard) ? RegionStatus.Verified : RegionStatus.NotHeardFrom);
+        return keys;
+    }
 
-    private RegionStatus StatusOf(Heard? heard, Guid regionId)
+    /// <summary>
+    /// What the key's health calls make <paramref name="regionId"/>: no call at all is no GridGate money. The region's own last
+    /// listing decides: it must speak handoffs and be recent. A region never listed needs an update when the key's last call
+    /// is older than handoffs, and is not heard from otherwise. Another program sharing the key never changes it.
+    /// </summary>
+    private RegionStatus StatusOf(KeyRecord? heard, Guid regionId)
     {
         if (heard is null) return RegionStatus.NoGridGateMoney;
-        if (heard.Protocol < HandoffProtocol) return RegionStatus.NeedsUpdate;
-        return !Recent(heard) || !heard.Regions.Contains(regionId) ? RegionStatus.NotHeardFrom : RegionStatus.Verified;
+        if (!heard.Regions.TryGetValue(regionId, out var region))
+            return heard.Key is { Protocol: < HandoffProtocol } ? RegionStatus.NeedsUpdate : RegionStatus.NotHeardFrom;
+        if (region.Protocol < HandoffProtocol) return RegionStatus.NeedsUpdate;
+        return Recent(region) ? RegionStatus.Verified : RegionStatus.NotHeardFrom;
     }
 
     private bool Recent(Heard heard) => time.GetUtcNow() - new DateTimeOffset(Utc(heard.At)) <= HeardWithin;
@@ -116,20 +155,32 @@ public sealed class RegionVerification(Func<CancellationToken, Task<MySqlConnect
     /// <summary>At comes back from the database without a kind: it is UTC.</summary>
     private static DateTime Utc(DateTime at) => DateTime.SpecifyKind(at, DateTimeKind.Utc);
 
-    private async Task<Dictionary<string, Heard>> HeardByKeyAsync(string? keyId, CancellationToken ct)
+    /// <summary>What was heard from each key (or only <paramref name="keyId"/>), by key id.</summary>
+    private async Task<Dictionary<string, KeyRecord>> HeardByKeyAsync(string? keyId, CancellationToken ct)
     {
-        var found = new Dictionary<string, Heard>();
+        var found = new Dictionary<string, KeyRecord>();
+        KeyRecord Of(string key) => found.TryGetValue(key, out var k) ? k : found[key] = new KeyRecord(null, []);
+        var where = keyId is null ? "" : " WHERE key_id = @k";
         try
         {
             await using var conn = await openMoney(ct);
-            await using var cmd = new MySqlCommand("SELECT key_id, protocol, regions, at FROM key_heard" + (keyId is null ? "" : " WHERE key_id = @k"), conn);
-            if (keyId is not null) cmd.Parameters.AddWithValue("@k", keyId);
-            await using var r = await cmd.ExecuteReaderAsync(ct);
-            while (await r.ReadAsync(ct))
+            await using (var cmd = new MySqlCommand("SELECT key_id, protocol, at FROM key_heard" + where, conn))
             {
-                var regions = r.GetString(2).Split(',', StringSplitOptions.RemoveEmptyEntries)
-                    .Select(s => Guid.TryParse(s, out var g) ? g : (Guid?)null).OfType<Guid>().ToHashSet();
-                found[r.GetString(0)] = new Heard(r.GetInt32(1), regions, r.GetDateTime(3));
+                if (keyId is not null) cmd.Parameters.AddWithValue("@k", keyId);
+                await using var r = await cmd.ExecuteReaderAsync(ct);
+                while (await r.ReadAsync(ct))
+                {
+                    var key = r.GetString(0);
+                    found[key] = Of(key) with { Key = new Heard(r.GetInt32(1), r.GetDateTime(2)) };
+                }
+            }
+            await using (var cmd = new MySqlCommand("SELECT key_id, region_id, protocol, at FROM region_heard" + where, conn))
+            {
+                if (keyId is not null) cmd.Parameters.AddWithValue("@k", keyId);
+                await using var r = await cmd.ExecuteReaderAsync(ct);
+                while (await r.ReadAsync(ct))
+                    if (Guid.TryParse(r.GetValue(1).ToString(), out var region))
+                        Of(r.GetString(0)).Regions[region] = new Heard(r.GetInt32(2), r.GetDateTime(3));
             }
         }
         catch (MySqlException e)
@@ -147,9 +198,10 @@ public sealed class RegionVerification(Func<CancellationToken, Task<MySqlConnect
             await using var conn = await openRobust(ct);
             await using var cmd = new MySqlCommand("SELECT uuid, regionName, serverIP, serverPort FROM regions ORDER BY regionName", conn);
             await using var r = await cmd.ExecuteReaderAsync(ct);
+            // Robust's columns may be NULL: a region with no name or address is listed with an empty one, never a failure.
             while (await r.ReadAsync(ct))
                 if (Guid.TryParse(r.GetValue(0).ToString(), out var id))
-                    rows.Add((id, r.GetString(1), r.GetString(2), Convert.ToInt32(r.GetValue(3))));
+                    rows.Add((id, r.IsDBNull(1) ? "" : r.GetString(1), r.IsDBNull(2) ? "" : r.GetString(2), r.IsDBNull(3) ? 0 : Convert.ToInt32(r.GetValue(3))));
         }
         catch (MySqlException e)
         {

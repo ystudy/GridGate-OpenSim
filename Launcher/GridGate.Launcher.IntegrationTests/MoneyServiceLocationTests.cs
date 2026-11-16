@@ -219,6 +219,25 @@ public sealed class MoneyServiceLocationTests(MoneyMariaDb maria) : IClassFixtur
     }
 
     [Fact]
+    public async Task Health_is_heard_while_money_is_off()
+    {
+        // Coins are off for longer than a region counts as heard from. The modules keep calling health, so when coins come
+        // back on, their regions are verified at once, and where people went meanwhile still counts.
+        var rig = await StartAsync();
+        rig.Mode = MoneyMode.Off;
+
+        rig.VerifyClock.Advance(RegionVerification.HeardWithin + TimeSpan.FromMinutes(5));
+        var health = await rig.Post("health", new { protocol = RegionVerification.HandoffProtocol, regions = new[] { Here } });
+        await rig.Health(Key2);
+        await rig.MoveToThere(SessionA);
+
+        Assert.True((bool?)health.Body?["ok"], health.Raw);
+        rig.Mode = MoneyMode.Play;
+        Assert.Equal("ok", CodeOf(await rig.Post("transfer", Body("transfer", WhoA(), There), Key2)));
+        Assert.Equal(RegionStatus.Verified, (await rig.Verification.AllAsync(rig.Settings, Ct)).Single(r => r.RegionId == Here).Status);
+    }
+
+    [Fact]
     public async Task Handoff_answers()
     {
         var rig = await StartAsync();
@@ -274,9 +293,15 @@ public sealed class MoneyServiceLocationTests(MoneyMariaDb maria) : IClassFixtur
         // A key spamming arrivals nothing vouches for must not hold the database's connections: 20 may wait for their
         // handoff, the rest are refused before any lookup. The location clock stands still, so the 20 stay held.
         var rig = await StartAsync(place: false);
-        // 25 people logged in, each with an arrival of their own: 20 are held, 5 are refused at once.
+        // 25 people logged in and verified at There, each with an arrival of their own at Here: only a verified session's
+        // arrival waits for a handoff. 20 are held, 5 are refused at once.
+        await rig.Health(Key2);
         var people = Enumerable.Range(0, 25).Select(_ => (Agent: Guid.NewGuid(), Session: Guid.NewGuid())).ToList();
-        foreach (var (agent, session) in people) await rig.Db.AddPresence(agent, Here, session, Guid.NewGuid());
+        foreach (var (agent, session) in people)
+        {
+            await rig.Db.AddPresence(agent, There, session, Guid.NewGuid());
+            Assert.Equal("ok", await rig.Place(session, There, key: Key2, agent: agent));
+        }
         var calls = people.Select(p => rig.Post("arrived", new { id = Guid.NewGuid(), sessionId = p.Session, agentId = p.Agent, regionId = Here })).ToList();
 
         var deadline = DateTime.UtcNow.AddSeconds(30);
@@ -302,7 +327,7 @@ public sealed class MoneyServiceLocationTests(MoneyMariaDb maria) : IClassFixtur
             rig.LocationClock.Advance(MoneyLocations.ArrivalRetry);
             await Task.WhenAny(Task.WhenAll(waiting), Task.Delay(20, Ct));
         }
-        foreach (var w in waiting) Assert.Equal("unverified_avatar", CodeOf(await w));
+        foreach (var w in waiting) Assert.Equal("refused", CodeOf(await w)); // Here isn't verified: it can't move anyone
         Assert.Equal("no_session", CodeOf(await rig.Post("arrived", Probe()))); // every held place given back
     }
 }

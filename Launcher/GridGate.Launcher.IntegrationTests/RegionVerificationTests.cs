@@ -95,6 +95,22 @@ public sealed class RegionVerificationTests(MoneyMariaDb maria) : IClassFixture<
     }
 
     [Fact]
+    public async Task A_region_with_no_name_or_address_is_listed_not_a_failure()
+    {
+        var rig = await StartAsync();
+        var odd = Guid.NewGuid();
+        await rig.Db.AddRegion(odd, "10.9.9.9");
+        // Robust's own table allows both to be NULL.
+        await rig.Db.Sql("ALTER TABLE `robust`.`regions` MODIFY `regionName` VARCHAR(128) NULL, MODIFY `serverIP` VARCHAR(64) NULL");
+        await rig.Db.Sql($"UPDATE `robust`.`regions` SET regionName = NULL, serverIP = NULL WHERE uuid = '{odd}'");
+
+        var state = (await rig.Verification.AllAsync(rig.Settings, Ct)).Single(r => r.RegionId == odd);
+
+        Assert.Equal(("", ""), (state.Name, state.ServerIp));
+        Assert.Equal(RegionStatus.NotPaired, state.Status);
+    }
+
+    [Fact]
     public async Task Moved_region_is_moved()
     {
         var rig = await StartAsync();
@@ -119,8 +135,30 @@ public sealed class RegionVerificationTests(MoneyMariaDb maria) : IClassFixture<
 
         await rig.Post("health", new { protocol = 2, regions = new[] { Here, There, Guid.NewGuid() } });
 
-        Assert.Equal(Here.ToString(), await rig.Db.Text("SELECT regions FROM `money`.`key_heard` WHERE key_id = 'p1'"));
+        Assert.Equal(Here.ToString(), await rig.Db.Text("SELECT GROUP_CONCAT(region_id) FROM `money`.`region_heard` WHERE key_id = 'p1'"));
         Assert.Equal(RegionStatus.NoGridGateMoney, await StatusOf(rig, There));
+    }
+
+    [Fact]
+    public async Task Programs_sharing_a_key_each_keep_their_regions_verified()
+    {
+        // A Region Server runs two programs, each with its own region, and both use the server's one key. Each program's
+        // health call lists only its own region; neither takes the other's off the verified list.
+        var rig = await StartAsync();
+        var (first, second) = (Guid.NewGuid(), Guid.NewGuid());
+        var server = new RegionKeyGrant("server:" + Guid.NewGuid().ToString("N"), new HashSet<Guid> { first, second }, HostA, 9000, 9100);
+
+        await rig.Verification.HeardAsync(server.KeyId, RegionVerification.HandoffProtocol, [first], Ct);
+        await rig.Verification.HeardAsync(server.KeyId, RegionVerification.HandoffProtocol, [second], Ct);
+        rig.VerifyClock.Advance(TimeSpan.FromMinutes(3));
+        await rig.Verification.HeardAsync(server.KeyId, RegionVerification.HandoffProtocol, [first], Ct);
+
+        Assert.True(await rig.Verification.IsVerifiedAsync(server, first, Ct));
+        Assert.True(await rig.Verification.IsVerifiedAsync(server, second, Ct));
+        // Each region keeps its own time: the program that stopped calling loses only its own region.
+        rig.VerifyClock.Advance(TimeSpan.FromMinutes(8));
+        Assert.True(await rig.Verification.IsVerifiedAsync(server, first, Ct));
+        Assert.False(await rig.Verification.IsVerifiedAsync(server, second, Ct));
     }
 
     [Fact]
