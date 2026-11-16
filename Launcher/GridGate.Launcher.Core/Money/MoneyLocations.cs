@@ -304,18 +304,21 @@ public sealed class MoneyLocations(Func<CancellationToken, Task<MySqlConnection>
                 return new Match(here is { State: LocationState.Verified } && here.RegionId == ToGuid(r.GetValue(1)), r.GetValue(0).ToString(), null);
 
         // A start never moves a verified session (that would let a replay through the Gatekeeper take someone who is still
-        // here). It may place an unverified one (Ruling 8): otherwise any key could place a session unverified before the
-        // real arrival, and use up the start that should verify it. Only a start newer than last_start_id counts, so each
-        // start places once and a used one can't verify the session again.
+        // here). Only a start newer than last_start_id counts, so each start places once and a used one can't verify the
+        // session again.
         var after = row?.LastStartId ?? 0;
 
-        // 2. §8.4 "A login start is accepted once per session": when the session was never placed, or is unverified.
-        if ((row is null || here!.State == LocationState.Unverified)
-            && await StartAsync(sessionId, agentId, regionId, "login", after, ct) is { } login)
+        // 2. §8.4 "A login start is accepted once per session": only when the session was never placed (Ruling 10). Any
+        // key could hold one back (a login region that never reports the arrival) and use it once the avatar had moved on
+        // and been placed unverified elsewhere. A false claim before the real arrival therefore pauses money until the
+        // next login; it can't verify anyone.
+        if (row is null && await StartAsync(sessionId, agentId, regionId, "login", after, ct) is { } login)
             return new Match(true, null, login);
 
         // 3. §8.4 A Gatekeeper start counts only in a region of the Grid Asset Server's own (a local program's key, never a
-        // paired Region Server's), and only when the session was never placed, last left the grid, or is unverified.
+        // paired Region Server's), and only when the session was never placed, last left the grid, or is unverified
+        // (Ruling 8): our own regions report an arrival only when the viewer really connects, so a false claim elsewhere
+        // can't keep a resident from coming home.
         if (grant.ServerHost is null && (row is null || here!.State is LocationState.LeftGrid or LocationState.Unverified)
             && await StartAsync(sessionId, agentId, regionId, "gatekeeper", after, ct) is { } gatekeeper)
             return new Match(true, null, gatekeeper);

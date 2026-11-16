@@ -438,7 +438,7 @@ public sealed class MoneyLocationsTests(MoneyMariaDb maria) : IClassFixture<Mone
     }
 
     [Fact]
-    public async Task Early_false_claim_does_not_block_the_real_login_arrival()
+    public async Task Early_false_claim_before_the_login_arrival_pauses_money()
     {
         await StartAsync();
         await _db.AddSessionStart(SessionU, U, R1, "login");
@@ -447,8 +447,44 @@ public sealed class MoneyLocationsTests(MoneyMariaDb maria) : IClassFixture<Mone
         Assert.Equal(PlaceOutcome.PlacedUnverified, (await Arrive(Paired, R3)).Outcome);
         AssertAt(await Where(), R3, Paired.KeyId, LocationState.Unverified);
 
-        // The real arrival still has its unused login start (Ruling 8).
-        Assert.Equal(PlaceOutcome.Ok, (await Arrive(P1, R1)).Outcome);
+        // A login start places only a session not yet placed (Ruling 10), so money is paused until the next login, and
+        // nobody is verified anywhere.
+        Assert.Equal(PlaceOutcome.PlacedUnverified, (await Arrive(P1, R1)).Outcome);
+        AssertAt(await Where(), R1, "p1", LocationState.Unverified);
+    }
+
+    [Fact]
+    public async Task Withheld_login_arrival_cannot_later_verify_a_moved_avatar()
+    {
+        await StartAsync();
+        await _db.AddSessionStart(SessionU, U, R3, "login"); // U logs in to Neon Pier, which never reports the arrival
+
+        // U teleports on to R2. Neon Pier's handoff isn't held (it never placed U), so R2 can only place U unverified.
+        Assert.Equal(PlaceOutcome.NotHeld, await Handoff(Paired, R3, R2));
+        Assert.Equal(PlaceOutcome.PlacedUnverified, (await Arrive(P2, R2)).Outcome);
+        AssertAt(await Where(), R2, "p2", LocationState.Unverified);
+
+        // Now Neon Pier claims U with the login start it held back.
+        var claim = await Arrive(Paired, R3);
+
+        Assert.NotEqual(PlaceOutcome.Ok, claim.Outcome);
+        Assert.NotEqual(LocationState.Verified, (await Where())!.State);
+        Assert.Equal(0, await _db.Scalar("SELECT COUNT(*) FROM `money`.`session_locations` WHERE state = 'Verified'"));
+    }
+
+    [Fact]
+    public async Task Late_retry_of_a_cancelled_handoff_changes_nothing()
+    {
+        await StartAsync();
+        await LoggedInAtR1();
+        var id = Guid.NewGuid();
+        Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, R2, id: id));
+        await _locations.CancelHandoffAsync(P1, SessionU, R1, Ct); // the teleport failed
+
+        Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, R2, id: id)); // the module's late retry of the same send
+
+        Assert.Equal(0, await OpenHandoffs());
+        Assert.Equal(PlaceOutcome.Refused, (await Arrive(P2, R2)).Outcome);
         AssertAt(await Where(), R1, "p1", LocationState.Verified);
     }
 
