@@ -27,8 +27,15 @@ Debian Linux as well as Windows.
 * **Regions:** a grid map you add regions to by dragging a region type onto it,
   each region's settings, moving regions, running several regions together to
   share memory, and saving or loading regions as OAR files.
-* **Physics engines per region:** ubODE (with a much faster start-up for mesh-heavy
-  regions), BulletSim, and Rapier (experimental, where its library is available).
+* **[Physics engines](#physics-engines) per region:**
+  * **ubODE**, the default. It starts mesh-heavy regions quickly, because GridGate
+    fixed a slow step in it.
+  * **Rapier**, experimental, where its library is available. It handles regions
+    with many moving objects better, but starts mesh-heavy regions more slowly and
+    uses more memory.
+  * **BulletSim**.
+* **[Money](#money), coming in a later release:** play coins, real coins or
+  Gloebit, with GridGate's own ledger.
 * **People:** find residents, staff roles (owner, admin, supervisor), sign-up
   approval, support tickets, groups, estates, hypergrid links and takedowns.
 * **Guest pages:** the splash page the viewer shows (with its own editor), the
@@ -184,6 +191,234 @@ Your world's login address is on the GridGate Home page (and on the guest
 Connect page your residents see), for example `http://192.168.1.20:8002/`. Add it
 in Firestorm under **Preferences → OpenSim → Grid Manager**, then sign in with
 your avatar's name and password.
+
+## Physics engines
+
+You pick the engine on a region's **Physics** settings tab (regions that run
+together in one program share it). Which one is faster depends on what the
+region does:
+
+* **For a region full of mesh, choose ubODE.** GridGate fixed the step that made
+  mesh-heavy regions slow to start, so a region with about 5,000 meshes is ready
+  in about 5 seconds instead of 20. Rapier takes about 8 seconds and more than
+  twice the memory.
+* **For a region with many moving objects, Rapier is ahead.** A pile of 500
+  objects costs it about a quarter of ubODE's time. At 2,000 moving objects it
+  needs about half, while ubODE can't keep up and the region slows to a quarter
+  speed. At 1,000 spread-out objects the two are about even. In quiet regions
+  ubODE is the cheaper one, but both have plenty of time to spare.
+
+Rapier stays experimental until walking, vehicles and mesh floors have been
+checked in a viewer.
+
+The last part of the chart is a test, not a GridGate feature yet: freezing an
+idle region and waking it when someone arrives, which takes hundredths of a
+second instead of a fresh start.
+
+![Physics engines compared. Running a busy region, physics milliseconds in each 91 ms frame for ubODE and Rapier: 100 objects moving 1.5 and 3.0; 500 objects in a pile 48.4 and 10.9; 1,000 moving 29.3 and 26.5; 2,000 moving 121.4, which slows the region to a quarter speed, and 57.9; the DragonFyre region with a 500-object pile 54.8 and 14.2. Starting DragonFyre, 4,090 objects and about 5,000 meshes: ubODE before GridGate's fix 19.7 seconds, ubODE in GridGate 5.3 seconds with 465 MB of memory, Rapier 7.8 seconds with 1,150 MB. Freezing and waking, a bench test not yet in GridGate: starting from cold 5.3 seconds, freezing 0.005 seconds with memory going from 468 MB to 82 MB, waking 0.015 seconds.](docs/images/physics/physics-engines.svg)
+
+The numbers come from a small test computer (2 cores, 2 GB of memory); see the
+[Rapier results](docs/superpowers/specs/2026-11-06-rapier-early-results.md) for
+how they were measured.
+
+## Money
+
+GridGate has its own money system, so residents can tip a DJ, buy from a vendor,
+pay for land or rent, and see their balance in Firestorm's status bar.
+
+**Money is switched off in this version of GridGate.** It will be turned on in
+a later release, once the money code has passed its security review.
+
+On the **Money** page the grid's owner will choose one of four modes:
+
+* **Off:** no money, as today.
+* **Play coins:** a currency that isn't real money. Games of chance are fine here.
+  Switching to real coins warns that they then count as gambling.
+* **Real coins:** the same coins, bought with real money. Staff add the coins by
+  hand once a payment arrives. Coins are never cashed back into money, and
+  balances carry over from play coins.
+* **Gloebit:** the outside Gloebit service, for grids that want artists paid in
+  real money. Gloebit handles the payments and the cash-outs.
+
+What it covers:
+
+* **Everything people do with money in Second Life:** buying objects, paying an
+  avatar or an object (tip jars, vendors, rental boxes), scripts that pay out,
+  buying land, and optional fees for uploads, groups and classified ads.
+* **The books:** every coin is in one ledger. Staff see totals, each person's
+  history and every payment. They can give coins or take them back with a
+  reason, and freeze payments. A self-check raises an alarm if the books don't
+  balance.
+* **Residents:** a My coins page with their own history. A switch lets scripts pay
+  out from their balance, up to a daily limit.
+* **Visitors from other grids:** they can be tipped and can spend at events.
+* **Several computers:** the ledger runs on the Grid Asset Server. Each Region
+  Server pairs with it using a one-time code, and its key only works for avatars
+  in its own regions.
+
+### Why not the usual OpenSim money server
+
+Most self-run OpenSim grids use the DTL/NSL Money Server. Reading its code showed
+that anyone who can reach its port can create money or move anyone's money, and
+two payments at once can overdraw an account. GridGate doesn't use any of its
+code. The [money design](docs/superpowers/specs/2026-11-13-money-design.md)
+(§13.1) has the details.
+
+### Fixes to OpenSim
+
+Building the money system turned up bugs in how OpenSim itself handles money.
+Most of them let a scammer take someone else's money, or let a grid's fees be
+skipped. GridGate fixed them in OpenSim's own code, so the fixes are in every
+build, whether money is on or not. They matter to anyone who runs a money
+module on OpenSim, not only to GridGate.
+
+**First, how a script spends money.** Money normally moves because a person
+chooses to pay: they right-click an object or an avatar, pick Pay and type the
+amount. No script can raise that amount. A script can also pay money *out*,
+with `llGiveMoney` or `llTransferLindenDollars`, for change, refunds, prizes or
+splitting a sale with a partner. That money always comes from the **object's
+owner**. Before a script may do that, it has to ask for `PERMISSION_DEBIT`, and
+someone has to click Yes on a dialog. Most of the bugs below are about *who*
+that Yes came from.
+
+#### BUG FIX - A script could spend its owner's money without asking the owner
+
+OpenSim sent the `PERMISSION_DEBIT` question to whoever the script named, and
+never checked that this person was the owner.
+
+* **How a scammer could use it:** a scammer sells or gives away a script, for
+  example a "tip jar" script. You put it in your object. When a visitor touches
+  the jar, the script asks *the visitor* for permission to take money. The
+  visitor clicks Yes without reading. The script can now pay the scammer out of
+  **your** balance, and you never saw a dialog.
+* **The fix:** `llGiveMoney` and `llTransferLindenDollars` refuse to pay unless
+  the person who said Yes is the object's current owner.
+
+#### BUG FIX - A stranger's "Yes" started working once they owned the object
+
+OpenSim stored a stranger's Yes, and several of its features make that stranger
+the object's owner while keeping it. Once they own it, their old Yes counts as
+the owner's Yes, and the script spends **the stranger's own money**: the person
+who had clicked Yes.
+
+* **How a scammer could use it: the free demo HUD.**
+  1. A scammer puts out a "free demo HUD" giver. When you touch it, its script
+     asks you for permission to attach and to take money. You click Yes, as
+     most people do.
+  2. Your Yes does nothing yet. The giver belongs to the scammer, and a script
+     can only spend its owner's money.
+  3. The script attaches itself to you as a temporary HUD
+     (`llAttachToAvatarTemp`). That makes **you** the owner, and OpenSim kept
+     your Yes.
+  4. Now the person who said Yes and the owner are the same: you. The check
+     passes, and the HUD pays your coins to the scammer, as long as you wear it.
+* **How a scammer could use it: the 1-coin copy sale.** The scammer gets your
+  Yes when you touch their object, then sells you a copy of it for 1 coin. The
+  copy carries the script's saved state, and your Yes is in it. When you rez or
+  wear your copy, the Yes comes back and the script spends your money. Giving
+  you the object works the same way.
+* **How a scammer could use it: the extra script.** Every script in a prim
+  heard every answer. Say you put a free door or animation script from someone
+  you don't know into your tip jar. When you click Yes on your own tip script's
+  money question, the stranger's script got that Yes too, even if it had only
+  asked to play an animation. It could then pay its maker out of your balance.
+* **The fix:**
+  * Only the object's owner is ever asked for `PERMISSION_DEBIT`. If a script
+    asks anyone else, the money part is dropped with a script error, and the
+    rest of the request goes ahead. So the scammer's giver can't even ask you.
+  * An answer goes only to the script that asked, while its question is open,
+    and grants no more than that script asked for.
+  * A temporary attach drops `PERMISSION_DEBIT` when it changes the owner.
+  * A saved `PERMISSION_DEBIT` comes back only if the owner gave it and the
+    script was running: a region restart, a region crossing or a teleport. It
+    doesn't come back on a rez from inventory or an attach, because that saved
+    state may have come from someone else.
+
+**What this means for your shop.** A customer paying your vendor is the
+customer's own choice. They use the viewer's Pay button, and your script only
+hears that the money arrived and hands over the product. No script spends
+anyone's money there, so none of this changes it. It matters only if your
+vendor pays money *out*, for change, refunds or a partner's share. Then you,
+the owner, still grant `PERMISSION_DEBIT` as before. What's new is that after
+you take the vendor into inventory and rez it again, its script has to ask you
+again. Well-written vendors already ask in `on_rez` or `attach`, so you just
+click Yes once more. A vendor that only asked once, when you first set it up,
+stops paying out until you reset its script.
+
+#### BUG FIX - "Grant all permissions" granted money too
+
+A region can have the `auto_grant_all_perms` setting on, so scripts get every
+permission they ask for without a dialog. That included `PERMISSION_DEBIT`.
+
+* **How a scammer could use it:** a scammer gives away a freebie with a hidden
+  script. You rez it on a region with that setting on. The script asks for
+  permission to take your money, gets it without you ever seeing a dialog, and
+  pays the scammer.
+* **The fix:** a request that includes `PERMISSION_DEBIT` always shows the
+  usual dialog, and the owner has to click Yes. Requests without it are still
+  granted automatically.
+
+#### BUG FIX - `llGiveMoney` passed on amounts of 0 or less
+
+`llGiveMoney` sent any amount to the money module and left it to the module to
+refuse 0 and negative amounts.
+
+* **How a scammer could use it:** with a money module that doesn't check,
+  `llGiveMoney(you, -500)` from a scammer's object "gives" you minus 500. That
+  takes 500 from you and pays it to the scammer. GridGate's money module
+  refuses these too, but OpenSim shouldn't depend on every module doing so.
+* **The fix:** `llGiveMoney` refuses amounts of 0 or less itself, so the money
+  module is never asked.
+
+#### BUG FIX - `llGiveMoney` from group-owned objects
+
+`llTransferLindenDollars` refused to pay from an object owned by a group, but
+`llGiveMoney` didn't. A group has no wallet on GridGate, so there is nothing to
+pay from. This isn't a scam risk on its own. The fix makes `llGiveMoney` refuse
+too, with a script error, so the two functions agree.
+
+#### BUG FIX - Uploads through the older path were free
+
+Viewers upload textures, sounds and animations in one of two ways. The newer
+way checked the upload fee and took it. The older UDP way checked that the
+uploader could pay, but never took the fee.
+
+* **How it could be used:** someone uses a viewer that uploads the older way
+  and never pays the upload fee. Nobody's coins are taken; the grid just
+  doesn't collect its fee.
+* **The fix:** the fee is now taken when an upload through that path becomes an
+  inventory item.
+
+#### BUG FIX - Classified ads cost whatever the viewer said
+
+OpenSim charged the price the viewer sent with a classified ad, not the grid's
+price.
+
+* **How it could be used:** a modified viewer sends a price of 0 and lists
+  classified ads for free. It also went wrong the other way: a resident who
+  couldn't afford the price they typed was refused, even on a grid where
+  classifieds cost nothing.
+* **The fix:** OpenSim asks the money module for the grid's own fee and charges
+  that.
+
+#### NEW - Scripts can pay visitors from other grids
+
+This one is a new feature, not a bug fix. `llTransferLindenDollars` answered
+`LINDENDOLLAR_ENTITYDOESNOTEXIST` for anyone without an account on this grid,
+so a tip jar couldn't pass tips on to a DJ visiting from another grid. Now it
+first asks the money module whether it can pay that visitor. GridGate's module
+can, through the visitor's wallet.
+
+#### Keeping the fixes
+
+These changes are small. Each is its own commit, marked in the code with a
+`GridGate:` comment, and listed in [MERGING.md](MERGING.md), so they survive
+updates taken from OpenSimulator. Other money modules keep working, because
+the money module interface OpenSim uses (`IMoneyModule`) is unchanged; the
+visitor and classified checks are new, optional interfaces.
+
+The script changes are tested against OpenSim's real script code in a test
+region (`tests/GridGate.Lsl.Tests`). CI runs those tests on Linux and Windows.
 
 ## Building from source
 
