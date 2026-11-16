@@ -91,4 +91,5 @@ public sealed record TransferRequest(
     long Amount,
     Guid? RegionId = null,
     Guid? ObjectId = null,
-    string? ObjectName = null);
+    string? ObjectName = null,
+    string? KeyId = null);

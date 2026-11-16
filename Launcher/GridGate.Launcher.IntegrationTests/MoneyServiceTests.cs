@@ -21,6 +21,7 @@ public sealed class MoneyServiceTests(MoneyMariaDb maria) : IClassFixture<MoneyM
     private static readonly Guid B = Guid.Parse("b0000000-0000-0000-0000-00000000000b");
     private static readonly Guid Here = Guid.Parse("e0000000-0000-0000-0000-00000000000e");
     private static readonly Guid There = Guid.Parse("f0000000-0000-0000-0000-00000000000f");
+    private static readonly Guid Yonder = Guid.Parse("e1000000-0000-0000-0000-00000000000e");
     private static readonly Guid SessionA = Guid.Parse("5000000a-0000-0000-0000-000000000005");
     private static readonly Guid SecureA = Guid.Parse("6000000a-0000-0000-0000-000000000006");
     private const string Key = "the-region-key-for-program-one-0000000000000000";
@@ -48,10 +49,11 @@ public sealed class MoneyServiceTests(MoneyMariaDb maria) : IClassFixture<MoneyM
 
     /// <summary>
     /// Starts the service on a fresh database: program p1 holds region Here and p2 region There. When it is listening on a
-    /// working database, both programs' modules have checked in and the service has placed A at Here and B at There.
+    /// working database, both programs' modules have checked in and the service has placed A at Here and B at There. With
+    /// <paramref name="yonder"/>, p1 also holds region Yonder.
     /// </summary>
     private async Task<MoneyTestDatabase> StartAsync(MoneyMode mode = MoneyMode.Play, Func<LauncherSettings, LauncherSettings>? dbOverride = null,
-        Func<X509Certificate2>? certificate = null, int? port = null, OwnerPlan? plan = null)
+        Func<X509Certificate2>? certificate = null, int? port = null, OwnerPlan? plan = null, bool yonder = false)
     {
         _mode = mode;
         var db = await maria.FreshAsync();
@@ -66,7 +68,8 @@ public sealed class MoneyServiceTests(MoneyMariaDb maria) : IClassFixture<MoneyM
             Plan = plan,
             MoneyPort = _port,
             Programs = [new ProgramSettings("p1", 8004, 8011), new ProgramSettings("p2", 8005, 8012)],
-            Regions = [new RegionSettings("p1", "Here", Here, UdpPort: 8004), new RegionSettings("p2", "There", There, UdpPort: 8005)],
+            Regions = [new RegionSettings("p1", "Here", Here, UdpPort: 8004), new RegionSettings("p2", "There", There, UdpPort: 8005),
+                .. yonder ? [new RegionSettings("p1", "Yonder", Yonder, UdpPort: 8006)] : Array.Empty<RegionSettings>()],
             Money = new MoneySettings(Mode: mode, UploadFee: 3, ProgramKeys: new() { ["p1"] = Key, ["p2"] = Key2 }),
         };
         var dbSettings = dbOverride?.Invoke(settings) ?? settings;
@@ -327,6 +330,45 @@ public sealed class MoneyServiceTests(MoneyMariaDb maria) : IClassFixture<MoneyM
         });
 
         Assert.Equal("wrong_region", (string?)body!["code"]);
+    }
+
+    [Fact]
+    public async Task Payer_verified_in_another_region_of_the_same_key_is_wrong_region()
+    {
+        await StartAsync(yonder: true);
+        // p1's module runs both its regions, so both are verified; A is verified at Here.
+        Assert.Equal(HttpStatusCode.OK, (await Post("health", new { protocol = RegionVerification.HandoffProtocol, regions = new[] { Here, Yonder } })).Status);
+        object Pay(Guid region) => new
+        {
+            txnId = Guid.NewGuid(), type = "pay_avatar", from = WhoA(), to = new { agentId = B, home = "" }, amount = 10, regionId = region,
+        };
+
+        Assert.Equal("wrong_region", (string?)(await Post("transfer", Pay(Yonder))).Body!["code"]);
+        Assert.Equal("ok", (string?)(await Post("transfer", Pay(Here))).Body!["code"]);
+
+        // Once p1 has handed A to Yonder, the other way round.
+        Assert.Equal("ok", (string?)(await Post("handoff", new { id = Guid.NewGuid(), sessionId = SessionA, fromRegion = Here, toRegion = Yonder, kind = "teleport" })).Body!["code"]);
+        Assert.Equal("ok", (string?)(await Post("arrived", new { id = Guid.NewGuid(), sessionId = SessionA, agentId = A, regionId = Yonder })).Body!["code"]);
+        Assert.Equal("wrong_region", (string?)(await Post("transfer", Pay(Here))).Body!["code"]);
+        Assert.Equal("ok", (string?)(await Post("transfer", Pay(Yonder))).Body!["code"]);
+    }
+
+    [Fact]
+    public async Task Region_payments_record_their_key()
+    {
+        var db = await StartAsync();
+        await Post("transfer", new { txnId = Guid.NewGuid(), type = "pay_avatar", from = WhoA(), to = new { agentId = B, home = "" }, amount = 10, regionId = Here });
+        var hold = await Post("hold", new
+        {
+            txnId = Guid.NewGuid(), kind = "object", buyer = WhoA(), seller = new { agentId = B, home = "" }, amount = 5, regionId = Here, objectId = Guid.NewGuid(), objectName = "dress",
+        });
+        await Post("charge", new { txnId = Guid.NewGuid(), type = "upload_fee", payer = WhoA(), amount = 3, regionId = Here });
+        await db.Sql($"UPDATE `money`.`accounts` SET payouts_allowed = 1 WHERE agent_id = '{A}'");
+        await Post("payout", new { txnId = Guid.NewGuid(), ownerId = A, to = new { agentId = B, home = "" }, amount = 2, regionId = Here, objectId = Guid.NewGuid(), objectName = "slot" });
+
+        Assert.Equal("ok", (string?)hold.Body!["code"]);
+        Assert.Equal(4, await db.Scalar("SELECT COUNT(*) FROM `money`.`entries` WHERE key_id = 'p1' AND type IN ('pay_avatar', 'hold', 'upload_fee', 'script_payout')"));
+        Assert.Equal("p1", await db.Text($"SELECT key_id FROM `money`.`holds` WHERE id = {hold.Body["holdId"]}"));
     }
 
     [Fact]

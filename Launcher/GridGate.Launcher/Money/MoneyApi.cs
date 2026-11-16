@@ -106,7 +106,7 @@ internal static class MoneyApi
             var type = Need(b.Type);
             if (!PaymentTypes.Contains(type)) throw new BadRequest();
             var (from, region) = (Need(b.From), Need(b.RegionId));
-            var request = new TransferRequest(Scoped(grant, b.TxnId), type, Account(from), Account(Need(b.To)), Need(b.Amount), region, b.ObjectId, b.ObjectName);
+            var request = new TransferRequest(Scoped(grant, b.TxnId), type, Account(from), Account(Need(b.To)), Need(b.Amount), region, b.ObjectId, b.ObjectName, grant.KeyId);
             return await WithPayer(c, from, grant, region, ct) is { } refusal ? Code(refusal) : Of(await c.Ledger.TransferAsync(request, ct));
         });
         // A script payout has no payer in the region (the object's owner is usually offline): it needs a verified region.
@@ -114,7 +114,7 @@ internal static class MoneyApi
         {
             var b = await Read<PayoutBody>(http, ct);
             var region = Need(b.RegionId);
-            var request = new PayoutRequest(Scoped(grant, b.TxnId), Need(b.OwnerId), Account(Need(b.To)), Need(b.Amount), region, Need(b.ObjectId), Need(b.ObjectName));
+            var request = new PayoutRequest(Scoped(grant, b.TxnId), Need(b.OwnerId), Account(Need(b.To)), Need(b.Amount), region, Need(b.ObjectId), Need(b.ObjectName), grant.KeyId);
             if (!grant.Regions.Contains(region)) return Code("wrong_region");
             if (!await Verification(c).IsVerifiedAsync(grant, region, ct)) return Code("unverified_region");
             return Of(await c.Ledger.PayoutAsync(request, ct));
@@ -123,14 +123,14 @@ internal static class MoneyApi
         {
             var b = await Read<ChargeBody>(http, ct);
             var (payer, region) = (Need(b.Payer), Need(b.RegionId));
-            var request = new ChargeRequest(Scoped(grant, b.TxnId), Need(b.Type), Account(payer), Need(b.Amount), b.PayTo);
+            var request = new ChargeRequest(Scoped(grant, b.TxnId), Need(b.Type), Account(payer), Need(b.Amount), b.PayTo, grant.KeyId);
             return await WithPayer(c, payer, grant, region, ct) is { } refusal ? Code(refusal) : Of(await c.Ledger.ChargeAsync(request, ct));
         });
         Post(app, "/money/v1/hold", c, async (http, grant, ct) =>
         {
             var b = await Read<HoldBody>(http, ct);
             var (buyer, region) = (Need(b.Buyer), Need(b.RegionId));
-            var request = new HoldRequest(Scoped(grant, b.TxnId), Need(b.Kind), Account(buyer), Account(Need(b.Seller)), Need(b.Amount), region, b.ObjectId, b.ObjectName);
+            var request = new HoldRequest(Scoped(grant, b.TxnId), Need(b.Kind), Account(buyer), Account(Need(b.Seller)), Need(b.Amount), region, b.ObjectId, b.ObjectName, grant.KeyId);
             // Holding's balance (ToBalance) is nobody's balance: it never leaves the service (plan 1 deferred finding).
             return await WithPayer(c, buyer, grant, region, ct) is { } refusal ? Code(refusal) : Of(await c.Ledger.HoldAsync(request, ct)) with { ToBalance = null };
         });

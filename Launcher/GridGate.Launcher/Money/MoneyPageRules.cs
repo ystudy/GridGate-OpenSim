@@ -9,7 +9,8 @@ public sealed record GloebitFormModel(GloebitSettings? App, string Action);
 /// <summary>What the Money staff pages check before anything is saved or moved (money plan 2, task 9).</summary>
 public static class MoneyPageRules
 {
-    public const long MaxDailyPayoutLimit = 100_000_000;
+    /// <summary>The largest daily limit of any kind, the same bound the ledger puts on an owner's own limits.</summary>
+    public const long MaxDailyPayoutLimit = MoneyLedger.MaxDailyLimit;
     public const long MaxMaxPayment = 1_000_000_000;
     public const int MaxReason = 200;
 
@@ -61,8 +62,8 @@ public static class MoneyPageRules
                      ("daily spending limit", m.DailySpendLimit), ("daily region spending limit", m.DailyKeySpendLimit),
                      ("daily region payout limit", m.DailyKeyPayoutLimit),
                  })
-            if (value < 0)
-                return $"The {name} can't be negative.";
+            if (value is < 0 or > MaxDailyPayoutLimit)
+                return $"The {name} must be 0 to {MaxDailyPayoutLimit.ToString("N0", CultureInfo.InvariantCulture)}.";
         return null;
     }
 

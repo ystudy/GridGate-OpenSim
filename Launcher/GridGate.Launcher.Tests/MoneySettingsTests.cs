@@ -201,5 +201,23 @@ public sealed class MoneySettingsTests : IDisposable
     }
 
     [Fact]
+    public void Limits_above_100_million_cant_be_saved()
+    {
+        var offered = new[] { MoneyMode.Off, MoneyMode.Play };
+        const long max = GridGate.Launcher.Money.MoneyPageRules.MaxDailyPayoutLimit;
+
+        Assert.Equal(100_000_000, max);
+        Assert.Contains("daily spending limit must be 0 to 100,000,000",
+            GridGate.Launcher.Money.MoneyPageRules.Problem(new MoneySettings(DailySpendLimit: max + 1), offered));
+        Assert.Contains("daily region spending limit must be 0 to 100,000,000",
+            GridGate.Launcher.Money.MoneyPageRules.Problem(new MoneySettings(DailyKeySpendLimit: max + 1), offered));
+        Assert.Contains("daily region payout limit must be 0 to 100,000,000",
+            GridGate.Launcher.Money.MoneyPageRules.Problem(new MoneySettings(DailyKeyPayoutLimit: max + 1), offered));
+        Assert.Contains("region spending limit", GridGate.Launcher.Money.MoneyPageRules.Problem(new MoneySettings(DailyKeySpendLimit: long.MaxValue), offered));
+        Assert.Null(GridGate.Launcher.Money.MoneyPageRules.Problem(
+            new MoneySettings(DailySpendLimit: max, DailyKeySpendLimit: max, DailyKeyPayoutLimit: max), offered));
+    }
+
+    [Fact]
     public void Money_port_is_taken() => Assert.Contains(8000, PortAllocator.Taken(TestSettings.Create()));
 }

@@ -88,6 +88,30 @@ internal sealed class FakeBooks : IMoneyBooks
         Up("self-check");
         return Task.FromResult(Check);
     }
+    /// <summary>What the limit reads answer.</summary>
+    public LimitView? Limits { get; set; } = new(10_000, 5_000, false, false, null, 0, 0);
+    public Task<LimitView?> LimitsAsync(LimitTarget target, CancellationToken ct)
+    {
+        Up($"limits {target.Kind} {target.Id}");
+        return Task.FromResult(Limits);
+    }
+    public Task<LimitView?> PersonLimitsAsync(AccountRef person, CancellationToken ct)
+    {
+        Up($"person-limits {person.AgentId}");
+        return Task.FromResult(Limits);
+    }
+    public Task<MoneyOutcome> SetLimitsAsync(LimitTarget target, long? dailySpend, long? dailyPayout, DateTime? until, StaffAction staff, CancellationToken ct)
+    {
+        Up($"set-limits {target.Kind} {target.Id} {dailySpend} {dailyPayout} {until:O}");
+        lock (Staff) Staff.Add(staff);
+        return Task.FromResult(Outcome);
+    }
+    public Task<MoneyOutcome> SetPersonLimitsAsync(AccountRef person, long? dailySpend, long? dailyPayout, DateTime? until, StaffAction staff, CancellationToken ct)
+    {
+        Up($"set-person-limits {person.AgentId} {dailySpend} {dailyPayout} {until:O}");
+        lock (Staff) Staff.Add(staff);
+        return Task.FromResult(Outcome);
+    }
 }
 
 /// <summary>Robust's record of hypergrid visitors, faked for the money pages: answers from <see cref="Known"/>.</summary>

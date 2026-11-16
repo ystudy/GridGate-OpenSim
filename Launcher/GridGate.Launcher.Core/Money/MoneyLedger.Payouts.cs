@@ -6,21 +6,20 @@ namespace GridGate.Launcher.Core.Money;
 /// A script paying someone from its object's owner (<c>llGiveMoney</c>, <c>llTransferLindenDollars</c>). The owner is always a
 /// resident: visitors' objects never pay out (money design §7.2).
 /// </summary>
-public sealed record PayoutRequest(Guid TxnId, Guid OwnerId, AccountRef To, long Amount, Guid RegionId, Guid ObjectId, string ObjectName);
+public sealed record PayoutRequest(Guid TxnId, Guid OwnerId, AccountRef To, long Amount, Guid RegionId, Guid ObjectId, string ObjectName,
+    string? KeyId = null);
 
 /// <summary>
 /// A fee: <see cref="EntryType.UploadFee"/> and <see cref="EntryType.ClassifiedFee"/> go to Fees;
 /// <see cref="EntryType.GroupJoinFee"/> goes to the group's founder (<paramref name="PayTo"/>), or to Fees without one.
 /// </summary>
-public sealed record ChargeRequest(Guid TxnId, string Type, AccountRef Payer, long Amount, Guid? PayTo);
+public sealed record ChargeRequest(Guid TxnId, string Type, AccountRef Payer, long Amount, Guid? PayTo, string? KeyId = null);
 
 public sealed partial class MoneyLedger
 {
-    private static readonly TimeSpan PayoutWindow = TimeSpan.FromHours(24);
-
     /// <summary>
-    /// Pays out only when script payouts are on for the grid, the owner opted in, and the owner's payouts over the last 24
-    /// hours stay within the daily limit.
+    /// Pays out only when script payouts are on for the grid, the owner opted in, and over the last 24 hours the owner's
+    /// payouts stay within their daily limit (the owner's own for them, or the per-resident one) and the key's within its own.
     /// </summary>
     public Task<MoneyResult> PayoutAsync(PayoutRequest r, CancellationToken ct)
     {
@@ -30,6 +29,7 @@ public sealed partial class MoneyLedger
         if (Same(owner, r.To)) return Task.FromResult(MoneyResult.Of(MoneyOutcome.NotAllowed));
         return Idempotent(r.TxnId, "payout", r, async (conn, tx) =>
         {
+            if (r.KeyId is { } key) await LockKeyAsync(conn, tx, key, ct);
             if (await GridFrozenAsync(conn, tx, ct)) return MoneyResult.Of(MoneyOutcome.Frozen);
             var (payer, r1) = await ResolveAsync(conn, tx, owner, ct);
             if (payer is null) return MoneyResult.Of(r1);
@@ -38,16 +38,15 @@ public sealed partial class MoneyLedger
             await LockAsync(conn, tx, payer.Id, ct);
             if (await ScalarAsync(conn, tx, "SELECT payouts_allowed FROM accounts WHERE id = @id", ct, ("@id", payer.Id)) != 1)
                 return MoneyResult.Of(MoneyOutcome.NotAllowed);
-            var paidToday = await ScalarAsync(conn, tx,
-                "SELECT COALESCE(SUM(amount), 0) FROM entries WHERE type = @type AND from_id = @id AND at > @since",
-                ct, ("@type", EntryType.ScriptPayout), ("@id", payer.Id), ("@since", Now - PayoutWindow));
-            if (paidToday + r.Amount > settings().DailyPayoutLimit)
+            if (await PersonPaidOutAsync(conn, tx, payer.Id, ct) + r.Amount > await PayoutLimitAsync(conn, tx, LimitTarget.ForAccount(payer.Id), ct))
                 return MoneyResult.Of(MoneyOutcome.OverDailyLimit);
+            if (await KeyPayoutAllowedAsync(conn, tx, r.KeyId, r.Amount, ct) is not MoneyOutcome.Ok and var over)
+                return MoneyResult.Of(over);
 
             var (payee, r2) = await ResolveAsync(conn, tx, r.To, ct);
             if (payee is null) return MoneyResult.Of(r2);
             return await MoveBetweenAsync(conn, tx, payer.Id, payee.Id, r.Amount,
-                new Entry(EntryType.ScriptPayout, r.RegionId, r.ObjectId, r.ObjectName), guarded: true, ct);
+                new Entry(EntryType.ScriptPayout, r.RegionId, r.ObjectId, r.ObjectName, KeyId: r.KeyId), guarded: true, ct);
         }, ct);
     }
 
@@ -61,7 +60,7 @@ public sealed partial class MoneyLedger
             return MoneyResult.Of(MoneyOutcome.Ok);
         }, ct);
 
-    /// <summary>Charges a fee; any other entry type is refused.</summary>
+    /// <summary>Charges a fee, within the payer's and the key's daily limits; any other entry type is refused.</summary>
     public Task<MoneyResult> ChargeAsync(ChargeRequest r, CancellationToken ct)
     {
         if (r.Type is not (EntryType.UploadFee or EntryType.ClassifiedFee or EntryType.GroupJoinFee))
@@ -69,6 +68,7 @@ public sealed partial class MoneyLedger
         if (!AmountOk(r.Amount)) return Task.FromResult(MoneyResult.Of(MoneyOutcome.BadAmount));
         return Idempotent(r.TxnId, "charge", r, async (conn, tx) =>
         {
+            if (r.KeyId is { } key) await LockKeyAsync(conn, tx, key, ct);
             if (await GridFrozenAsync(conn, tx, ct)) return MoneyResult.Of(MoneyOutcome.Frozen);
             var (payer, refusal) = await ResolveAsync(conn, tx, r.Payer, ct);
             if (payer is null) return MoneyResult.Of(refusal);
@@ -77,7 +77,7 @@ public sealed partial class MoneyLedger
             if (r.Type == EntryType.GroupJoinFee && r.PayTo is { } founder && founder != r.Payer.AgentId
                 && (await ResolveAsync(conn, tx, AccountRef.Resident(founder), ct)).Account is { } founderAccount)
                 payeeId = founderAccount.Id;
-            return await MoveBetweenAsync(conn, tx, payer.Id, payeeId, r.Amount, new Entry(r.Type), guarded: true, ct);
+            return await MoveBetweenAsync(conn, tx, payer.Id, payeeId, r.Amount, new Entry(r.Type, KeyId: r.KeyId), guarded: true, ct, limited: true);
         }, ct);
     }
 }
