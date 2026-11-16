@@ -200,8 +200,8 @@ region does:
 
 * **For a region full of mesh, choose ubODE.** GridGate fixed the step that made
   mesh-heavy regions slow to start, so a region with about 5,000 meshes is ready
-  in about 5 seconds instead of 20. Rapier takes about 8 seconds and more than
-  twice the memory.
+  in about 5 seconds instead of 20. Rapier takes about 8 seconds and about 30% more
+  memory (about 650 MB instead of 500).
 * **For a region with many moving objects, Rapier is ahead.** A pile of 500
   objects costs it about a quarter of ubODE's time. At 2,000 moving objects it
   needs about half, while ubODE can't keep up and the region slows to a quarter
@@ -215,7 +215,7 @@ The last part of the chart is a test, not a GridGate feature yet: freezing an
 idle region and waking it when someone arrives, which takes hundredths of a
 second instead of a fresh start.
 
-![Physics engines compared. Running a busy region, physics milliseconds in each 91 ms frame for ubODE and Rapier: 100 objects moving 1.5 and 3.0; 500 objects in a pile 48.4 and 10.9; 1,000 moving 29.3 and 26.5; 2,000 moving 121.4, which slows the region to a quarter speed, and 57.9; the DragonFyre region with a 500-object pile 54.8 and 14.2. Starting DragonFyre, 4,090 objects and about 5,000 meshes: ubODE before GridGate's fix 19.7 seconds, ubODE in GridGate 5.3 seconds with 465 MB of memory, Rapier 7.8 seconds with 1,150 MB. Freezing and waking, a bench test not yet in GridGate: starting from cold 5.3 seconds, freezing 0.005 seconds with memory going from 468 MB to 82 MB, waking 0.015 seconds.](docs/images/physics/physics-engines.svg)
+![Physics engines compared. Running a busy region, physics milliseconds in each 91 ms frame for ubODE and Rapier: 100 objects moving 1.5 and 3.0; 500 objects in a pile 48.4 and 10.9; 1,000 moving 29.3 and 26.5; 2,000 moving 121.4, which slows the region to a quarter speed, and 57.9; the DragonFyre region with a 500-object pile 54.8 and 14.2. Starting DragonFyre, 4,090 objects and about 5,000 meshes: ubODE before GridGate's fix 19.7 seconds, ubODE in GridGate 5.3 seconds with about 500 MB of memory, Rapier 7.8 seconds with about 650 MB. Freezing and waking, a bench test not yet in GridGate: starting from cold 5.3 seconds, freezing 0.005 seconds with memory going from 468 MB to 82 MB, waking 0.015 seconds.](docs/images/physics/physics-engines.svg)
 
 The numbers come from a small test computer (2 cores, 2 GB of memory); see the
 [Rapier results](docs/superpowers/specs/2026-11-06-rapier-early-results.md) for
