@@ -145,6 +145,7 @@ marked in the code with a `GridGate:` comment. When an upstream pick touches the
 |---|---|
 | `fix(opensim): PERMISSION_DEBIT must come from the object's owner` | `OpenSim/Region/ScriptEngine/Shared/Api/Implementation/LSL_Api.cs` (`llGiveMoney`, `llTransferLindenDollars`) |
 | `fix(opensim): auto_grant_all_perms never grants PERMISSION_DEBIT` | `LSL_Api.cs` (`llRequestPermissions`) |
+| `feat(opensim): fire OnCrossAgentToNewRegion when an avatar crosses` | `OpenSim/Region/CoreModules/Framework/EntityTransfer/EntityTransferModule.cs` (`CrossAgentToNewRegionAsync`) |
 | `fix(opensim): llGiveMoney refuses amounts of 0 or less` | `LSL_Api.cs` (`llGiveMoney`) |
 | `fix(opensim): llGiveMoney refuses group-owned objects` | `LSL_Api.cs` (`llGiveMoney`) |
 | `feat(opensim): llTransferLindenDollars can pay hypergrid visitors` | `OpenSim/Framework/IVisitorMoneyModule.cs` (new), `OpenSim/Framework/OpenSim.Framework.csproj`, `LSL_Api.cs` (`llTransferLindenDollars`) |

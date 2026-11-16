@@ -1796,6 +1796,10 @@ namespace OpenSim.Region.CoreModules.Framework.EntityTransfer
                     return agent;
                 }
 
+                // GridGate: OpenSim declares this event but never fires it. The money module needs to know an avatar
+                // is being handed on before the destination is told (CrossAgentIntoNewRegionMain contacts it).
+                m_scene.EventManager.TriggerCrossAgentToNewRegion(agent, isFlying, neighbourRegion);
+
                 m_entityTransferStateMachine.SetInTransit(agent.UUID);
                 agent.RemoveFromPhysicalScene();
 
