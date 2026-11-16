@@ -98,16 +98,20 @@ public static class MoneyVerifyText
 
     /// <summary>
     /// Whether money works for a person now, as their page says it (§8.12, "A person's page"), and the guide heading that
-    /// explains why when it doesn't. <paramref name="region"/> is the name of the region they're in.
+    /// explains why when it doesn't. <paramref name="name"/> is the name of the region they're in, and <paramref name="region"/>
+    /// its state now (null when Robust doesn't list it): money is on only where both they and the region are verified. A
+    /// session on another grid is out of Presence, so it has no location here (Ruling 24): "not in the world".
     /// </summary>
-    public static (string Text, string? Anchor) MoneyHere(SessionLocation? where, string? region)
+    public static (string Text, string? Anchor) MoneyHere(SessionLocation? where, RegionState? region, string? name)
     {
-        var place = region ?? "a region";
+        var place = name ?? "a region";
         return where?.State switch
         {
-            null => ("Not in the world right now.", null),
-            LocationState.Verified => ($"On. They're in {place}.", null),
-            LocationState.LeftGrid => ("Off while they visit another grid. On again when they come back.", PausedAnchor),
+            null or LocationState.LeftGrid => ("Not in the world right now.", null),
+            LocationState.Verified when region is { Status: RegionStatus.Verified } => ($"On. They're in {place}.", null),
+            LocationState.Verified when region is { } r =>
+                ($"Off. They're in {place}, where money is off now: {Words(r.Status)}. On again when that region is verified.", Anchor(r.Status)),
+            LocationState.Verified => ($"Off. They're in {place}, which isn't registered with the grid right now.", NotHeardAnchor),
             _ => ($"Off. They're in {place}, but they came from a region that can't verify where they are (or two servers disagreed about it). On again at their next login.",
                 PausedAnchor),
         };

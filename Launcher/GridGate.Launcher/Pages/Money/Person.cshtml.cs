@@ -269,9 +269,9 @@ public sealed class PersonModel(MoneyGate gate, IMoneyBooks books, AuditLog audi
         if (!Who.IsResident && s.Money.EffectiveVisitors == VisitorMoney.Listed && !s.Money.GridListed(Who.Home))
             return ("Off: their home grid isn't on your list of grids.", MoneyVerifyText.VisitorsAnchor);
         var where = await regions.WhereAgentAsync(Id, ct);
-        string? region = null;
-        if (where?.RegionId is { } id)
-            region = s.Regions.FirstOrDefault(r => r.Uuid == id)?.Name ?? (await regions.AllAsync(s, ct)).FirstOrDefault(r => r.RegionId == id)?.Name;
-        return MoneyVerifyText.MoneyHere(where, region);
+        if (where?.RegionId is not { } id) return MoneyVerifyText.MoneyHere(where, null, null);
+        // Verified where they are is not enough: the region itself must still be verified for payments there to work.
+        var region = (await regions.AllAsync(s, ct)).FirstOrDefault(r => r.RegionId == id);
+        return MoneyVerifyText.MoneyHere(where, region, region?.Name ?? s.Regions.FirstOrDefault(r => r.Uuid == id)?.Name);
     }
 }

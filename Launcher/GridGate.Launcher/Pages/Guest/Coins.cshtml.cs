@@ -25,8 +25,8 @@ public sealed record CoinsLine(DateTimeOffset At, string What, string Who, long 
 public sealed class CoinsModel(IMoneyBooks books, Func<LauncherSettings> settings, IRobustClient robust, AuditLog audit,
     IStringLocalizer<ResidentText> t, IMoneyRegions regions) : PageModel
 {
-    /// <summary>Where they are when money is paused for them there (not verified), else null.</summary>
-    public LocationState? Paused { get; private set; }
+    /// <summary>Money is paused for them: where they are now isn't verified. On another grid they have no location here (Ruling 24).</summary>
+    public bool Paused { get; private set; }
 
     public const int HistoryLines = 50;
 
@@ -101,7 +101,7 @@ public sealed class CoinsModel(IMoneyBooks books, Func<LauncherSettings> setting
         try
         {
             // Their newest logged-in session (Ruling 3); nothing when they aren't in the world.
-            Paused = (await regions.WhereAgentAsync(principal, ct))?.State is { } state and not LocationState.Verified ? state : null;
+            Paused = (await regions.WhereAgentAsync(principal, ct))?.State == LocationState.Unverified;
         }
         catch (MoneyUnavailableException)
         {

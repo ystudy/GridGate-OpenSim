@@ -107,7 +107,7 @@ public sealed class IndexModel(IGridController grid, MoneyGate gate, IMoneyBooks
 
     public async Task<IActionResult> OnPostSettingsAsync(MoneyMode mode, string? currencySymbol, string? currencyName, long startingBalancePlay,
         long startingBalanceReal, long weeklyAllowance, long uploadFee, long classifiedFee, long dailyPayoutLimit, long maxPayment, bool scriptPayouts,
-        long dailySpendLimit, long dailyKeySpendLimit, long dailyKeyPayoutLimit, CancellationToken ct)
+        long? dailySpendLimit, long? dailyKeySpendLimit, long? dailyKeyPayoutLimit, CancellationToken ct)
     {
         if (!Admin) return StatusCode(StatusCodes.Status403Forbidden);
         var before = grid.CurrentSettings().Money;
@@ -117,11 +117,15 @@ public sealed class IndexModel(IGridController grid, MoneyGate gate, IMoneyBooks
             Mode = mode, CurrencySymbol = currencySymbol?.Trim() ?? "", CurrencyName = currencyName?.Trim() ?? "",
             StartingBalancePlay = startingBalancePlay, StartingBalanceReal = startingBalanceReal, WeeklyAllowance = weeklyAllowance,
             UploadFee = uploadFee, ClassifiedFee = classifiedFee, DailyPayoutLimit = dailyPayoutLimit, MaxPayment = maxPayment,
-            ScriptPayouts = scriptPayouts, DailySpendLimit = dailySpendLimit, DailyKeySpendLimit = dailyKeySpendLimit,
-            DailyKeyPayoutLimit = dailyKeyPayoutLimit,
+            ScriptPayouts = scriptPayouts, DailySpendLimit = dailySpendLimit ?? before.DailySpendLimit,
+            DailyKeySpendLimit = dailyKeySpendLimit ?? before.DailyKeySpendLimit, DailyKeyPayoutLimit = dailyKeyPayoutLimit ?? before.DailyKeyPayoutLimit,
         };
         // The form may only be posted with values the page itself would accept; anything else is refused whole.
         if (!ModelState.IsValid) Error = "Every number must be a whole number.";
+        // A form from before the daily limits existed (a tab left open across an update) has none: a missing limit read as 0
+        // would stop every payment, so the whole form is refused instead.
+        else if (dailySpendLimit is null || dailyKeySpendLimit is null || dailyKeyPayoutLimit is null)
+            Error = "The daily limits are missing from the form. Reload the page and save again.";
         else Error = MoneyPageRules.Problem(next, MoneyPageRules.Offered(gate));
         // Coins and Gloebit are separate books (design §10): the owner confirms that before switching.
         // A money database is made the first time coins run (money design §7.1).
@@ -341,9 +345,17 @@ public sealed class IndexModel(IGridController grid, MoneyGate gate, IMoneyBooks
             else
             {
                 await regions.ApproveMoveAsync(region, server, ct);
-                await ClearMovedAsync(region, ct);
+                // §8.3: "Approving re-pins it to A, with an audit entry": written as soon as the pin moved, whatever follows.
                 audit.Write(User, Ip, "money-region-move", LogText.Clean(moved.Name), "approved");
                 Notice = $"Approved: {moved.Name} now belongs to the {MoneyVerifyText.ServerName(to)}. Money works there once its module checks in.";
+                try
+                {
+                    await ClearMovedAsync(region, ct);
+                }
+                catch (MoneyUnavailableException)
+                {
+                    Notice += " Its move notice couldn't be cleared: clear it under Alerts later.";
+                }
             }
         }
         catch (MoneyUnavailableException)
@@ -626,15 +638,29 @@ public sealed class IndexModel(IGridController grid, MoneyGate gate, IMoneyBooks
             var region = a.RegionId is not { } id ? "a region"
                 : Regions.FirstOrDefault(r => r.RegionId == id)?.Name ?? s.Regions.FirstOrDefault(r => r.Uuid == id)?.Name ?? $"region {id}";
             string? person = null;
-            if (a.AgentId is { } agent)
-            {
-                if (!names.TryGetValue(agent, out person))
-                    names[agent] = person = (await robust.FindAccountByIdAsync(agent, ct))?.FullName();
-            }
+            if (a.AgentId is { } agent && !names.TryGetValue(agent, out person))
+                names[agent] = person = await ResidentNameAsync(agent, ct);
             var server = a.Level == AlertLevel.Warning ? s.Money.PairedServers?.FirstOrDefault(p => MoneyVerifyText.KeyOf(p) == a.KeyId)?.Id : null;
+            // A visitor isn't a resident, and Robust may be down: either way the alert still says whose avatar it was.
             rows.Add(new AlertRow(a, MoneyVerifyText.Alert(a, region, MoneyVerifyText.KeyName(a.KeyId, s)),
-                person ?? (a.AgentId is { } who ? $"someone not on this grid (avatar {who})" : null), person is null ? null : a.AgentId, server));
+                person ?? (a.AgentId is { } who ? $"avatar {who}" : null), person is null ? null : a.AgentId, server));
         }
         return rows;
+    }
+
+    /// <summary>
+    /// A resident's name from Robust; null for anyone else, or when Robust can't answer, so an outage there can't take down
+    /// the Money page and its Freeze button. Only the request's own cancellation goes on.
+    /// </summary>
+    private async Task<string?> ResidentNameAsync(Guid agent, CancellationToken ct)
+    {
+        try
+        {
+            return (await robust.FindAccountByIdAsync(agent, ct))?.FullName();
+        }
+        catch (Exception e) when ((e is HttpRequestException or InvalidDataException or OperationCanceledException) && !ct.IsCancellationRequested)
+        {
+            return null;
+        }
     }
 }

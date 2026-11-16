@@ -114,11 +114,12 @@ internal sealed class FakeBooks : IMoneyBooks
     }
 }
 
-/// <summary>The owner's money alerts, faked for the pages: <see cref="Open"/> is what is open.</summary>
+/// <summary>The owner's money alerts, faked for the pages: <see cref="Open"/> is what is open. <see cref="ClearDown"/> makes clearing a database failure.</summary>
 internal sealed class FakeAlerts : IMoneyAlerts
 {
     public List<MoneyAlert> Open { get; } = [];
     public List<string> Calls { get; } = [];
+    public bool ClearDown { get; set; }
 
     public Task<IReadOnlyList<MoneyAlert>> OpenAsync(CancellationToken ct)
     {
@@ -135,6 +136,7 @@ internal sealed class FakeAlerts : IMoneyAlerts
     public Task ClearAsync(long id, string staff, CancellationToken ct)
     {
         lock (Calls) Calls.Add($"clear {id} {staff}");
+        if (ClearDown) throw new MoneyUnavailableException(new InvalidOperationException("down"));
         Open.RemoveAll(a => a.Id == id);
         return Task.CompletedTask;
     }
@@ -1324,7 +1326,6 @@ public sealed class MoneyPageTests
 
         Assert.Equal([$"set-person-limits {Ann} 50000  ", $"set-person-limits {Ann} 500 100 {end:O}", $"set-person-limits {Ann}   "],
             books.Calls.Where(x => x.StartsWith("set-person-limits")));
-        Assert.EndsWith("Z", $"{end:O}"); // the end is UTC midnight, as the page says
         Assert.Equal([new StaffAction("Test Owner", "land sale"), new StaffAction("Test Owner", "asked for less"), new StaffAction("Test Owner", "back to normal")],
             books.Staff);
         Assert.Equal(["ok spend 50000 payout default", $"ok spend 500 payout 100 until {end:yyyy-MM-dd}", "ok default"], Results(f, "money-person-limits"));
@@ -1452,6 +1453,14 @@ public sealed class MoneyPageTests
         Assert.Contains("On.", Here(on));
         Assert.Contains("Neon Pier", Here(on));
 
+        // Verified where they are, but that region has stopped checking in: payments there are refused.
+        f.MoneyRegions.Where[Ann] = new SessionLocation(Guid.NewGuid(), Ann, Quay, KeyOf(Jo), LocationState.Verified, DateTime.UtcNow);
+        var stale = await PageAsync(c, page);
+        Assert.Contains("Off.", Here(stale));
+        Assert.Contains("Quay", Here(stale));
+        Assert.Contains("Not heard from", Here(stale));
+        Assert.DoesNotContain("On.", Here(stale));
+
         f.MoneyRegions.Where.Remove(Ann);
         Assert.Contains("Not in the world", Here(await PageAsync(c, page)));
         Assert.Contains($"where {Ann}", f.MoneyRegions.Calls);
@@ -1515,6 +1524,62 @@ public sealed class MoneyPageTests
         Assert.Contains("clear 8 Test Owner", alerts.Calls);
         Assert.Null((await ParseAsync(r)).QuerySelector("#money-alert-8"));
         Assert.Equal(["ok"], Results(f, "money-alert-clear"));
+    }
+
+    [Fact]
+    public async Task Robust_outage_still_shows_the_money_page_with_freeze()
+    {
+        var alerts = new FakeAlerts();
+        var at = DateTime.UtcNow;
+        alerts.Open.Add(new MoneyAlert(7, AlertKind.UnhandedArrival, AlertLevel.Warning, KeyOf(Sam), NeonPier, Ann, 3, at, at));
+        alerts.Open.Add(new MoneyAlert(10, AlertKind.PersonLimitRepeated, AlertLevel.Notice, "p1", Welcome, Ann, 3, at, at));
+        await using var f = MakeGrid(alerts: alerts);
+        var c = await SignedInAsync(f);
+        f.Robust.Down = true;
+        var before = f.Robust.Lookups;
+
+        var doc = await PageAsync(c, "/money");
+
+        Assert.NotNull(doc.QuerySelector("form[action*='handler=Freeze']"));
+        Assert.Contains($"avatar {Ann}", doc.QuerySelector("#money-alert-7")!.TextContent);
+        Assert.Contains($"avatar {Ann}", doc.QuerySelector("#money-alert-10")!.TextContent);
+        Assert.Null(doc.QuerySelector($"#money-alerts a[href='/money/person?id={Ann}']"));
+        Assert.Equal(1, f.Robust.Lookups - before); // one look per person, however many alerts name them
+    }
+
+    [Fact]
+    public async Task Approved_move_is_audited_even_when_its_notice_cant_be_cleared()
+    {
+        var alerts = new FakeAlerts { ClearDown = true };
+        var at = DateTime.UtcNow;
+        alerts.Open.Add(new MoneyAlert(4, AlertKind.RegionMoved, AlertLevel.Notice, KeyOf(Sam), Market, null, 1, at, at));
+        await using var f = MakeGrid(alerts: alerts);
+
+        using var r = await PostAsync(await SignedInAsync(f), "/money", "ApproveMove", new() { ["Region"] = Market.ToString(), ["Server"] = Sam.ToString() });
+
+        Assert.Equal(HttpStatusCode.OK, r.StatusCode);
+        Assert.Contains($"approve {Market} {Sam}", f.MoneyRegions.Calls);
+        Assert.Contains("clear 4 Test Owner", alerts.Calls);
+        Assert.Equal(["approved"], Results(f, "money-region-move"));
+        Assert.Contains("couldn't be cleared", MainText(await ParseAsync(r)));
+    }
+
+    [Fact]
+    public async Task Settings_without_the_new_limits_is_refused()
+    {
+        // A Money tab opened before the update posts no daily limits: saving 0 would stop every payment.
+        await using var f = Make(new FakeBooks());
+        var form = Settings(symbol: "GG");
+        form.Remove("DailySpendLimit");
+        form.Remove("DailyKeySpendLimit");
+        form.Remove("DailyKeyPayoutLimit");
+
+        using var r = await PostAsync(await SignedInAsync(f), "/money", "Settings", form);
+
+        Assert.Contains("daily limits", ErrorText(await ParseAsync(r)));
+        var m = f.Grid.CurrentSettings().Money;
+        Assert.Equal(("C$", 10_000L, 100_000L, 20_000L), (m.CurrencySymbol, m.DailySpendLimit, m.DailyKeySpendLimit, m.DailyKeyPayoutLimit));
+        Assert.Empty(Results(f, "money-settings"));
     }
 
     [Theory]

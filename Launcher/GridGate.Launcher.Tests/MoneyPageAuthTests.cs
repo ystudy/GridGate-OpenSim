@@ -322,12 +322,20 @@ public sealed class MoneyPageAuthTests
     /// </summary>
     [Theory]
     [MemberData(nameof(AllPosts))]
-    public async Task Same_post_from_the_right_person_acts(string page, string handler)
+    public Task Same_post_from_the_right_person_acts(string page, string handler) => ActsAsync(Find(page, handler), Allowed(Find(page, handler)));
+
+    /// <summary>The settings and alert handlers that aren't the owner's alone: an admin may use them too.</summary>
+    [Theory]
+    [InlineData("Visitors")]
+    [InlineData("AddGrid")]
+    [InlineData("RemoveGrid")]
+    [InlineData("ClearAlert")]
+    public Task Admin_may_change_visitors_grids_and_alerts(string handler) => ActsAsync(Find("/money", handler), "admin");
+
+    private static async Task ActsAsync(Case k, string who)
     {
-        var k = Find(page, handler);
         await using var h = Make(k.Site);
         Arrange(h, k);
-        var who = Allowed(k);
         var c = await ClientAsync(h.F, who);
         var token = await TokenAsync(c, who, k.Site);
         var before = Look(h);

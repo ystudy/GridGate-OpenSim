@@ -597,7 +597,6 @@
   <data name="MyCoins.PayoutsTurnOff" xml:space="preserve"><value>Empêcher mes scripts de payer</value></data>
   <data name="MyCoins.PayoutsOffGrid" xml:space="preserve"><value>Sur cette grille, les scripts ne peuvent pas payer.</value></data>
   <data name="MyCoins.MoneyPaused" xml:space="preserve"><value>L’argent est en pause pour vous jusqu’à votre prochaine connexion, car vous venez d’une région qui ne peut pas vérifier où vous êtes.</value></data>
-  <data name="MyCoins.MoneyPausedOtherGrid" xml:space="preserve"><value>L’argent est en pause pour vous pendant que vous visitez une autre grille.</value></data>
   <data name="MyCoins.History" xml:space="preserve"><value>Historique</value></data>
   <data name="MyCoins.NoHistory" xml:space="preserve"><value>Rien pour l’instant.</value></data>
   <data name="MyCoins.When" xml:space="preserve"><value>Quand</value></data>

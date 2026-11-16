@@ -15,9 +15,9 @@ else
         <div class="ok-box alert alert-success" role="status">@T["MyCoins.Saved"]</div>
     }
     <p id="coins-balance" class="fs-4">@T["MyCoins.Balance", Model.Amount(Model.Balance ?? 0)]</p>
-    @if (Model.Paused is { } paused)
+    @if (Model.Paused)
     {
-        <p id="coins-paused" class="alert alert-info" role="status">@(paused == GridGate.Launcher.Core.Money.LocationState.LeftGrid ? T["MyCoins.MoneyPausedOtherGrid"] : T["MyCoins.MoneyPaused"])</p>
+        <p id="coins-paused" class="alert alert-info" role="status">@T["MyCoins.MoneyPaused"]</p>
     }
 
     <h2 class="h5">@T["MyCoins.PayoutsHeading"]</h2>

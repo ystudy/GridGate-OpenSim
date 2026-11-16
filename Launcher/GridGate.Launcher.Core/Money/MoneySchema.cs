@@ -45,7 +45,8 @@ public static class MoneySchema
         CREATE TABLE IF NOT EXISTS state (name VARCHAR(64) PRIMARY KEY, value VARCHAR(500) NOT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
         CREATE TABLE IF NOT EXISTS session_locations (
           session_id CHAR(36) PRIMARY KEY, agent_id CHAR(36) NOT NULL, region_id CHAR(36) NULL, key_id VARCHAR(64) NULL,
-          state VARCHAR(16) NOT NULL, last_start_id BIGINT NOT NULL DEFAULT 0, updated DATETIME(6) NOT NULL, KEY updated (updated))
+          state VARCHAR(16) NOT NULL, last_start_id BIGINT NOT NULL DEFAULT 0, updated DATETIME(6) NOT NULL, KEY updated (updated),
+          KEY agent_updated (agent_id, updated))
           ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
         CREATE TABLE IF NOT EXISTS handoffs (
           id CHAR(36) PRIMARY KEY, session_id CHAR(36) NOT NULL, from_key VARCHAR(64) NOT NULL, from_region CHAR(36) NOT NULL,
