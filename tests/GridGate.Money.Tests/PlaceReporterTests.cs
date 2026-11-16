@@ -202,10 +202,18 @@ public sealed class PlaceReporterTests
             ((TestClient)sceneB.GetScenePresence(userId)!.ControllingClient).CompleteMovement();
             Flush(money);
 
+            // The arrival in A, then the crossing's handoff, then the arrival in B. OpenSim sometimes tries the crossing again
+            // on a later update before the avatar is in transit (seen in about one run in five here): each try is a handoff.
             var moves = Moves(service);
-            Assert.Equal(new[] { "arrived", "handoff", "arrived" }, moves.Select(c => c.Method));
-            Assert.Equal(new object?[] { tc.SessionId.Guid, sceneA.RegionInfo.RegionID.Guid, sceneB.RegionInfo.RegionID.Guid, "crossing" }, moves[1].Args);
-            Assert.Equal(sceneB.RegionInfo.RegionID.Guid, moves[2].Args[2]);
+            Assert.True(moves.Count >= 3, string.Join(",", moves.Select(c => c.Method)));
+            Assert.Equal(new object?[] { tc.SessionId.Guid, userId.Guid, sceneA.RegionInfo.RegionID.Guid }, moves[0].Args);
+            Assert.All(moves.Skip(1).SkipLast(1), h =>
+            {
+                Assert.Equal("handoff", h.Method);
+                Assert.Equal(new object?[] { tc.SessionId.Guid, sceneA.RegionInfo.RegionID.Guid, sceneB.RegionInfo.RegionID.Guid, "crossing" }, h.Args);
+            });
+            Assert.Equal("arrived", moves[^1].Method);
+            Assert.Equal(sceneB.RegionInfo.RegionID.Guid, moves[^1].Args[2]);
             Assert.Equal(new[] { sceneA.RegionInfo.RegionID.Guid, sceneB.RegionInfo.RegionID.Guid }, (Guid[])service.PlacesOf("health").Last().Args[1]!);
         }
         finally
@@ -287,6 +295,118 @@ public sealed class PlaceReporterTests
         Assert.DoesNotContain(client.SessionId.ToString(), warning);
         Assert.DoesNotContain(Buyer.ToString(), warning);
         Assert.DoesNotContain(sent[0].Txn.ToString(), warning);
+    }
+
+    /// <summary>
+    /// A reporter on a fake clock whose service holds the first report it is sent (a teleport handoff to region 0) until
+    /// released, so the reports queued after it wait.
+    /// </summary>
+    private sealed class HeldReporter : IDisposable
+    {
+        private static readonly Dictionary<Guid, int> Numbers = Enumerable.Range(0, PlaceReporter.MaxWaiting + 10).ToDictionary(n => To(n).RegionID.Guid);
+        private readonly TaskCompletionSource _release = new();
+        private int _calls;
+
+        public FakeMoneyService Service { get; } = new();
+        public FakeTimeProvider Time { get; } = new(DateTimeOffset.UtcNow);
+        public List<string> Warnings { get; } = [];
+        public PlaceReporter Places { get; }
+        public RecordingClient Client { get; }
+        public ScenePresence Avatar { get; }
+
+        public HeldReporter()
+        {
+            var region = Build();
+            Client = region.Arrive(Buyer);
+            Avatar = region.Scene.GetScenePresence(Buyer);
+            Service.Gate = _ => Interlocked.Increment(ref _calls) == 1 ? _release.Task : Task.CompletedTask;
+            Places = new PlaceReporter(Service, Time, w => { lock (Warnings) Warnings.Add(w); });
+            Teleport(0);
+            var deadline = DateTime.UtcNow.AddSeconds(15);
+            while (Service.Places.IsEmpty)
+            {
+                Assert.True(DateTime.UtcNow < deadline, "the first report was never sent");
+                Thread.Sleep(1);
+            }
+        }
+
+        public static GridRegion To(int n) => new() { RegionID = TestHelpers.ParseTail(0x10000 + n), RegionName = "R" + n };
+
+        /// <summary>Queues a teleport handoff from the test region to region <paramref name="n"/>.</summary>
+        public void Teleport(int n) => Places.TeleportStarting(Client, Region.Guid, To(n), false);
+
+        /// <summary>Lets the first report through and waits until everything queued is answered or dropped.</summary>
+        public async Task ReleaseAndFlushAsync()
+        {
+            _release.TrySetResult();
+            await Places.FlushAsync().WaitAsync(TimeSpan.FromSeconds(15), TestContext.Current.CancellationToken);
+        }
+
+        /// <summary>The numbers of the regions the service was told of handoffs to, in order.</summary>
+        public List<int> HandedTo() => Service.PlacesOf("handoff").Select(c => Numbers[(Guid)c.Args[2]!]).ToList();
+
+        public void Dispose()
+        {
+            _release.TrySetResult();
+            Places.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// Controller ruling 26: a handoff or arrival older than the service's 2-minute handoff life is dropped unsent, with
+    /// one warning that counts them and names nobody; a newer one still goes.
+    /// </summary>
+    [Fact]
+    public async Task Reports_older_than_two_minutes_are_dropped_unsent()
+    {
+        using var held = new HeldReporter();
+        held.Teleport(1);
+        held.Places.Arrived(held.Avatar);
+        held.Time.Advance(PlaceReporter.MaxAge + TimeSpan.FromSeconds(1));
+        held.Teleport(2);
+
+        await held.ReleaseAndFlushAsync();
+
+        Assert.Equal(new[] { 0, 2 }, held.HandedTo());
+        Assert.Empty(held.Service.PlacesOf("arrived"));
+        var warning = Assert.Single(held.Warnings);
+        Assert.Contains("2 place reports", warning);
+        Assert.DoesNotContain(held.Client.SessionId.ToString(), warning);
+        Assert.DoesNotContain(Buyer.ToString(), warning);
+    }
+
+    /// <summary>Controller ruling 26: at most one health report waits; the newest takes its place, so an outage can't stack them.</summary>
+    [Fact]
+    public async Task Health_reports_waiting_are_coalesced()
+    {
+        using var held = new HeldReporter();
+        held.Places.Health([TestHelpers.ParseTail(0x501).Guid]);
+        held.Teleport(1);
+        held.Places.Health([TestHelpers.ParseTail(0x502).Guid]);
+        held.Places.Health([TestHelpers.ParseTail(0x503).Guid]);
+
+        await held.ReleaseAndFlushAsync();
+
+        var health = Assert.Single(held.Service.PlacesOf("health"));
+        Assert.Equal(new[] { TestHelpers.ParseTail(0x503).Guid }, (Guid[])health.Args[1]!);
+        // It kept the first one's place in the queue, before the handoff queued after it.
+        Assert.Equal(new[] { "handoff", "health", "handoff" }, held.Service.Places.Select(c => c.Method));
+        Assert.Empty(held.Warnings);
+    }
+
+    /// <summary>Controller ruling 26: past 1,000 waiting reports the oldest go, with one warning that counts them.</summary>
+    [Fact]
+    public async Task The_queue_cap_drops_the_oldest()
+    {
+        using var held = new HeldReporter();
+        for (var n = 1; n <= PlaceReporter.MaxWaiting + 2; n++) held.Teleport(n);
+
+        await held.ReleaseAndFlushAsync();
+
+        Assert.Equal(new[] { 0 }.Concat(Enumerable.Range(3, PlaceReporter.MaxWaiting)), held.HandedTo());
+        var warning = Assert.Single(held.Warnings);
+        Assert.Contains("2 place reports", warning);
+        Assert.Contains("1000", warning);
     }
 
     /// <summary>
