@@ -431,6 +431,50 @@ public sealed class MoneyLocationsTests(MoneyMariaDb maria) : IClassFixture<Mone
     }
 
     [Fact]
+    public async Task Early_false_claim_does_not_block_the_real_login_arrival()
+    {
+        await StartAsync();
+        await _db.AddSessionStart(SessionU, U, R1, "login");
+
+        // Neon Pier claims U before U's viewer reaches R1: nothing vouches for it, so it can only place U unverified.
+        Assert.Equal(PlaceOutcome.PlacedUnverified, (await Arrive(Paired, R3)).Outcome);
+        AssertAt(await Where(), R3, Paired.KeyId, LocationState.Unverified);
+
+        // The real arrival still has its unused login start (Ruling 8).
+        Assert.Equal(PlaceOutcome.Ok, (await Arrive(P1, R1)).Outcome);
+        AssertAt(await Where(), R1, "p1", LocationState.Verified);
+    }
+
+    [Fact]
+    public async Task Early_false_claim_does_not_block_coming_home()
+    {
+        await StartAsync();
+        await LoggedInAtR1();
+        Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, Elsewhere, HandoffKind.OtherGrid));
+
+        // While U is away, Neon Pier claims them.
+        Assert.Equal(PlaceOutcome.PlacedUnverified, (await Arrive(Paired, R3)).Outcome);
+
+        // U comes home through the Gatekeeper into a local region: the new start still places them (Ruling 8).
+        await _db.AddSessionStart(SessionU, U, R2, "gatekeeper");
+        Assert.Equal(PlaceOutcome.Ok, (await Arrive(P2, R2)).Outcome);
+        AssertAt(await Where(), R2, "p2", LocationState.Verified);
+    }
+
+    [Fact]
+    public async Task A_consumed_start_cannot_upgrade_twice()
+    {
+        await StartAsync();
+        await LoggedInAtR1(); // uses the login start
+        Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, R4));
+        Assert.Equal(PlaceOutcome.PlacedUnverified, (await Arrive(P4, R4)).Outcome); // into stock OpenSim
+
+        // Back in R1, the login start that was already used can't verify U again.
+        Assert.Equal(PlaceOutcome.PlacedUnverified, (await Arrive(P1, R1)).Outcome);
+        AssertAt(await Where(), R1, "p1", LocationState.Unverified);
+    }
+
+    [Fact]
     public async Task Cleanup_drops_logged_out_sessions()
     {
         await StartAsync();
