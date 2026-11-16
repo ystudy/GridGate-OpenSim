@@ -226,6 +226,21 @@ namespace OpenSim.Region.CoreModules.Agent.AssetTransaction
         }
 
         /// <summary>
+        /// GridGate: whether an item of <paramref name="itemType"/> may be made from an upload of
+        /// <paramref name="uploadedType"/>. The same type always matches; the texture variants a viewer sends for a
+        /// texture (Texture, TextureTGA, ImageTGA, ImageJPEG) match each other; nothing else does.
+        /// </summary>
+        public static bool UploadTypesMatch(sbyte uploadedType, sbyte itemType)
+        {
+            return uploadedType == itemType || (IsTextureFamily(uploadedType) && IsTextureFamily(itemType));
+        }
+
+        private static bool IsTextureFamily(sbyte assetType)
+        {
+            return (AssetType)assetType is AssetType.Texture or AssetType.TextureTGA or AssetType.ImageTGA or AssetType.ImageJPEG;
+        }
+
+        /// <summary>
         /// Request that a client (agent) begin an asset transfer.
         /// </summary>
         /// <param name="remoteClient"></param>

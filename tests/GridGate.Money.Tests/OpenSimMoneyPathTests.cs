@@ -133,6 +133,19 @@ public sealed class OpenSimMoneyPathTests
         Assert.Null(region.Scene.AssetService.Get(UploadAssetId.ToString()));
     }
 
+    /// <summary>Viewers send some textures as TextureTGA; saving one as a texture item works and pays once.</summary>
+    [Fact]
+    public void A_udp_tga_texture_saved_as_a_texture_is_created_and_charged_once()
+    {
+        var (region, uploads, uploader) = UploadRegion(balance: 100);
+
+        Assert.True(Upload(uploads, uploader, type: (sbyte)AssetType.TextureTGA, createAs: (sbyte)AssetType.Texture));
+
+        Assert.Single(Textures(region));
+        Assert.Single(region.Service.Of("charge"));
+        Assert.Empty(uploader.Alerts);
+    }
+
     /// <summary>An item update takes the asset from the upload, so it is charged by what was uploaded, not the item's type.</summary>
     [Fact]
     public void An_item_update_through_a_udp_upload_is_charged_by_the_uploaded_type()

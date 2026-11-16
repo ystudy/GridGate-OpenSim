@@ -480,8 +480,8 @@ namespace OpenSim.Region.CoreModules.Agent.AssetTransaction
 
         private bool CompleteCreateItem(uint callbackID)
         {
-            // GridGate: the fee was checked for the uploaded type, so the item can't be made as another type.
-            if (type != m_uploadType)
+            // GridGate: the fee was checked for the uploaded type, so the item can't be made as another type (texture variants count as one).
+            if (!AssetTransactionModule.UploadTypesMatch(m_uploadType, type))
             {
                 m_transactions.RemoveXferUploader(m_transactionID);
                 ourClient.SendAlertMessage(MismatchText);
