@@ -95,8 +95,9 @@ back within a few minutes of the region checking in again.
 Sometimes money is off for one person, even in a verified region. This happens when the money service can't be sure where
 they are:
 
-- **They came from a region that can't verify** (stock OpenSim, an unpaired server, an older GridGate, or one that hasn't
-  checked in). They travel normally, but money is paused for them from then on.
+- **They came from, or went to, a region that can't verify** (stock OpenSim, an unpaired server, an older GridGate, or one
+  that hasn't checked in). They travel normally, but money is paused for them from then on. When a verified region handed
+  them on to one that never reported them, their page says "Moved to" that region.
 - **Two servers disagreed about where they are.** Then neither is trusted, and a warning is raised (see [Alerts](#alerts)).
 - **They arrived from another grid straight into a Region Server's region** (see
   [Visitor money and listed grids](#visitor-money-and-listed-grids)).
@@ -190,14 +191,17 @@ Clear an alert once you've dealt with it.
 
 | Alert | Level | What to do |
 |---|---|---|
-| **A region claimed someone arrived that it wasn't handed.** | A **notice** the first time, because a handoff lost on the network looks the same. A **warning** when one server or program does it three or more times in a day, or claims someone the grid knows is in another server's region. | Check the region is running and its GridGate is up to date. If it charged someone it shouldn't have, refund the entry, or freeze their account on their page. If you don't trust the server, remove it. |
+| **A region claimed someone arrived that it wasn't handed.** | A **notice** the first time, because a handoff lost on the network looks the same. A **warning** when one server or program does it three or more times in a day. | Check the region is running and its GridGate is up to date. If it charged someone it shouldn't have, refund the entry, or freeze their account on their page. If you don't trust the server, remove it. |
+| **Two servers disagree about where someone is.** One server's region says the person arrived there, while the grid had them in another server's region. The alert names both: "Server X and server Y disagree about where Ann is." | Warning | When both regions are verified, money is paused for that person until their next login, so neither server can charge them. Either server may be the one that is wrong: check both regions are running and up to date, and look at what each charged them. Refund or freeze if needed. |
 | **A server or program reached its daily limit.** | Warning | If that's expected, give it a higher limit of its own (see [Own limits](#own-limits)). If not, **freeze all payments** while you find out why. |
 | **A region moved between servers.** | Notice | Approve the move or keep it off, under Regions (see [Moved, waiting for you](#moved-waiting-for-you)). |
 | **One person hit their daily spending limit three times in a day.** | Notice | If they asked for more, give them a limit of their own. If not, check what charged them; refund the entries or freeze their account. |
 
-A warning about a Region Server offers **Remove this server**: its key ends at once, and its regions take no payments
-until it is paired again. Refused claims never slow down or block the server that made them, so an honest server isn't
-punished for a network fault; only you decide whether to remove it.
+A warning about a Region Server that reached its daily limit, or that claimed people it wasn't handed three or more times
+in a day, offers **Remove this server**: its key ends at once, and its regions take no payments until it is paired again.
+A disagreement between two servers doesn't offer it, since either may be the honest one. Refused claims never slow down or
+block the server that made them, so an honest server isn't punished for a network fault; only you decide whether to remove
+it.
 
 ## What people see in the viewer
 

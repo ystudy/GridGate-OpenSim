@@ -88,6 +88,8 @@ public sealed class MoneyAlertsTests(MoneyMariaDb maria) : IClassFixture<MoneyMa
 
         var three = (await alerts.OpenAsync(Ct)).Single(a => a.KeyId == "p1");
         Assert.Equal((AlertLevel.Warning, 3, Ann), (three.Level, three.Count, three.AgentId));
+        Assert.True(three.Repeated); // a warning from the key's own repeated claims
+        Assert.Null(three.OtherKeyId);
         Assert.Equal(AlertLevel.Notice, (await alerts.OpenAsync(Ct)).Single(a => a.KeyId == "p2").Level);
     }
 
@@ -130,6 +132,23 @@ public sealed class MoneyAlertsTests(MoneyMariaDb maria) : IClassFixture<MoneyMa
 
         var a = await Single(alerts);
         Assert.Equal((AlertKind.UnhandedArrival, AlertLevel.Warning, "p2", 1), (a.Kind, a.Level, a.KeyId, a.Count));
+        // Both servers are named: either may be the one that is wrong. It isn't a count of the claimer's own claims.
+        Assert.Equal("p1", a.OtherKeyId);
+        Assert.False(a.Repeated);
+    }
+
+    [Fact]
+    public async Task A_conflict_then_repeated_claims_keeps_both_servers_and_counts_as_repeated()
+    {
+        var (_, alerts) = await StartAsync();
+
+        await alerts.UnhandedArrivalAsync("p2", R2, Ann, "p1", Ct);
+        await alerts.UnhandedArrivalAsync("p2", R2, Bob, null, Ct);
+        Assert.False((await Single(alerts)).Repeated);
+        await alerts.UnhandedArrivalAsync("p2", R2, Bob, "p2", Ct); // the same key elsewhere: no other server
+
+        var a = await Single(alerts);
+        Assert.Equal((AlertLevel.Warning, 3, "p1", true), (a.Level, a.Count, a.OtherKeyId, a.Repeated));
     }
 
     [Fact]

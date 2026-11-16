@@ -165,8 +165,9 @@ internal static class MoneyApi
             _ = Need(b.Id); // the module's id for this report: required on the wire, not used by the service yet
             var (agent, region) = (Need(b.AgentId), Need(b.RegionId));
             var result = await Locations(c).ArrivedAsync(grant, Need(b.SessionId), agent, region, ct);
-            // A claim nothing vouches for, against someone verified elsewhere (§8.8): counted for the owner, never against
-            // the key, so an honest server isn't slowed down for a lost handoff. Conflict is always another key's place.
+            // A claim nothing vouches for, against someone verified elsewhere: counted for the owner, never against the key,
+            // so an honest server isn't slowed down for a lost handoff. A conflict names the other key too: either may be the
+            // one that is wrong.
             if (result.Outcome is PlaceOutcome.Refused or PlaceOutcome.Conflict && c.Alerts is { } alerts)
                 await alerts.UnhandedArrivalAsync(grant.KeyId, region, agent, result.VerifiedElsewhere?.KeyId, AlertToken);
             return Code(PlaceCode(result.Outcome));

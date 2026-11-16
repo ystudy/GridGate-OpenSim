@@ -69,7 +69,8 @@ public static class MoneySchema
         CREATE TABLE IF NOT EXISTS alerts (
           id BIGINT AUTO_INCREMENT PRIMARY KEY, kind VARCHAR(32) NOT NULL, level VARCHAR(8) NOT NULL, key_id VARCHAR(64) NOT NULL,
           region_id CHAR(36) NULL, agent_id CHAR(36) NULL, count INT NOT NULL, first_at DATETIME(6) NOT NULL, last_at DATETIME(6) NOT NULL,
-          cleared DATETIME(6) NULL, cleared_by VARCHAR(100) NULL, KEY open_last (cleared, last_at), KEY kind_key_last (kind, key_id, last_at))
+          cleared DATETIME(6) NULL, cleared_by VARCHAR(100) NULL, other_key_id VARCHAR(64) NULL, repeated TINYINT NOT NULL DEFAULT 0,
+          KEY open_last (cleared, last_at), KEY kind_key_last (kind, key_id, last_at))
           ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
         CREATE TABLE IF NOT EXISTS key_locks (key_id VARCHAR(64) PRIMARY KEY) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
         INSERT IGNORE INTO accounts (id, agent_id, home, kind, created) VALUES

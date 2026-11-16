@@ -626,8 +626,9 @@ public sealed class IndexModel(IGridController grid, MoneyGate gate, IMoneyBooks
     }
 
     /// <summary>
-    /// The open alerts in words (§8.8): each names its region (from Robust's list, read first) or server, and the person
-    /// affected; only a warning about a server that is still paired offers to remove it.
+    /// The open alerts in words: each names its region (from Robust's list, read first) or server, and the person affected.
+    /// Only a warning about a server that is still paired offers to remove it, and for an arrival it wasn't handed, only one
+    /// raised by that server's own repeated claims: in a disagreement between two servers, either may be the honest one.
     /// </summary>
     private async Task<List<AlertRow>> AlertRowsAsync(LauncherSettings s, CancellationToken ct)
     {
@@ -640,10 +641,13 @@ public sealed class IndexModel(IGridController grid, MoneyGate gate, IMoneyBooks
             string? person = null;
             if (a.AgentId is { } agent && !names.TryGetValue(agent, out person))
                 names[agent] = person = await ResidentNameAsync(agent, ct);
-            var server = a.Level == AlertLevel.Warning ? s.Money.PairedServers?.FirstOrDefault(p => MoneyVerifyText.KeyOf(p) == a.KeyId)?.Id : null;
+            var removable = a.Level == AlertLevel.Warning && (a.Kind != AlertKind.UnhandedArrival || a.Repeated);
+            var server = removable ? s.Money.PairedServers?.FirstOrDefault(p => MoneyVerifyText.KeyOf(p) == a.KeyId)?.Id : null;
             // A visitor isn't a resident, and Robust may be down: either way the alert still says whose avatar it was.
-            rows.Add(new AlertRow(a, MoneyVerifyText.Alert(a, region, MoneyVerifyText.KeyName(a.KeyId, s)),
-                person ?? (a.AgentId is { } who ? $"avatar {who}" : null), person is null ? null : a.AgentId, server));
+            var who = person ?? (a.AgentId is { } agentId ? $"avatar {agentId}" : null);
+            var other = a.OtherKeyId is { } otherKey ? MoneyVerifyText.KeyName(otherKey, s) : null;
+            rows.Add(new AlertRow(a, MoneyVerifyText.Alert(a, region, MoneyVerifyText.KeyName(a.KeyId, s), other, who),
+                who, person is null ? null : a.AgentId, server));
         }
         return rows;
     }

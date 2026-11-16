@@ -73,6 +73,9 @@ public sealed class MoneySchemaTests(MoneyMariaDb maria) : IClassFixture<MoneyMa
         foreach (var table in new[] { "entries", "holds" })
             Assert.Equal("varchar(64)", await db.Text($"SELECT COLUMN_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = 'money' AND TABLE_NAME = '{table}' AND COLUMN_NAME = 'key_id'"));
         Assert.Equal(3, await db.Scalar("SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = 'money' AND TABLE_NAME = 'entries' AND INDEX_NAME = 'key_type_at'"));
+        // A Conflict alert names both servers, and a warning says whether it came from the key's own repeated claims.
+        Assert.Equal("varchar(64)", await db.Text("SELECT COLUMN_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = 'money' AND TABLE_NAME = 'alerts' AND COLUMN_NAME = 'other_key_id'"));
+        Assert.Equal("tinyint(4)", await db.Text("SELECT COLUMN_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = 'money' AND TABLE_NAME = 'alerts' AND COLUMN_NAME = 'repeated'"));
         // Where a person is (the website) is found by agent, newest first.
         Assert.Equal(2, await db.Scalar("SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = 'money' AND TABLE_NAME = 'session_locations' AND INDEX_NAME = 'agent_updated'"));
     }

@@ -5,17 +5,21 @@ using MySqlConnector;
 
 namespace GridGate.Launcher.Core.Money;
 
-/// <summary>What an owner's money alert is about (money design §8.8).</summary>
+/// <summary>What an owner's money alert is about.</summary>
 public enum AlertKind { UnhandedArrival, KeyLimitReached, RegionMoved, PersonLimitRepeated }
 
-/// <summary>A notice asks the owner to check something; only a warning offers "Remove this server" (§8.8).</summary>
+/// <summary>A notice asks the owner to check something; a warning shows on the dashboard too.</summary>
 public enum AlertLevel { Notice, Warning }
 
 /// <summary>
 /// One alert row: <paramref name="Count"/> times since <paramref name="FirstAt"/>, the last at <paramref name="LastAt"/> (UTC).
 /// <paramref name="KeyId"/> is the key that raised the last one; <paramref name="AgentId"/> the last person, when there is one.
+/// For an unhanded arrival, <paramref name="OtherKeyId"/> is the other key that had the person verified, when there was one
+/// (the two disagree, and either may be wrong), and <paramref name="Repeated"/> says the row is a warning because of the
+/// claiming key's own repeated claims, the only kind of warning that offers to remove its server.
 /// </summary>
-public sealed record MoneyAlert(long Id, AlertKind Kind, AlertLevel Level, string KeyId, Guid? RegionId, Guid? AgentId, int Count, DateTime FirstAt, DateTime LastAt);
+public sealed record MoneyAlert(long Id, AlertKind Kind, AlertLevel Level, string KeyId, Guid? RegionId, Guid? AgentId, int Count, DateTime FirstAt, DateTime LastAt,
+    string? OtherKeyId = null, bool Repeated = false);
 
 /// <summary>The open alerts, as the dashboard and the Money page read and clear them.</summary>
 public interface IMoneyAlerts
@@ -34,7 +38,7 @@ public interface IMoneyAlerts
 }
 
 /// <summary>
-/// The owner's money alerts (money design §8.8), in the money database's <c>alerts</c> table. Each kind is grouped, per
+/// The owner's money alerts, in the money database's <c>alerts</c> table. Each kind is grouped, per
 /// <see cref="Window"/> from a row's first time, into one row that counts up: an unhanded arrival per key and region, a
 /// key's limit per key, a person's limit per person. A moved region has one open row per region until it is cleared,
 /// counting moves seen (another server listing it), not requests. A row's level only rises, from notice to warning. The
@@ -48,10 +52,10 @@ public sealed class MoneyAlerts(Func<CancellationToken, Task<MySqlConnection>> o
     /// <summary>A row counts what happens within this long of its first time; after that the next one starts a new row.</summary>
     public static readonly TimeSpan Window = TimeSpan.FromHours(24);
 
-    /// <summary>Unhanded arrivals from one key within <see cref="Window"/> that make a warning (§8.8: "three or more in a day").</summary>
+    /// <summary>Unhanded arrivals from one key within <see cref="Window"/> that make a warning: three or more in a day.</summary>
     public const int WarningAt = 3;
 
-    /// <summary>A person's daily spending limit hit this often within <see cref="Window"/> appears as a notice (§8.8).</summary>
+    /// <summary>A person's daily spending limit hit this often within <see cref="Window"/> appears as a notice.</summary>
     public const int PersonLimitAt = 3;
 
     /// <summary>At most this many open alerts are read.</summary>
@@ -60,7 +64,12 @@ public sealed class MoneyAlerts(Func<CancellationToken, Task<MySqlConnection>> o
     /// <summary>Past this many remembered moves, the ones older than <see cref="Window"/> are dropped.</summary>
     private const int MaxMovesSeen = 4096;
 
-    private const string Columns = "id, kind, level, key_id, region_id, agent_id, count, first_at, last_at";
+    private const string Columns = "id, kind, level, key_id, region_id, agent_id, count, first_at, last_at, other_key_id, repeated";
+
+    /// <summary>The level one more alert calls for; <paramref name="Repeated"/> when it is a warning by the key's own count, <paramref name="OtherKey"/> the other key involved.</summary>
+    private sealed record Level(AlertLevel Value, bool Repeated = false, string? OtherKey = null);
+
+    private static Task<Level> Fixed(AlertLevel level) => Task.FromResult(new Level(level));
 
     // The money service is the only writer: one alert at a time, so two at once never open two rows for one group.
     private readonly SemaphoreSlim _one = new(1, 1);
@@ -73,24 +82,25 @@ public sealed class MoneyAlerts(Func<CancellationToken, Task<MySqlConnection>> o
 
     /// <summary>
     /// <paramref name="keyId"/>'s region <paramref name="regionId"/> claimed <paramref name="agentId"/> arrived with no start or
-    /// handoff (§8.4). A notice, since a handoff lost despite the retries looks the same; a warning from the
-    /// <see cref="WarningAt"/>th from one key within <see cref="Window"/>, or at once when the person's verified place
-    /// (<paramref name="verifiedKeyElsewhere"/>) is another key's.
+    /// handoff. A notice, since a handoff lost despite the retries looks the same; a warning from the <see cref="WarningAt"/>th
+    /// from one key within <see cref="Window"/> (repeated claims), or at once when the person's verified place
+    /// (<paramref name="verifiedKeyElsewhere"/>) is another key's: then the two keys disagree, and either may be the wrong one.
     /// </summary>
     public Task UnhandedArrivalAsync(string keyId, Guid regionId, Guid agentId, string? verifiedKeyElsewhere, CancellationToken ct) =>
         RaiseAsync(AlertKind.UnhandedArrival, keyId, regionId, agentId, async (conn, tx) =>
         {
-            if (verifiedKeyElsewhere is not null && verifiedKeyElsewhere != keyId) return AlertLevel.Warning;
+            var other = verifiedKeyElsewhere is not null && verifiedKeyElsewhere != keyId ? verifiedKeyElsewhere : null;
             // Across the key's regions, cleared rows too: clearing a notice doesn't reset the day's count. A row seen within
             // the window counts whole, so the count rolls; it may reach a little past a day, which fails safe.
             var before = await ScalarAsync(conn, tx, "SELECT COALESCE(SUM(count), 0) FROM alerts WHERE kind = @kind AND key_id = @key AND last_at > @since", ct,
                 ("@kind", nameof(AlertKind.UnhandedArrival)), ("@key", keyId), ("@since", Now - Window));
-            return before + 1 >= WarningAt ? AlertLevel.Warning : AlertLevel.Notice;
+            var repeated = before + 1 >= WarningAt;
+            return new Level(repeated || other is not null ? AlertLevel.Warning : AlertLevel.Notice, repeated, other);
         }, ct);
 
     /// <summary><paramref name="keyId"/> reached its daily region limit or its daily payout limit: a warning.</summary>
     public Task KeyLimitReachedAsync(string keyId, CancellationToken ct) =>
-        RaiseAsync(AlertKind.KeyLimitReached, keyId, null, null, (_, _) => Task.FromResult(AlertLevel.Warning), ct);
+        RaiseAsync(AlertKind.KeyLimitReached, keyId, null, null, (_, _) => Fixed(AlertLevel.Warning), ct);
 
     /// <summary>
     /// Region <paramref name="regionId"/> is listed at the server of <paramref name="toKeyId"/> but pinned to another (§8.3):
@@ -109,7 +119,7 @@ public sealed class MoneyAlerts(Func<CancellationToken, Task<MySqlConnection>> o
             _movesSeen[(regionId, toKeyId)] = now;
         }
         // Not written: the next request tries again.
-        return RaiseAsync(AlertKind.RegionMoved, toKeyId, regionId, null, (_, _) => Task.FromResult(AlertLevel.Notice), ct,
+        return RaiseAsync(AlertKind.RegionMoved, toKeyId, regionId, null, (_, _) => Fixed(AlertLevel.Notice), ct,
             failed: () => { lock (_movesSeen) _movesSeen.Remove((regionId, toKeyId)); });
     }
 
@@ -118,7 +128,7 @@ public sealed class MoneyAlerts(Func<CancellationToken, Task<MySqlConnection>> o
     /// notice from the <see cref="PersonLimitAt"/>th within <see cref="Window"/>.
     /// </summary>
     public Task PersonLimitHitAsync(Guid agentId, string keyId, CancellationToken ct) =>
-        RaiseAsync(AlertKind.PersonLimitRepeated, keyId, null, agentId, (_, _) => Task.FromResult(AlertLevel.Notice), ct);
+        RaiseAsync(AlertKind.PersonLimitRepeated, keyId, null, agentId, (_, _) => Fixed(AlertLevel.Notice), ct);
 
     public Task<IReadOnlyList<MoneyAlert>> OpenAsync(CancellationToken ct) => ReadOpenAsync(null, ct);
 
@@ -138,7 +148,8 @@ public sealed class MoneyAlerts(Func<CancellationToken, Task<MySqlConnection>> o
             while (await r.ReadAsync(ct))
                 if (Enum.TryParse<AlertKind>(r.GetString(1), out var kind) && Enum.TryParse<AlertLevel>(r.GetString(2), out var level))
                     open.Add(new MoneyAlert(r.GetInt64(0), kind, level, r.GetString(3), r.IsDBNull(4) ? null : ToGuid(r.GetValue(4)),
-                        r.IsDBNull(5) ? null : ToGuid(r.GetValue(5)), r.GetInt32(6), Utc(r.GetDateTime(7)), Utc(r.GetDateTime(8))));
+                        r.IsDBNull(5) ? null : ToGuid(r.GetValue(5)), r.GetInt32(6), Utc(r.GetDateTime(7)), Utc(r.GetDateTime(8)),
+                        r.IsDBNull(9) ? null : r.GetString(9), r.GetInt32(10) != 0));
             return open;
         }
         catch (MySqlException e)
@@ -168,7 +179,7 @@ public sealed class MoneyAlerts(Func<CancellationToken, Task<MySqlConnection>> o
     /// <paramref name="failed"/> runs.
     /// </summary>
     private async Task RaiseAsync(AlertKind kind, string keyId, Guid? regionId, Guid? agentId,
-        Func<MySqlConnection, MySqlTransaction, Task<AlertLevel>> levelOf, CancellationToken ct, Action? failed = null)
+        Func<MySqlConnection, MySqlTransaction, Task<Level>> levelOf, CancellationToken ct, Action? failed = null)
     {
         var held = false;
         try
@@ -180,10 +191,12 @@ public sealed class MoneyAlerts(Func<CancellationToken, Task<MySqlConnection>> o
             await using (var conn = await openMoney(ct))
             await using (var tx = await conn.BeginTransactionAsync(IsolationLevel.ReadCommitted, ct))
             {
-                var level = await levelOf(conn, tx);
+                var called = await levelOf(conn, tx);
+                var level = called.Value;
                 var args = new (string, object?)[]
                 {
                     ("@kind", kind.ToString()), ("@key", keyId), ("@region", regionId?.ToString()), ("@agent", agentId?.ToString()), ("@since", now - Window),
+                    ("@other", called.OtherKey), ("@repeated", called.Repeated ? 1 : 0),
                 };
                 long? id = null;
                 var (oldLevel, count, oldKey) = (AlertLevel.Notice, 0, "");
@@ -205,15 +218,16 @@ public sealed class MoneyAlerts(Func<CancellationToken, Task<MySqlConnection>> o
                 // ClearAsync doesn't wait for _one: a row cleared since it was read isn't counted, and this one opens a new row.
                 var counted = id is { } existing && await ExecAsync(conn, tx, """
                     UPDATE alerts SET count = count + 1, level = @level, last_at = @now, key_id = @key,
-                      region_id = COALESCE(@region, region_id), agent_id = COALESCE(@agent, agent_id) WHERE id = @id AND cleared IS NULL
+                      region_id = COALESCE(@region, region_id), agent_id = COALESCE(@agent, agent_id),
+                      other_key_id = COALESCE(@other, other_key_id), repeated = GREATEST(repeated, @repeated) WHERE id = @id AND cleared IS NULL
                     """, ct, [.. args, ("@level", next.ToString()), ("@now", now), ("@id", existing)]) == 1;
                 if (counted)
                     change = (false, next > oldLevel, count + 1, next);
                 else
                 {
                     await ExecAsync(conn, tx, """
-                        INSERT INTO alerts (kind, level, key_id, region_id, agent_id, count, first_at, last_at)
-                        VALUES (@kind, @level, @key, @region, @agent, 1, @now, @now)
+                        INSERT INTO alerts (kind, level, key_id, region_id, agent_id, count, first_at, last_at, other_key_id, repeated)
+                        VALUES (@kind, @level, @key, @region, @agent, 1, @now, @now, @other, @repeated)
                         """, ct, [.. args, ("@level", level.ToString()), ("@now", now)]);
                     change = (true, false, 1, level);
                 }

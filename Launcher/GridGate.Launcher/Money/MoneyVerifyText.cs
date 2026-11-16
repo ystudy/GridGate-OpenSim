@@ -118,13 +118,18 @@ public static class MoneyVerifyText
         };
     }
 
-    /// <summary>What an alert says happened; the page adds who, and what to do (§8.8).</summary>
-    public static string Alert(MoneyAlert a, string region, string key)
+    /// <summary>
+    /// What an alert says happened; the page adds who, and what to do. <paramref name="otherKey"/> names the other server of a
+    /// disagreement about where <paramref name="person"/> is.
+    /// </summary>
+    public static string Alert(MoneyAlert a, string region, string key, string? otherKey = null, string? person = null)
     {
         var times = a.Count == 1 ? "once" : $"{a.Count.ToString(CultureInfo.InvariantCulture)} times";
         var when = $"Last at {a.LastAt:yyyy-MM-dd HH:mm} UTC.";
         return a.Kind switch
         {
+            AlertKind.UnhandedArrival when otherKey is not null =>
+                $"{key} and {otherKey} disagree about where {person ?? "someone"} is: {region} says they arrived there, but {otherKey} had them. Either may be wrong. {when}",
             // A warning can come from the key's count across its regions, or from one claim against another key's place, so
             // this row's own count would understate it.
             AlertKind.UnhandedArrival when a.Level == AlertLevel.Warning =>

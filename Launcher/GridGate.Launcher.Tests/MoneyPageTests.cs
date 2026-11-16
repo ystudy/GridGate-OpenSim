@@ -1031,10 +1031,15 @@ public sealed class MoneyPageTests
         alerts.Open.Add(new MoneyAlert(7, AlertKind.UnhandedArrival, AlertLevel.Warning, "p1", region, Ann, 1, at, at));
         alerts.Open.Add(new MoneyAlert(8, AlertKind.KeyLimitReached, AlertLevel.Warning, "p1", null, null, 1, at, at));
         alerts.Open.Add(new MoneyAlert(9, AlertKind.RegionMoved, AlertLevel.Notice, "p1", region, null, 1, at, at));
+        alerts.Open.Add(new MoneyAlert(10, AlertKind.UnhandedArrival, AlertLevel.Warning, "p2", region, Ann, 1, at, at, OtherKeyId: "p1"));
         await using var f = Make(new FakeBooks(), alerts: alerts);
         f.Services.GetRequiredService<MoneyStatus>().ServiceRunning = true;
 
         var doc = await PageAsync(await SignedInAsync(f), "/dashboard");
+
+        var conflict = doc.QuerySelector("#money-alert-10");
+        Assert.NotNull(conflict);
+        Assert.Contains("the region program p2 and the region program p1 disagree about where Ann Smith is", conflict.TextContent);
 
         var arrival = doc.QuerySelector("#money-alert-7");
         Assert.NotNull(arrival);
@@ -1501,14 +1506,22 @@ public sealed class MoneyPageTests
     {
         var alerts = new FakeAlerts();
         var at = new DateTime(2026, 11, 15, 1, 2, 0, DateTimeKind.Utc);
-        alerts.Open.Add(new MoneyAlert(7, AlertKind.UnhandedArrival, AlertLevel.Warning, KeyOf(Sam), NeonPier, Ann, 14, at, at));
+        alerts.Open.Add(new MoneyAlert(7, AlertKind.UnhandedArrival, AlertLevel.Warning, KeyOf(Sam), NeonPier, Ann, 14, at, at, Repeated: true));
         alerts.Open.Add(new MoneyAlert(8, AlertKind.KeyLimitReached, AlertLevel.Notice, "p1", null, null, 2, at, at));
         alerts.Open.Add(new MoneyAlert(9, AlertKind.UnhandedArrival, AlertLevel.Notice, KeyOf(Sam), NeonPier, Ann, 1, at, at));
         alerts.Open.Add(new MoneyAlert(10, AlertKind.PersonLimitRepeated, AlertLevel.Notice, "p1", Welcome, Ann, 3, at, at));
+        // Sam's Neon Pier claimed Ann while the region program p1 had her: one of the two is wrong.
+        alerts.Open.Add(new MoneyAlert(11, AlertKind.UnhandedArrival, AlertLevel.Warning, KeyOf(Sam), NeonPier, Ann, 1, at, at, OtherKeyId: "p1"));
         await using var f = MakeGrid(alerts: alerts);
         var c = await SignedInAsync(f);
 
         var doc = await PageAsync(c, "/money");
+
+        var conflict = doc.QuerySelector("#money-alert-11")!;
+        Assert.Contains("Region Server at 10.0.0.5", conflict.TextContent);
+        Assert.Contains("and region program p1 disagree about where Ann Smith is", conflict.TextContent);
+        // Either may be the honest one: no offer to remove the claimer.
+        Assert.Null(conflict.QuerySelector("form[action*='handler=RemoveServer']"));
 
         var warning = doc.QuerySelector("#money-alert-7")!;
         Assert.Contains("Neon Pier", warning.TextContent);
@@ -1525,7 +1538,7 @@ public sealed class MoneyPageTests
         Assert.NotNull(limit.QuerySelector("a[href='#money-limits']"));
         Assert.Null(limit.QuerySelector("form[action*='handler=RemoveServer']"));
         Assert.Contains("Ann Smith", doc.QuerySelector("#money-alert-10")!.TextContent);
-        Assert.Equal(4, doc.QuerySelectorAll("#money-alerts form[action*='handler=ClearAlert']").Length);
+        Assert.Equal(5, doc.QuerySelectorAll("#money-alerts form[action*='handler=ClearAlert']").Length);
 
         var supervisor = await PageAsync(await SignedInAsync(f, "supervisor"), "/money");
         Assert.NotNull(supervisor.QuerySelector("#money-alert-7"));

@@ -1,4 +1,5 @@
 using GridGate.Launcher.Core.Money;
+using GridGate.Launcher.Core.OpenSim;
 using GridGate.Launcher.Core.Settings;
 
 namespace GridGate.Launcher.Money;
@@ -11,10 +12,10 @@ public sealed record MoneyNotice(string Id, string Text, bool Info = false, bool
 
 /// <summary>
 /// The dashboard's money notices (money plan 2, task 9; plan 1's deferred findings): the service didn't start, every
-/// payment is frozen, or the money database can't be reached; and each open alert that is a warning (money design §8.8).
+/// payment is frozen, or the money database can't be reached; and each open alert that is a warning.
 /// Notices among the alerts are for the Money page. None while money is off.
 /// </summary>
-public sealed class MoneyNotices(MoneyGate gate, IMoneyBooks books, MoneyStatus status, IMoneyAlerts alerts, Func<LauncherSettings> settings)
+public sealed class MoneyNotices(MoneyGate gate, IMoneyBooks books, MoneyStatus status, IMoneyAlerts alerts, Func<LauncherSettings> settings, IRobustClient robust)
 {
     /// <summary>At most this many alert warnings are shown one by one; past it, one line says how many more there are.</summary>
     public const int MaxWarnings = 5;
@@ -35,7 +36,8 @@ public sealed class MoneyNotices(MoneyGate gate, IMoneyBooks books, MoneyStatus 
             if (frozen) notices.Add(new("money-frozen", $"All payments are frozen: {reason}. Open Money to unfreeze.", MoneyLink: true));
             var warnings = await alerts.WarningsAsync(ct);
             var s = settings();
-            notices.AddRange(warnings.Take(MaxWarnings).Select(a => new MoneyNotice($"money-alert-{a.Id}", Describe(a, s), MoneyLink: true)));
+            foreach (var a in warnings.Take(MaxWarnings))
+                notices.Add(new MoneyNotice($"money-alert-{a.Id}", Describe(a, s, a.OtherKeyId is null ? null : await PersonAsync(a.AgentId, ct)), MoneyLink: true));
             if (warnings.Count > MaxWarnings)
                 notices.Add(new("money-alert-more", $"{warnings.Count - MaxWarnings} more money warnings. Open Money to see them all.", MoneyLink: true));
         }
@@ -46,13 +48,33 @@ public sealed class MoneyNotices(MoneyGate gate, IMoneyBooks books, MoneyStatus 
         return notices;
     }
 
-    /// <summary>What an alert says: what happened, where, and that the Money page is where to act on it.</summary>
-    internal static string Describe(MoneyAlert a, LauncherSettings s)
+    /// <summary>
+    /// A resident's name for a disagreement's alert, or "avatar" and their id: a visitor isn't a resident, and Robust may be
+    /// down. Only the request's own cancellation goes on.
+    /// </summary>
+    private async Task<string?> PersonAsync(Guid? agent, CancellationToken ct)
+    {
+        if (agent is not { } id) return null;
+        try
+        {
+            if ((await robust.FindAccountByIdAsync(id, ct))?.FullName() is { } name) return name;
+        }
+        catch (Exception e) when ((e is HttpRequestException or InvalidDataException or OperationCanceledException) && !ct.IsCancellationRequested)
+        {
+            // Named by id instead.
+        }
+        return $"avatar {id}";
+    }
+
+    /// <summary>What an alert says: what happened, where, and that the Money page is where to act on it. <paramref name="person"/> names who a disagreement is about.</summary>
+    internal static string Describe(MoneyAlert a, LauncherSettings s, string? person = null)
     {
         var level = a.Level == AlertLevel.Warning ? "Money warning" : "Money notice";
         var times = a.Count == 1 ? "once" : $"{a.Count} times";
         return a.Kind switch
         {
+            AlertKind.UnhandedArrival when a.OtherKeyId is { } other =>
+                $"{level}: {KeyName(a.KeyId, s)} and {KeyName(other, s)} disagree about where {person ?? "someone"} is. Open Money to check it.",
             // A warning can come from the key's count across its regions, or from one claim against another key's place, so
             // this row's own count would understate it.
             AlertKind.UnhandedArrival when a.Level == AlertLevel.Warning =>
