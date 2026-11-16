@@ -429,6 +429,93 @@ public sealed class MoneyActionsTests
     }
 
     [Fact]
+    public async Task Pay_avatar_is_retried_with_the_same_txn_while_unavailable()
+    {
+        _service.Queue("transfer", MoneyAnswer.NoAnswer, MoneyAnswer.Unavailable, new MoneyAnswer("ok", 90, 110, 1));
+
+        await _actions.PayAvatarAsync(P, Me, ThemWho, 10);
+
+        var sends = _service.Of("transfer").ToList();
+        Assert.Equal(3, sends.Count);
+        Assert.Single(sends.Select(c => c.Txn).Distinct());
+        Assert.Equal([TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(3)], _view.Delays);
+        Assert.Equal(2, _view.Pushed.Count);
+        Assert.Empty(_view.Told);
+    }
+
+    [Fact]
+    public async Task Pay_object_raises_paid_once_after_a_lost_answer_then_ok()
+    {
+        _service.Queue("transfer", MoneyAnswer.NoAnswer, new MoneyAnswer("ok", 90, 110, 1));
+        var part = Part();
+
+        await _actions.PayObjectAsync(P, Me, part, part, ThemWho, 10);
+
+        Assert.Single(_view.Paid);
+        Assert.Single(_service.Of("transfer").Select(c => c.Txn).Distinct());
+    }
+
+    [Fact]
+    public void Pass_is_retried_with_the_same_txn()
+    {
+        _service.Queue("transfer", MoneyAnswer.NoAnswer, new MoneyAnswer("ok", 95, 105, 1));
+
+        Assert.True(_actions.MovePass(P, ThemWho, 5));
+
+        Assert.Equal(2, _service.Of("transfer").Count());
+        Assert.Single(_service.Of("transfer").Select(c => c.Txn).Distinct());
+    }
+
+    [Fact]
+    public void Payout_is_retried_with_the_scripts_txn()
+    {
+        var txn = Guid.NewGuid();
+        _service.Queue("payout", MoneyAnswer.NoAnswer, new MoneyAnswer("ok", 95, 105, 1));
+
+        Assert.True(_actions.Payout(Me, ThemWho, 5, PartId, "slot", txn, out var reason));
+
+        Assert.Equal(2, _service.Of("payout").Count());
+        Assert.All(_service.Of("payout"), c => Assert.Equal(txn, c.Txn));
+        Assert.Equal("", reason);
+    }
+
+    [Fact]
+    public async Task A_payment_with_no_answer_is_logged_for_staff_and_the_payer_is_told_it_is_being_checked()
+    {
+        _service.Answer = _ => MoneyAnswer.NoAnswer;
+
+        await _actions.PayObjectAsync(P, Me, Part(), Part(), ThemWho, 10);
+
+        Assert.Equal(4, _service.Of("transfer").Count());
+        var line = Assert.Single(_view.Errors);
+        foreach (var s in new[] { _service.Of("transfer").First().Txn.ToString(), Me.ToString(), Them.ToString(), "10" }) Assert.Contains(s, line);
+        Assert.Equal(MoneyRules.CheckingText, Assert.Single(_view.Told).Text);
+        Assert.Empty(_view.Paid);
+    }
+
+    [Fact]
+    public async Task A_payment_the_service_says_is_unavailable_is_not_logged_as_unknown()
+    {
+        _service.Answer = _ => MoneyAnswer.Unavailable; // definite: the service rolled back
+
+        await _actions.PayAvatarAsync(P, Me, ThemWho, 10);
+
+        Assert.Empty(_view.Errors);
+        Assert.Equal("Money is unavailable right now. Please try again later.", Assert.Single(_view.Told).Text);
+    }
+
+    [Fact]
+    public async Task A_refused_payment_is_not_retried()
+    {
+        _service.Queue("transfer", new MoneyAnswer("not_enough"));
+
+        await _actions.PayAvatarAsync(P, Me, ThemWho, 10);
+
+        Assert.Single(_service.Of("transfer"));
+        Assert.Empty(_view.Delays);
+    }
+
+    [Fact]
     public void Actions_type_lives_in_the_module()
     {
         Assert.Equal("GridGateMoney", typeof(MoneyActions).Assembly.GetName().Name);

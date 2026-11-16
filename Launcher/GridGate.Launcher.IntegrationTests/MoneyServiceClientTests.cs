@@ -84,6 +84,19 @@ public sealed class MoneyServiceClientTests(MoneyMariaDb maria) : IClassFixture<
     }
 
     [Fact]
+    public async Task An_unavailable_answer_from_the_service_is_not_lost()
+    {
+        await StartAsync();
+        _rig!.Mode = MoneyMode.Off; // coins off: the service itself answers unavailable
+        using var client = Client();
+
+        var answer = await client.TransferAsync(Guid.NewGuid(), "pay_avatar", ClientA, ClientB, 5, Here, null, null, Ct);
+
+        Assert.Equal("unavailable", answer.Code);
+        Assert.False(answer.Lost);
+    }
+
+    [Fact]
     public async Task Hold_complete_round_trip()
     {
         await StartAsync();

@@ -41,16 +41,17 @@ internal interface IMoneyView
 
 /// <summary>
 /// Every money action a viewer or script can take in a region (money design §7.3). The checks in
-/// <see cref="MoneyRules"/> run first; then the service decides. Every call gets a fresh transaction id; a retried step
-/// reuses its own.
+/// <see cref="MoneyRules"/> run first; then the service decides. Every payment and every settling of a hold gets a fresh
+/// transaction id and is sent again with that same id while the service is unavailable: the service answers a repeat with
+/// its first answer, so nothing is paid twice.
 /// </summary>
 internal sealed class MoneyActions(IMoneyService service, Guid regionId, Func<EconomyInfo?> economy, IMoneyView view)
 {
     /// <summary>libomv's transaction types, which the viewer's notices are keyed by.</summary>
     public static readonly Type TransactionTypes = typeof(MoneyTransactionType);
 
-    // Complete and return are retried this long apart while the service is unavailable (review focus 1).
-    private static readonly TimeSpan[] SettleRetries = [TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(9)];
+    // Payments, completes and returns are sent again this long apart while the service is unavailable.
+    private static readonly TimeSpan[] Retries =[TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(9)];
     private static readonly TimeSpan EntryRetry = TimeSpan.FromSeconds(2);
 
     public async Task PayAvatarAsync(Payer p, Guid source, MoneyWho to, int amount)
@@ -60,10 +61,11 @@ internal sealed class MoneyActions(IMoneyService service, Guid regionId, Func<Ec
             view.Tell(p.AgentId, MoneyRules.Message(refusal));
             return;
         }
-        var answer = await service.TransferAsync(Guid.NewGuid(), "pay_avatar", p.Who, to, amount, regionId, null, null, CancellationToken.None);
+        var txn = Guid.NewGuid();
+        var answer = await RetriedAsync(() => service.TransferAsync(txn, "pay_avatar", p.Who, to, amount, regionId, null, null, CancellationToken.None));
         if (!answer.Ok)
         {
-            view.Tell(p.AgentId, MoneyRules.Message(answer.Code));
+            Refused(p, answer, "pay_avatar", txn, to.AgentId, amount);
             return;
         }
         PushBoth(p.AgentId, answer.Balance, to.AgentId, answer.ToBalance, new BalanceNote((int)MoneyTransactionType.Gift, p.AgentId, to.AgentId, amount, ""));
@@ -77,11 +79,12 @@ internal sealed class MoneyActions(IMoneyService service, Guid regionId, Func<Ec
             view.Tell(p.AgentId, MoneyRules.Message(refusal));
             return;
         }
-        var answer = await service.TransferAsync(Guid.NewGuid(), "pay_object", p.Who, owner, amount, regionId, part.PartId, root.Name,
-            CancellationToken.None);
+        var txn = Guid.NewGuid();
+        var answer = await RetriedAsync(() => service.TransferAsync(txn, "pay_object", p.Who, owner, amount, regionId, part.PartId, root.Name,
+            CancellationToken.None));
         if (!answer.Ok)
         {
-            view.Tell(p.AgentId, MoneyRules.Message(answer.Code));
+            Refused(p, answer, "pay_object", txn, owner.AgentId, amount);
             return;
         }
         // The script hears of it only once the coins have moved (money design §7.3).
@@ -220,10 +223,11 @@ internal sealed class MoneyActions(IMoneyService service, Guid regionId, Func<Ec
             return false;
         }
         if (amount == 0) return true;
-        var answer = Wait(service.TransferAsync(Guid.NewGuid(), "parcel_pass", p.Who, parcelOwner, amount, regionId, null, null, CancellationToken.None));
+        var txn = Guid.NewGuid();
+        var answer = Wait(RetriedAsync(() => service.TransferAsync(txn, "parcel_pass", p.Who, parcelOwner, amount, regionId, null, null, CancellationToken.None)));
         if (!answer.Ok)
         {
-            view.Tell(p.AgentId, MoneyRules.Message(answer.Code));
+            Refused(p, answer, "parcel_pass", txn, parcelOwner.AgentId, amount);
             return false;
         }
         PushBoth(p.AgentId, answer.Balance, parcelOwner.AgentId, answer.ToBalance,
@@ -247,10 +251,11 @@ internal sealed class MoneyActions(IMoneyService service, Guid regionId, Func<Ec
             reason = "LINDENDOLLAR_ENTITYDOESNOTEXIST";
             return false;
         }
-        var answer = Wait(service.PayoutAsync(txn == Guid.Empty ? Guid.NewGuid() : txn, ownerId, to, amount, regionId, objectId, objectName,
-            CancellationToken.None));
+        if (txn == Guid.Empty) txn = Guid.NewGuid();
+        var answer = Wait(RetriedAsync(() => service.PayoutAsync(txn, ownerId, to, amount, regionId, objectId, objectName, CancellationToken.None)));
         if (!answer.Ok)
         {
+            if (answer.Lost) Unknown("payout", txn, ownerId, to.AgentId, amount);
             reason = MoneyRules.ScriptReason(answer.Code);
             return false;
         }
@@ -334,25 +339,51 @@ internal sealed class MoneyActions(IMoneyService service, Guid regionId, Func<Ec
     private async Task<MoneyAnswer> SettleAsync(long holdId, bool complete)
     {
         var txn = Guid.NewGuid();
+        var answer = await RetriedAsync(() => complete
+            ? service.CompleteAsync(txn, holdId, CancellationToken.None)
+            : service.ReturnAsync(txn, holdId, CancellationToken.None));
+        var verb = complete ? "complete" : "return";
+        if (answer.Code == MoneyAnswer.UnavailableCode)
+            view.Error($"Couldn't {verb} hold {holdId}; the money service returns it to the buyer when it expires.");
+        // A refusal here leaves the hold to expire: a delivered object stays paid for by nobody, or a buyer waits for coins.
+        else if (!answer.Ok)
+            view.Error($"Couldn't {verb} hold {holdId}: {answer.Code}.");
+        return answer;
+    }
+
+    /// <summary>
+    /// Calls <paramref name="send"/>, which reuses one transaction id, until the answer isn't "unavailable" or
+    /// <see cref="Retries"/> run out. A final "unavailable" is <see cref="MoneyAnswer.Lost"/> when any attempt got no
+    /// answer: that attempt may have gone through.
+    /// </summary>
+    private async Task<MoneyAnswer> RetriedAsync(Func<Task<MoneyAnswer>> send)
+    {
+        var lost = false;
         for (var attempt = 0; ; attempt++)
         {
-            var answer = complete
-                ? await service.CompleteAsync(txn, holdId, CancellationToken.None)
-                : await service.ReturnAsync(txn, holdId, CancellationToken.None);
-            if (answer.Code != MoneyAnswer.UnavailableCode)
-            {
-                // A refusal here leaves the hold to expire: a delivered object stays paid for by nobody, or a buyer waits for coins.
-                if (!answer.Ok) view.Error($"Couldn't {(complete ? "complete" : "return")} hold {holdId}: {answer.Code}.");
-                return answer;
-            }
-            if (attempt == SettleRetries.Length)
-            {
-                view.Error($"Couldn't {(complete ? "complete" : "return")} hold {holdId}; the money service returns it to the buyer when it expires.");
-                return answer;
-            }
-            await view.Delay(SettleRetries[attempt]);
+            var answer = await send().ConfigureAwait(false);
+            if (answer.Code != MoneyAnswer.UnavailableCode) return answer;
+            lost |= answer.Lost;
+            if (attempt == Retries.Length) return answer with { Lost = lost };
+            await view.Delay(Retries[attempt]).ConfigureAwait(false);
         }
     }
+
+    /// <summary>Tells the payer why a payment didn't go through; one whose answer was lost is logged for staff first.</summary>
+    private void Refused(Payer p, MoneyAnswer answer, string type, Guid txn, Guid payee, long amount)
+    {
+        if (!answer.Lost)
+        {
+            view.Tell(p.AgentId, MoneyRules.Message(answer.Code));
+            return;
+        }
+        Unknown(type, txn, p.AgentId, payee, amount);
+        view.Tell(p.AgentId, MoneyRules.CheckingText);
+    }
+
+    /// <summary>A payment that may have gone through or not, logged so staff can find it in the ledger and refund it.</summary>
+    private void Unknown(string type, Guid txn, Guid payer, Guid payee, long amount) =>
+        view.Error($"The money service never answered {type} {txn}: {amount} from {payer} to {payee}. It may have been paid; check the ledger before refunding.");
 
     private void PushBoth(Guid payer, long? payerBalance, Guid payee, long? payeeBalance, BalanceNote note)
     {
@@ -370,7 +401,7 @@ internal sealed class MoneyActions(IMoneyService service, Guid regionId, Func<Ec
 
     /// <summary>
     /// For OpenSim's synchronous money calls. The client never captures a context, so blocking here can't deadlock; it
-    /// waits at most <see cref="MoneyServiceClient.Timeout"/>.
+    /// waits at most <see cref="MoneyServiceClient.Timeout"/> per attempt, plus the waits between a payment's retries.
     /// </summary>
     private static T Wait<T>(Task<T> task) => task.GetAwaiter().GetResult();
 }

@@ -20,7 +20,7 @@ public sealed record MoneyWho(Guid AgentId, string Home, Guid? SessionId = null,
 
 /// <summary>
 /// The service's answer. <see cref="Code"/> is "ok" or a refusal code; every failure to reach the service reads as
-/// "unavailable".
+/// "unavailable", and is <see cref="Lost"/> as well when no answer arrived.
 /// </summary>
 public sealed record MoneyAnswer(string Code, long? Balance = null, long? ToBalance = null, long? EntryId = null, long? HoldId = null)
 {
@@ -29,7 +29,14 @@ public sealed record MoneyAnswer(string Code, long? Balance = null, long? ToBala
     [JsonIgnore]
     public bool Ok => Code == "ok";
 
+    /// <summary>No answer arrived: the call may have happened. A service that answers "unavailable" itself changed nothing.</summary>
+    [JsonIgnore]
+    public bool Lost { get; init; }
+
     public static MoneyAnswer Unavailable { get; } = new(UnavailableCode);
+
+    /// <summary>What a call that got no readable answer returns.</summary>
+    public static MoneyAnswer NoAnswer { get; } = new(UnavailableCode) { Lost = true };
 }
 
 /// <summary>The grid's money settings, as the service gives them to regions.</summary>
@@ -176,7 +183,7 @@ public sealed class MoneyServiceClient : IMoneyService, IDisposable
     private Task<MoneyAnswer> Post(string path, object body, CancellationToken ct) => Post(path, body, Timeout, ct);
 
     private async Task<MoneyAnswer> Post(string path, object body, TimeSpan timeout, CancellationToken ct) =>
-        await Send<MoneyAnswer>(path, body, timeout, ct).ConfigureAwait(false) is { Code: { Length: > 0 } } answer ? answer : MoneyAnswer.Unavailable;
+        await Send<MoneyAnswer>(path, body, timeout, ct).ConfigureAwait(false) is { Code: { Length: > 0 } } answer ? answer : MoneyAnswer.NoAnswer;
 
     /// <summary>Null for anything but a 200 with a readable JSON body within <paramref name="timeout"/>. Only the caller's own cancellation throws.</summary>
     private async Task<T?> Send<T>(string path, object body, TimeSpan timeout, CancellationToken ct) where T : class

@@ -32,4 +32,16 @@ public sealed class MoneyServiceClientTests
         Assert.DoesNotContain("the-secret-key", line);
         Assert.DoesNotContain(session.ToString(), line);
     }
+
+    [Fact]
+    public async Task A_call_that_reaches_nothing_is_lost()
+    {
+        using var client = new MoneyServiceClient(new Uri($"https://127.0.0.1:{FreePort()}/money/v1/"), "key", new string('A', 64));
+
+        var answer = await client.TransferAsync(Guid.NewGuid(), "pay_avatar", new MoneyWho(Guid.NewGuid(), "", Guid.NewGuid(), Guid.NewGuid()),
+            new MoneyWho(Guid.NewGuid(), ""), 10, Guid.NewGuid(), null, null, TestContext.Current.CancellationToken);
+
+        Assert.Equal("unavailable", answer.Code);
+        Assert.True(answer.Lost);
+    }
 }
