@@ -133,6 +133,9 @@
     <Compile Include="IHGTravelingData.cs">
       <SubType>Code</SubType>
     </Compile>
+    <Compile Include="ISessionStartsData.cs">
+      <SubType>Code</SubType>
+    </Compile>
     <Compile Include="IInventoryData.cs">
       <SubType>Code</SubType>
     </Compile>
