@@ -44,10 +44,13 @@ internal sealed class MoneyServiceRig : IAsyncDisposable
     public MoneyLedger Ledger { get; private set; } = null!;
     public MoneyPairing Pairing { get; private set; } = null!;
     public string Fingerprint { get; private set; } = "";
-    public LauncherSettings Settings { get; private set; } = null!;
+    public LauncherSettings Settings { get; set; } = null!;
 
     /// <summary>The clock the wrong-key counter reads: a test steps it past the window so its own wrong keys aren't slowed down.</summary>
     public FakeTimeProvider FailureClock { get; } = new(DateTimeOffset.UtcNow);
+    /// <summary>The clock the verification reads: a test steps it to age a key's last health call.</summary>
+    public FakeTimeProvider VerifyClock { get; } = new(DateTimeOffset.UtcNow);
+    public RegionVerification Verification { get; private set; } = null!;
     public IEnumerable<string> Logs => _logs;
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
@@ -91,9 +94,11 @@ internal sealed class MoneyServiceRig : IAsyncDisposable
         var cert = MoneyCertificate.LoadOrCreate(Path.Combine(_dir, MoneyCertificate.FileName), time);
         Fingerprint = MoneyCertificate.Fingerprint(cert);
         Pairing = new MoneyPairing(time);
+        var pins = new RegionPins(MoneyConnections.Money(() => dbSettings), new RegionHosts(MoneyConnections.Robust(() => dbSettings)), TimeProvider.System);
+        Verification = new RegionVerification(MoneyConnections.Money(() => dbSettings), MoneyConnections.Robust(() => dbSettings), pins, VerifyClock);
         _host = new MoneyServiceHost(Ledger, presence, () => Settings, () => MoneyMode.Play, () => cert,
             new MoneyAuthFailures(FailureClock, loggers.CreateLogger<MoneyAuthFailures>()), loggers, new MoneyStatus(), Pairing,
-            change => Settings = change(Settings), new RegionPins(MoneyConnections.Money(() => dbSettings), new RegionHosts(MoneyConnections.Robust(() => dbSettings)), TimeProvider.System));
+            change => Settings = change(Settings), pins, verification: Verification);
         await _host.StartAsync(Ct);
         _http = new HttpClient(new SocketsHttpHandler
         {

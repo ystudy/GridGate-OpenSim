@@ -37,6 +37,7 @@ internal static class MoneyApi
     // Answers.
     internal sealed record Answer(string Code, long? Balance = null, long? ToBalance = null, long? EntryId = null, long? HoldId = null);
     internal sealed record EconomyAnswer(string Code, string CurrencySymbol, long UploadFee, long ClassifiedFee, bool VisitorWallets, bool ScriptPayouts, long MaxPayment);
+    internal sealed record HealthBody(int? Protocol, Guid[]? Regions);
     internal sealed record HealthAnswer(bool Ok, int Regions);
     internal sealed record PairBody(string? Host, int? FirstPort, string? MachineId, string? Nonce, string? Proof);
     internal sealed record PairAnswer(string Code, string Key, string Proof);
@@ -50,13 +51,23 @@ internal static class MoneyApi
     /// </summary>
     internal sealed record Context(MoneyLedger Ledger, PresenceCheck Presence, Func<LauncherSettings> Settings, MoneyAuthFailures Failures, ILogger Log,
         MoneyPairing? Pairing = null, Func<Func<LauncherSettings, LauncherSettings>, LauncherSettings>? Update = null, RegionPins? Pins = null,
-        string Fingerprint = "", Func<MoneyMode>? Mode = null);
+        string Fingerprint = "", Func<MoneyMode>? Mode = null, RegionVerification? Verification = null);
 
     public static void Map(IEndpointRouteBuilder app, Context c)
     {
         app.MapPost("/money/v1/pair", (RequestDelegate)(http => PairAsync(http, c)));
-        // How many regions the key covers now: a Region Server's page says when the grid sees none of its regions.
-        Post(app, "/money/v1/health", c, (_, grant, _) => Task.FromResult<object>(new HealthAnswer(true, grant.Regions.Count)));
+        // How many regions the key covers now: a Region Server's page says when the grid sees none of its regions. The call
+        // also records which money protocol the program speaks and which of its covered regions it runs (money design §8.2);
+        // {} is protocol 1 with none, which is what a Region Server launcher's pairing check sends.
+        Post(app, "/money/v1/health", c, async (http, grant, ct) =>
+        {
+            var b = await Read<HealthBody>(http, ct);
+            var protocol = b.Protocol ?? 1;
+            if (protocol < 1) throw new BadRequest();
+            if (c.Verification is { } verification)
+                await verification.HeardAsync(grant.KeyId, protocol, (b.Regions ?? []).Where(grant.Regions.Contains).ToList(), ct);
+            return new HealthAnswer(true, grant.Regions.Count);
+        });
         Post(app, "/money/v1/economy", c, (_, _, _) =>
         {
             var m = c.Settings().Money;
