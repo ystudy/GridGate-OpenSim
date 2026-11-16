@@ -79,6 +79,15 @@ namespace OpenSim.Region.CoreModules.Agent.AssetTransaction
         /// </summary>
         AgentAssetTransactions m_transactions;
 
+        /// <summary>GridGate: shown when an item is made from an upload of another type than the one the upload fee was checked for.</summary>
+        public const string MismatchText = "That upload doesn't match the item it was made for, so it wasn't saved.";
+
+        // GridGate: what the UDP upload fee is charged by. m_asset.Type is overwritten by the item requests, so the
+        // type HandleUDPUploadRequest checked is remembered here.
+        private sbyte m_uploadType;
+        private bool m_feeDue;
+        private bool m_charged;
+
         private UploadState m_uploadState = UploadState.New;
 
         private AssetBase m_asset;
@@ -227,6 +236,10 @@ namespace OpenSim.Region.CoreModules.Agent.AssetTransaction
             m_asset.Local = storeLocal;
             m_asset.Temporary = tempFile;
 
+            // GridGate: the fee is due for the type that was checked, once, wherever the asset ends up stored.
+            m_uploadType = type;
+            m_feeDue = AssetTransactionModule.UploadFeeApplies(type, tempFile);
+
 //            m_storeLocal = storeLocal;
 
             if (m_asset.Data.Length > 2)
@@ -273,7 +286,7 @@ namespace OpenSim.Region.CoreModules.Agent.AssetTransaction
                 }
                 else if (m_asset.Local)
                 {
-                    m_Scene.AssetService.Store(m_asset);
+                    StoreUploaded();
                 }
                 ourClient.SendAssetUploadCompleteMessage(m_asset.Type, sucess, m_asset.FullID);
             }
@@ -427,7 +440,7 @@ namespace OpenSim.Region.CoreModules.Agent.AssetTransaction
             }
             else
             {
-                m_Scene.AssetService.Store(m_asset);
+                StoreUploaded();
                 if (!m_asset.FullID.IsZero())
                 {
                     item.AssetID = m_asset.FullID;
@@ -460,13 +473,21 @@ namespace OpenSim.Region.CoreModules.Agent.AssetTransaction
                 return false;
             }
 
-            m_Scene.AssetService.Store(m_asset);
+            StoreUploaded();
             m_transactions.RemoveXferUploader(m_transactionID);
             return true;
         }
 
         private bool CompleteCreateItem(uint callbackID)
         {
+            // GridGate: the fee was checked for the uploaded type, so the item can't be made as another type.
+            if (type != m_uploadType)
+            {
+                m_transactions.RemoveXferUploader(m_transactionID);
+                ourClient.SendAlertMessage(MismatchText);
+                return false;
+            }
+
             if(ValidateAssets() == 0)
             {
                 m_transactions.RemoveXferUploader(m_transactionID);
@@ -475,7 +496,7 @@ namespace OpenSim.Region.CoreModules.Agent.AssetTransaction
                 return false;
             }
 
-            m_Scene.AssetService.Store(m_asset);
+            StoreUploaded();
 
             InventoryItemBase item = new InventoryItemBase
             {
@@ -506,7 +527,6 @@ namespace OpenSim.Region.CoreModules.Agent.AssetTransaction
             if (m_Scene.AddInventoryItem(item))
             {
                 ourClient.SendInventoryItemCreateUpdate(item, m_transactionID, callbackID);
-                ChargeUpload(type);
             }
             else
                 ourClient.SendAlertMessage("Unable to create inventory item");
@@ -516,18 +536,22 @@ namespace OpenSim.Region.CoreModules.Agent.AssetTransaction
         }
 
         /// <summary>
-        /// GridGate: the UDP upload path checked the upload fee (AssetTransactionModule.HandleUDPUploadRequest) but never
-        /// took it; the caps path does (Scene.Inventory.cs). Charged for the same asset types that check covers.
+        /// GridGate: stores the uploaded asset and takes the upload fee for it, once. The UDP path checked the fee
+        /// (AssetTransactionModule.HandleUDPUploadRequest) but never took it; the caps path does (Scene.Inventory.cs).
+        /// Every place this uploader stores the asset comes through here.
         /// </summary>
-        private void ChargeUpload(sbyte assetType)
+        private void StoreUploaded()
         {
-            if (m_asset.Temporary)
-                return;
-            if ((AssetType)assetType is not (AssetType.Texture or AssetType.Sound or AssetType.TextureTGA or AssetType.Animation))
+            m_Scene.AssetService.Store(m_asset);
+
+            if (!m_feeDue || m_charged)
                 return;
             IMoneyModule mm = m_Scene.RequestModuleInterface<IMoneyModule>();
             if (mm is not null && mm.UploadCharge > 0)
+            {
+                m_charged = true;
                 mm.ApplyUploadCharge(ourClient.AgentId, mm.UploadCharge, "Asset upload");
+            }
         }
 
         private uint ValidateAssets()

@@ -216,6 +216,16 @@ namespace OpenSim.Region.CoreModules.Agent.AssetTransaction
         }
 
         /// <summary>
+        /// GridGate: the UDP uploads the upload fee applies to. The funds check in HandleUDPUploadRequest and the charge in
+        /// AssetXferUploader both ask this, so they can't disagree.
+        /// </summary>
+        public static bool UploadFeeApplies(sbyte assetType, bool temporary)
+        {
+            return !temporary &&
+                (AssetType)assetType is AssetType.Texture or AssetType.Sound or AssetType.TextureTGA or AssetType.Animation;
+        }
+
+        /// <summary>
         /// Request that a client (agent) begin an asset transfer.
         /// </summary>
         /// <param name="remoteClient"></param>
@@ -232,11 +242,8 @@ namespace OpenSim.Region.CoreModules.Agent.AssetTransaction
 //                "[ASSET TRANSACTION MODULE]: HandleUDPUploadRequest - assetID: {0}, transaction {1}, type {2}, storeLocal {3}, tempFile {4}, data.Length {5}",
 //                assetID, transactionID, type, storeLocal, tempFile, data.Length);
 
-            if (((AssetType)type == AssetType.Texture ||
-                (AssetType)type == AssetType.Sound ||
-                (AssetType)type == AssetType.TextureTGA ||
-                (AssetType)type == AssetType.Animation) &&
-                tempFile == false)
+            // GridGate: the same list decides the check here and the charge in AssetXferUploader.
+            if (UploadFeeApplies(type, tempFile))
             {
                 Scene scene = (Scene)remoteClient.Scene;
                 scene.TryGetScenePresence(remoteClient.AgentId, out ScenePresence avatar);

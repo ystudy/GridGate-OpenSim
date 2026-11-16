@@ -37,17 +37,30 @@ public sealed class OpenSimMoneyPathTests
         return (region, uploads, region.Arrive(Buyer));
     }
 
-    /// <summary>
-    /// The viewer's AssetUploadRequest with the texture in it, then the CreateInventoryItem that names its transaction
-    /// (which the inventory access module hands to the upload module).
-    /// </summary>
-    private static bool Upload(AssetTransactionModule uploads, RecordingClient uploader, bool temporary = false)
+    private static readonly UUID UploadTransaction = TestHelpers.ParseTail(0x200);
+    private static readonly UUID UploadAssetId = TestHelpers.ParseTail(0x201);
+
+    private static void Send(RecordingClient uploader, sbyte type, bool storeLocal, bool temporary) =>
+        uploader.Raise(nameof(IClientAPI.OnAssetUploadRequest), uploader, UploadAssetId, UploadTransaction,
+            type, new byte[64], storeLocal, temporary);
+
+    private static bool CreateItem(AssetTransactionModule uploads, RecordingClient uploader, sbyte createAs)
     {
-        var transaction = TestHelpers.ParseTail(0x200);
-        uploader.Raise(nameof(IClientAPI.OnAssetUploadRequest), uploader, TestHelpers.ParseTail(0x201), transaction,
-            (sbyte)AssetType.Texture, new byte[64], false, temporary);
-        return uploads.HandleItemCreationFromTransaction(uploader, transaction, UUID.Zero, 1, "", "A texture",
-            (sbyte)InventoryType.Texture, (sbyte)AssetType.Texture, 0, (uint)OpenSim.Framework.PermissionMask.All);
+        var invType = (AssetType)createAs == AssetType.Clothing ? InventoryType.Wearable
+            : (AssetType)createAs == AssetType.Notecard ? InventoryType.Notecard : InventoryType.Texture;
+        return uploads.HandleItemCreationFromTransaction(uploader, UploadTransaction, UUID.Zero, 1, "", "A texture",
+            (sbyte)invType, createAs, 0, (uint)OpenSim.Framework.PermissionMask.All);
+    }
+
+    /// <summary>
+    /// The viewer's AssetUploadRequest with the asset in it, then (unless <paramref name="create"/> is false) the
+    /// CreateInventoryItem that names its transaction (which the inventory access module hands to the upload module).
+    /// </summary>
+    private static bool Upload(AssetTransactionModule uploads, RecordingClient uploader, sbyte type = (sbyte)AssetType.Texture,
+        bool storeLocal = false, sbyte? createAs = null, bool create = true, bool temporary = false)
+    {
+        Send(uploader, type, storeLocal, temporary);
+        return !create || CreateItem(uploads, uploader, createAs ?? type);
     }
 
     private static List<InventoryItemBase> Textures(MoneyScene region) =>
@@ -93,6 +106,92 @@ public sealed class OpenSimMoneyPathTests
         Upload(uploads, uploader, temporary: true);
 
         Assert.Empty(region.Service.Calls);
+    }
+
+    /// <summary>A store-only UDP upload (no item) is a way to put an asset in the store, so it pays the fee.</summary>
+    [Fact]
+    public void A_store_only_udp_upload_is_charged()
+    {
+        var (region, uploads, uploader) = UploadRegion(balance: 100);
+
+        Upload(uploads, uploader, storeLocal: true, create: false);
+
+        Assert.Equal("upload_fee", Assert.Single(region.Service.Of("charge")).Args[0]);
+    }
+
+    /// <summary>The fee is for the type the upload was checked as: a texture can't be saved under a type with no fee.</summary>
+    [Fact]
+    public void A_udp_texture_saved_as_a_notecard_is_refused_and_not_charged()
+    {
+        var (region, uploads, uploader) = UploadRegion(balance: 100);
+
+        Upload(uploads, uploader, createAs: (sbyte)AssetType.Notecard);
+
+        uploader.WaitForAlert(AssetXferUploader.MismatchText);
+        Assert.Empty(Textures(region));
+        Assert.Empty(region.Service.Of("charge"));
+        Assert.Null(region.Scene.AssetService.Get(UploadAssetId.ToString()));
+    }
+
+    /// <summary>An item update takes the asset from the upload, so it is charged by what was uploaded, not the item's type.</summary>
+    [Fact]
+    public void An_item_update_through_a_udp_upload_is_charged_by_the_uploaded_type()
+    {
+        var (region, uploads, uploader) = UploadRegion(balance: 100);
+        var item = new InventoryItemBase(UUID.Random(), Buyer)
+        {
+            Name = "A notecard", AssetType = (int)AssetType.Notecard, InvType = (int)InventoryType.Notecard,
+            Folder = region.Scene.InventoryService.GetFolderForType(Buyer, FolderType.Notecard).ID,
+            BasePermissions = (uint)OpenSim.Framework.PermissionMask.All, CurrentPermissions = (uint)OpenSim.Framework.PermissionMask.All,
+        };
+        Assert.True(region.Scene.InventoryService.AddItem(item));
+
+        Send(uploader, (sbyte)AssetType.Texture, storeLocal: false, temporary: false);
+        uploads.HandleItemUpdateFromTransaction(uploader, UploadTransaction, item);
+
+        Assert.Single(region.Service.Of("charge"));
+    }
+
+    /// <summary>The same upload stored twice (store-only, then its item) pays once.</summary>
+    [Fact]
+    public void A_store_only_upload_followed_by_an_item_is_charged_once()
+    {
+        var (region, uploads, uploader) = UploadRegion(balance: 100);
+
+        Upload(uploads, uploader, storeLocal: true, create: false);
+        CreateItem(uploads, uploader, (sbyte)AssetType.Texture);
+
+        Assert.Single(region.Service.Of("charge"));
+        Assert.Single(Textures(region));
+    }
+
+    /// <summary>The viewer may name the item before the upload arrives; the fee is still taken once, when it is stored.</summary>
+    [Fact]
+    public void An_item_created_before_its_upload_arrives_is_charged_once()
+    {
+        var (region, uploads, uploader) = UploadRegion(balance: 100);
+
+        CreateItem(uploads, uploader, (sbyte)AssetType.Texture);
+        Assert.Empty(region.Service.Of("charge"));
+        Send(uploader, (sbyte)AssetType.Texture, storeLocal: false, temporary: false);
+
+        Assert.Single(region.Service.Of("charge"));
+        Assert.Single(Textures(region));
+    }
+
+    /// <summary>A wearable has no upload fee; saving one through UDP still makes its item.</summary>
+    [Fact]
+    public void A_wearable_saved_through_udp_creates_its_item_and_is_not_charged()
+    {
+        var (region, uploads, uploader) = UploadRegion(balance: 100);
+
+        Assert.True(Upload(uploads, uploader, type: (sbyte)AssetType.Clothing, createAs: (sbyte)AssetType.Clothing));
+
+        var clothing = region.Scene.InventoryService.GetFolderContent(Buyer,
+            region.Scene.InventoryService.GetFolderForType(Buyer, FolderType.Clothing).ID).Items.Where(i => i.Name == "A texture");
+        Assert.Single(clothing);
+        Assert.Empty(region.Service.Of("charge"));
+        Assert.Empty(uploader.Alerts);
     }
 
     // --- classifieds (commit 9a45df55) -------------------------------------------------------------------------------
