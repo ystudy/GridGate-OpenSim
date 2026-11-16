@@ -51,8 +51,9 @@ public sealed class MoneyMaintenanceTests(MoneyMariaDb maria) : IClassFixture<Mo
     {
         var (ledger, db, time) = await MoneyLedgerTransferTests.Setup(maria);
         var gone = Guid.NewGuid();
+        var longAgo = (time.GetUtcNow() - MoneyLocations.KeepAbsentFor - TimeSpan.FromHours(1)).UtcDateTime;
         await db.Sql($"INSERT INTO `money`.`session_locations` (session_id, agent_id, region_id, key_id, state, updated) " +
-            $"VALUES ('{gone}', '{A}', '{Guid.NewGuid()}', 'p1', 'Verified', UTC_TIMESTAMP(6))");
+            $"VALUES ('{gone}', '{A}', '{Guid.NewGuid()}', 'p1', 'Verified', '{longAgo:yyyy-MM-dd HH:mm:ss}')");
         var presence = new PresenceCheck(db.OpenRobust);
         var verification = new RegionVerification(db.OpenMoney, db.OpenRobust, new RegionPins(db.OpenMoney, new RegionHosts(db.OpenRobust), time), time);
         var locations = new MoneyLocations(db.OpenMoney, db.OpenRobust, verification, presence, time);

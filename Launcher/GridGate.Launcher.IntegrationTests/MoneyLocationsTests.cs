@@ -36,6 +36,7 @@ public sealed class MoneyLocationsTests(MoneyMariaDb maria) : IClassFixture<Mone
     private MoneyTestDatabase _db = null!;
     private FakeTimeProvider _clock = null!;
     private MoneyLocations _locations = null!;
+    private RegionVerification _verification = null!;
 
     private async Task StartAsync()
     {
@@ -45,11 +46,17 @@ public sealed class MoneyLocationsTests(MoneyMariaDb maria) : IClassFixture<Mone
         await _db.AddPresence(V, R1, SessionV, SecureV);
         _clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
         var pins = new RegionPins(_db.OpenMoney, new RegionHosts(_db.OpenRobust), _clock);
-        var verification = new RegionVerification(_db.OpenMoney, _db.OpenRobust, pins, _clock);
-        await verification.HeardAsync(P1.KeyId, RegionVerification.HandoffProtocol, [R1, R5], Ct);
-        await verification.HeardAsync(P2.KeyId, RegionVerification.HandoffProtocol, [R2], Ct);
-        await verification.HeardAsync(Paired.KeyId, RegionVerification.HandoffProtocol, [R3], Ct);
-        _locations = new MoneyLocations(_db.OpenMoney, _db.OpenRobust, verification, new PresenceCheck(_db.OpenRobust), _clock);
+        _verification = new RegionVerification(_db.OpenMoney, _db.OpenRobust, pins, _clock);
+        await ModulesCheckIn();
+        _locations = new MoneyLocations(_db.OpenMoney, _db.OpenRobust, _verification, new PresenceCheck(_db.OpenRobust), _clock);
+    }
+
+    /// <summary>The health calls that make p1, p2 and the paired server verified; again after the clock moves past <see cref="RegionVerification.HeardWithin"/>.</summary>
+    private async Task ModulesCheckIn()
+    {
+        await _verification.HeardAsync(P1.KeyId, RegionVerification.HandoffProtocol, [R1, R5], Ct);
+        await _verification.HeardAsync(P2.KeyId, RegionVerification.HandoffProtocol, [R2], Ct);
+        await _verification.HeardAsync(Paired.KeyId, RegionVerification.HandoffProtocol, [R3], Ct);
     }
 
     /// <summary>
@@ -482,15 +489,99 @@ public sealed class MoneyLocationsTests(MoneyMariaDb maria) : IClassFixture<Mone
         await _db.AddSessionStart(SessionV, V, R1, "gatekeeper");
         Assert.Equal(PlaceOutcome.Ok, (await Arrive(P1, R1, SessionV, V)).Outcome);
         Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, R2));
-        _clock.Advance(MoneyLocations.HandoffLife + TimeSpan.FromSeconds(1));
+        _clock.Advance(MoneyLocations.KeepAbsentFor + TimeSpan.FromMinutes(1));
         Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, R2, session: SessionV)); // still open
         await _db.Sql($"DELETE FROM `robust`.`Presence` WHERE SessionID = '{SessionU}'"); // U logs out
 
         await _locations.CleanupAsync(Ct);
 
         Assert.Null(await Where());
-        AssertAt(await Where(SessionV), R1, "p1", LocationState.Verified);
+        AssertAt(await Where(SessionV), R1, "p1", LocationState.Verified); // still logged in, however old its row
         Assert.Equal(0, await _db.Scalar($"SELECT COUNT(*) FROM `money`.`handoffs` WHERE session_id = '{SessionU}'"));
         Assert.Equal(1, await _db.Scalar($"SELECT COUNT(*) FROM `money`.`handoffs` WHERE session_id = '{SessionV}'"));
+    }
+
+    [Fact]
+    public async Task Cleanup_keeps_rows_of_absent_sessions_for_two_days()
+    {
+        await StartAsync();
+        await LoggedInAtR1();
+        // Teleporting to another grid logs the session out of Presence; coming back logs it in again with the same id.
+        Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, Elsewhere, HandoffKind.OtherGrid));
+        await _db.Sql($"DELETE FROM `robust`.`Presence` WHERE SessionID = '{SessionU}'");
+
+        _clock.Advance(MoneyLocations.KeepAbsentFor - TimeSpan.FromMinutes(1));
+        await _locations.CleanupAsync(Ct);
+
+        Assert.Equal(LocationState.LeftGrid, (await Where())?.State);
+    }
+
+    [Fact]
+    public async Task Cleanup_drops_absent_sessions_after_two_days()
+    {
+        await StartAsync();
+        await LoggedInAtR1();
+        Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, Elsewhere, HandoffKind.OtherGrid));
+        await _db.Sql($"DELETE FROM `robust`.`Presence` WHERE SessionID = '{SessionU}'");
+
+        _clock.Advance(MoneyLocations.KeepAbsentFor + TimeSpan.FromMinutes(1));
+        await _locations.CleanupAsync(Ct);
+
+        Assert.Null(await Where());
+    }
+
+    [Fact]
+    public async Task Leaving_the_grid_and_returning_does_not_rearm_a_used_login_start()
+    {
+        await StartAsync();
+        await _db.AddSessionStart(SessionU, U, R3, "login"); // U logs in at Neon Pier, which learns the session id
+        Assert.Equal(PlaceOutcome.Ok, (await Arrive(Paired, R3)).Outcome);
+        Assert.Equal(PlaceOutcome.Ok, await Handoff(Paired, R3, Elsewhere, HandoffKind.OtherGrid));
+        await _db.Sql($"DELETE FROM `robust`.`Presence` WHERE SessionID = '{SessionU}'"); // HG logout while away
+
+        _clock.Advance(TimeSpan.FromHours(3));
+        await _locations.CleanupAsync(Ct);
+        await ModulesCheckIn();
+
+        // U comes home through the Gatekeeper, same session id, into the local region R2.
+        await _db.AddPresence(U, R2, SessionU, SecureU);
+        await _db.AddSessionStart(SessionU, U, R2, "gatekeeper");
+        // Neon Pier claims U again with the login start it already used.
+        Assert.NotEqual(PlaceOutcome.Ok, (await Arrive(Paired, R3)).Outcome);
+
+        Assert.Equal(PlaceOutcome.Ok, (await Arrive(P2, R2)).Outcome);
+        AssertAt(await Where(), R2, "p2", LocationState.Verified);
+    }
+
+    [Fact]
+    public async Task Starts_older_than_a_day_are_ignored()
+    {
+        await StartAsync();
+        await _db.AddSessionStart(SessionU, U, R1, "login");
+        await _db.AddSessionStart(SessionV, V, R1, "gatekeeper");
+        await _db.Sql("UPDATE `robust`.`gridgate_session_starts` SET `At` = NOW() - INTERVAL 2 DAY");
+
+        Assert.Equal(PlaceOutcome.PlacedUnverified, (await Arrive(P1, R1)).Outcome);
+        Assert.Equal(PlaceOutcome.PlacedUnverified, (await Arrive(P1, R1, SessionV, V)).Outcome);
+    }
+
+    [Fact]
+    public async Task Late_retry_of_a_replaced_handoff_changes_nothing()
+    {
+        await StartAsync();
+        await LoggedInAtR1();
+        var first = Guid.NewGuid();
+        Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, R2, id: first));
+        Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, R5)); // replaces the first
+
+        Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, R2, id: first)); // the module's late retry of the first
+
+        Assert.Equal(1, await OpenHandoffs());
+        Assert.Equal(R5.ToString(), await _db.Text($"SELECT to_region FROM `money`.`handoffs` WHERE session_id = '{SessionU}' AND kind IN ('Teleport', 'Crossing')"));
+        // The teleport to R5 fails too; a retry of the first still can't reopen R2.
+        await _locations.CancelHandoffAsync(P1, SessionU, R1, Ct);
+        Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, R2, id: first));
+        Assert.Equal(0, await OpenHandoffs());
+        Assert.Equal(PlaceOutcome.Refused, (await Arrive(P2, R2)).Outcome);
     }
 }

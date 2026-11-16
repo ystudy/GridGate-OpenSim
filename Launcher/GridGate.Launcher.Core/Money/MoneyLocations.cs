@@ -42,14 +42,24 @@ public sealed class MoneyLocations(Func<CancellationToken, Task<MySqlConnection>
     /// <summary>How often a held arrival looks again for its handoff or start.</summary>
     public static readonly TimeSpan ArrivalRetry = TimeSpan.FromMilliseconds(500);
 
+    /// <summary>
+    /// How long cleanup keeps the location of a session that isn't in Presence. Teleporting to another grid logs a session
+    /// out of Presence, and coming back logs it in again with the same id (Ruling 9).
+    /// </summary>
+    public static readonly TimeSpan KeepAbsentFor = TimeSpan.FromDays(2);
+
     private const int DeadlockRetries = 3;
     private const int ErDeadlock = 1213, ErLockWaitTimeout = 1205;
 
     /// <summary>The state of the row an arrival adds to lock a session the service has never placed; only a placement commits it, with a real state.</summary>
     private const string Placeholder = "Pending";
 
-    /// <summary>A handoff an arrival used. The row stays until cleanup, so the module's retry of it is still recognised.</summary>
-    private const string Used = "Used";
+    /// <summary>
+    /// A handoff an arrival used, a newer handoff replaced, or a failed teleport took back. The row stays until cleanup, so a
+    /// late retry of it is still recognised and changes nothing: it can't take the place of the newer handoff or reopen a
+    /// cancelled destination (Ruling 9). Only Teleport and Crossing rows are open.
+    /// </summary>
+    private const string Used = "Used", Replaced = "Replaced", Cancelled = "Cancelled";
 
     /// <summary>The kinds an arrival can match: a teleport to another grid ends at no region of ours.</summary>
     private const string OpenKinds = "('Teleport', 'Crossing')";
@@ -78,7 +88,8 @@ public sealed class MoneyLocations(Func<CancellationToken, Task<MySqlConnection>
                 var row = await LockAsync(conn, tx, sessionId, ct);
 
                 // The module retries a send it got no answer to: the same handoff id answers Ok and changes nothing, even
-                // after an arrival used it. An id that another session or key used isn't this key's to repeat.
+                // after an arrival used it, a newer handoff replaced it or it was cancelled. An id that another session or
+                // key used isn't this key's to repeat.
                 await using (var cmd = Command(conn, tx, "SELECT session_id, from_key FROM handoffs WHERE id = @id", ("@id", handoffId.ToString())))
                 await using (var r = await cmd.ExecuteReaderAsync(ct))
                     if (await r.ReadAsync(ct))
@@ -88,8 +99,10 @@ public sealed class MoneyLocations(Func<CancellationToken, Task<MySqlConnection>
                 if (row is not { Location.State: LocationState.Verified } || row.Location.RegionId != fromRegion)
                     return (PlaceOutcome.NotHeld, false);
 
-                // §8.4: "a new handoff replaces any open one for that session" (some cancelled teleports fire no event; Review Focus 1).
-                await ExecAsync(conn, tx, $"DELETE FROM handoffs WHERE session_id = @s AND kind IN {OpenKinds}", ct, ("@s", sessionId.ToString()));
+                // §8.4: "a new handoff replaces any open one for that session" (some cancelled teleports fire no event; Review
+                // Focus 1). Marked, not deleted, so a late retry of the old one is recognised (Ruling 9).
+                await ExecAsync(conn, tx, $"UPDATE handoffs SET kind = @replaced WHERE session_id = @s AND kind IN {OpenKinds}", ct,
+                    ("@replaced", Replaced), ("@s", sessionId.ToString()));
                 await ExecAsync(conn, tx, """
                     INSERT INTO handoffs (id, session_id, from_key, from_region, to_region, kind, created)
                     VALUES (@id, @s, @k, @from, @to, @kind, @t)
@@ -112,8 +125,8 @@ public sealed class MoneyLocations(Func<CancellationToken, Task<MySqlConnection>
 
     /// <summary>
     /// A failed teleport (<c>OnTeleportFail</c>) takes back the open handoffs this key sent for the session from
-    /// <paramref name="fromRegion"/> (§8.4). Nothing for a region the key doesn't cover. A database failure is
-    /// <see cref="MoneyUnavailableException"/>.
+    /// <paramref name="fromRegion"/> (§8.4); they are marked, so a late retry of one can't reopen it. Nothing for a region
+    /// the key doesn't cover. A database failure is <see cref="MoneyUnavailableException"/>.
     /// </summary>
     public async Task CancelHandoffAsync(RegionKeyGrant grant, Guid sessionId, Guid fromRegion, CancellationToken ct)
     {
@@ -121,8 +134,9 @@ public sealed class MoneyLocations(Func<CancellationToken, Task<MySqlConnection>
         try
         {
             await using var conn = await openMoney(ct);
-            await using var cmd = Command(conn, null, $"DELETE FROM handoffs WHERE session_id = @s AND from_key = @k AND from_region = @from AND kind IN {OpenKinds}",
-                ("@s", sessionId.ToString()), ("@k", grant.KeyId), ("@from", fromRegion.ToString()));
+            await using var cmd = Command(conn, null,
+                $"UPDATE handoffs SET kind = @cancelled WHERE session_id = @s AND from_key = @k AND from_region = @from AND kind IN {OpenKinds}",
+                ("@cancelled", Cancelled), ("@s", sessionId.ToString()), ("@k", grant.KeyId), ("@from", fromRegion.ToString()));
             await cmd.ExecuteNonQueryAsync(ct);
         }
         catch (MySqlException e)
@@ -183,23 +197,27 @@ public sealed class MoneyLocations(Func<CancellationToken, Task<MySqlConnection>
     }
 
     /// <summary>
-    /// Drops the locations of sessions no longer in Presence (§8.4: "The location record is cleaned up later") and
-    /// handoffs past <see cref="HandoffLife"/>. A database failure is <see cref="MoneyUnavailableException"/>.
+    /// Drops the locations of sessions that are not in Presence and haven't changed for <see cref="KeepAbsentFor"/> (§8.4:
+    /// "The location record is cleaned up later"), and handoffs past <see cref="HandoffLife"/>. A database failure is
+    /// <see cref="MoneyUnavailableException"/>.
     /// </summary>
     public async Task CleanupAsync(CancellationToken ct)
     {
         const int Batch = 500;
         try
         {
+            // A session id comes back: teleporting to another grid logs it out of Presence (HGEntityTransferModule), and
+            // the Gatekeeper logs it in again with the same id on the way home. Its row, with the start it already used,
+            // must outlive Robust's starts (a day), or that start would count again (Ruling 9). So only rows older than
+            // KeepAbsentFor go, and only when their session isn't in Presence.
+            var cutoff = Now - KeepAbsentFor;
             var sessions = new List<Guid>();
             await using (var conn = await openMoney(ct))
-            await using (var cmd = Command(conn, null, "SELECT session_id FROM session_locations"))
+            await using (var cmd = Command(conn, null, "SELECT session_id FROM session_locations WHERE updated < @cutoff", ("@cutoff", cutoff)))
             await using (var r = await cmd.ExecuteReaderAsync(ct))
                 while (await r.ReadAsync(ct))
                     sessions.Add(ToGuid(r.GetValue(0)));
 
-            // Only Robust's login and the Gatekeeper write Presence, and session ids aren't reused, so a session missing
-            // from it has logged out for good.
             var present = new HashSet<Guid>();
             await using (var robust = await openRobust(ct))
                 foreach (var chunk in sessions.Chunk(Batch))
@@ -213,7 +231,9 @@ public sealed class MoneyLocations(Func<CancellationToken, Task<MySqlConnection>
             await using var money = await openMoney(ct);
             foreach (var chunk in sessions.Where(s => !present.Contains(s)).Chunk(Batch))
             {
-                await using var cmd = InCommand(money, "DELETE FROM session_locations WHERE session_id IN", chunk);
+                // Rechecked here: a row placed or moved since it was read stays.
+                await using var cmd = InCommand(money, "DELETE FROM session_locations WHERE updated < @cutoff AND session_id IN", chunk);
+                cmd.Parameters.AddWithValue("@cutoff", cutoff);
                 await cmd.ExecuteNonQueryAsync(ct);
             }
             await using (var cmd = Command(money, null, "DELETE FROM handoffs WHERE created < @cutoff", ("@cutoff", Now - HandoffLife)))
@@ -303,13 +323,17 @@ public sealed class MoneyLocations(Func<CancellationToken, Task<MySqlConnection>
         return null;
     }
 
-    /// <summary>The newest start Robust wrote for the session in the region, after <paramref name="after"/>. A missing table throws (§8.4: Unavailable).</summary>
+    /// <summary>
+    /// The newest start Robust wrote for the session in the region, after <paramref name="after"/> and within the last day
+    /// by the database's clock (Ruling 9: Robust's own clean-up only runs on logins, so it can't be relied on). A missing
+    /// table throws (§8.4: Unavailable).
+    /// </summary>
     private async Task<long?> StartAsync(Guid sessionId, Guid agentId, Guid regionId, string source, long after, CancellationToken ct)
     {
         await using var conn = await openRobust(ct);
         await using var cmd = Command(conn, null, """
             SELECT MAX(Id) FROM gridgate_session_starts
-            WHERE SessionID = @s AND UserID = @u AND RegionID = @r AND Source = @src AND Id > @after
+            WHERE SessionID = @s AND UserID = @u AND RegionID = @r AND Source = @src AND Id > @after AND At > NOW() - INTERVAL 1 DAY
             """, ("@s", sessionId.ToString()), ("@u", agentId.ToString()), ("@r", regionId.ToString()), ("@src", source), ("@after", after));
         return await cmd.ExecuteScalarAsync(ct) is { } id and not DBNull ? Convert.ToInt64(id) : null;
     }
