@@ -259,7 +259,7 @@ namespace OpenSim.Services.LLLoginService
                 }
                 catch (Exception e)
                 {
-                    m_log.WarnFormat("[LLOGIN SERVICE]: Session starts are not recorded: {0}", e.Message);
+                    m_log.WarnFormat("[LLOGIN SERVICE]: Session starts are not recorded: {0}", e.GetType().Name);
                 }
             }
 
@@ -375,7 +375,7 @@ namespace OpenSim.Services.LLLoginService
             }
             catch (Exception e)
             {
-                m_log.WarnFormat("[LLOGIN SERVICE]: Could not record where a session starts: {0}", e.Message);
+                m_log.WarnFormat("[LLOGIN SERVICE]: Could not record where a session starts: {0}", e.GetType().Name);
             }
         }
 
