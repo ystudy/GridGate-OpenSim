@@ -46,6 +46,38 @@ public sealed class PresenceCheck(Func<CancellationToken, Task<MySqlConnection>>
     }
 
     /// <summary>
+    /// Ok when <paramref name="agentId"/> is logged in with both session ids, in any region. Only Robust's login and the
+    /// Gatekeeper write a Presence row, so this part is trustworthy; <c>Presence.RegionID</c> isn't, since any region can
+    /// rewrite it, so where the avatar is comes from the money service's own record instead (money design §8.4, L-1).
+    /// </summary>
+    public Task<PresenceOutcome> LoggedInAsync(Guid agentId, Guid sessionId, Guid secureSessionId, CancellationToken ct) =>
+        secureSessionId == Guid.Empty ? Task.FromResult(PresenceOutcome.NoSession)
+            : HasRowAsync(agentId, sessionId, secureSessionId, ct);
+
+    /// <summary>Ok when <paramref name="agentId"/> is logged in with <paramref name="sessionId"/>, in any region: what an arrival needs (money design §8.4).</summary>
+    public Task<PresenceOutcome> HasSessionAsync(Guid agentId, Guid sessionId, CancellationToken ct) =>
+        HasRowAsync(agentId, sessionId, null, ct);
+
+    private async Task<PresenceOutcome> HasRowAsync(Guid agentId, Guid sessionId, Guid? secureSessionId, CancellationToken ct)
+    {
+        if (agentId == Guid.Empty || sessionId == Guid.Empty) return PresenceOutcome.NoSession;
+        try
+        {
+            await using var conn = await openRobust(ct);
+            await using var cmd = new MySqlCommand("SELECT 1 FROM Presence WHERE UserID = @u AND SessionID = @s" +
+                (secureSessionId is null ? "" : " AND SecureSessionID = @ss"), conn);
+            cmd.Parameters.AddWithValue("@u", agentId.ToString());
+            cmd.Parameters.AddWithValue("@s", sessionId.ToString());
+            if (secureSessionId is { } secure) cmd.Parameters.AddWithValue("@ss", secure.ToString());
+            return await cmd.ExecuteScalarAsync(ct) is null ? PresenceOutcome.NoSession : PresenceOutcome.Ok;
+        }
+        catch (MySqlException)
+        {
+            return PresenceOutcome.Unavailable;
+        }
+    }
+
+    /// <summary>
     /// Ok when <paramref name="agentId"/> is logged in with <paramref name="secureSessionId"/>, in any region. The economy
     /// helper's check (money design §8.5): the viewer sends only the secure session id, and the helper has no region.
     /// </summary>

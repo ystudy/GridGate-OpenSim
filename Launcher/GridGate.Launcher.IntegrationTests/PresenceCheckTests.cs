@@ -50,6 +50,40 @@ public sealed class PresenceCheckTests(MoneyMariaDb maria) : IClassFixture<Money
     }
 
     [Fact]
+    public async Task Logged_in_in_any_region_is_Ok()
+    {
+        var check = await Setup(There); // Presence.RegionID is no longer read (money design §8.4)
+
+        Assert.Equal(PresenceOutcome.Ok, await check.LoggedInAsync(User, Session, Secure, Ct));
+        Assert.Equal(PresenceOutcome.NoSession, await check.LoggedInAsync(User, Session, Guid.NewGuid(), Ct));
+        Assert.Equal(PresenceOutcome.NoSession, await check.LoggedInAsync(User, Guid.NewGuid(), Secure, Ct));
+        Assert.Equal(PresenceOutcome.NoSession, await check.LoggedInAsync(Guid.NewGuid(), Session, Secure, Ct));
+        Assert.Equal(PresenceOutcome.NoSession, await check.LoggedInAsync(User, Session, Guid.Empty, Ct));
+    }
+
+    [Fact]
+    public async Task Session_without_secure_session_is_Ok()
+    {
+        var check = await Setup(There);
+
+        Assert.Equal(PresenceOutcome.Ok, await check.HasSessionAsync(User, Session, Ct));
+        Assert.Equal(PresenceOutcome.NoSession, await check.HasSessionAsync(User, Guid.NewGuid(), Ct));
+        Assert.Equal(PresenceOutcome.NoSession, await check.HasSessionAsync(Guid.NewGuid(), Session, Ct));
+        Assert.Equal(PresenceOutcome.NoSession, await check.HasSessionAsync(User, Guid.Empty, Ct));
+    }
+
+    [Fact]
+    public async Task Unreachable_robust_is_Unavailable_when_logged_in_is_asked()
+    {
+        var db = await maria.FreshAsync();
+        var closed = db.Settings with { MariaDbPort = MoneyMariaDb.FreePort() };
+        var check = new PresenceCheck(ct => Core.Database.GridDb.OpenRobustAsync(closed, 2, ct));
+
+        Assert.Equal(PresenceOutcome.Unavailable, await check.LoggedInAsync(User, Session, Secure, Ct));
+        Assert.Equal(PresenceOutcome.Unavailable, await check.HasSessionAsync(User, Session, Ct));
+    }
+
+    [Fact]
     public async Task Secure_session_alone_is_ok()
     {
         var check = await Setup(There); // any region: the helper has no region of its own

@@ -428,6 +428,9 @@ builder.Services.AddSingleton(sp => new RegionPins(MoneyConnections.Money(sp.Get
     sp.GetRequiredService<RegionHosts>(), sp.GetRequiredService<TimeProvider>()));
 builder.Services.AddSingleton(sp => new RegionVerification(MoneyConnections.Money(sp.GetRequiredService<Func<LauncherSettings>>()),
     MoneyConnections.Robust(sp.GetRequiredService<Func<LauncherSettings>>()), sp.GetRequiredService<RegionPins>(), sp.GetRequiredService<TimeProvider>()));
+builder.Services.AddSingleton(sp => new MoneyLocations(MoneyConnections.Money(sp.GetRequiredService<Func<LauncherSettings>>()),
+    MoneyConnections.Robust(sp.GetRequiredService<Func<LauncherSettings>>()), sp.GetRequiredService<RegionVerification>(),
+    sp.GetRequiredService<PresenceCheck>(), sp.GetRequiredService<TimeProvider>()));
 builder.Services.AddSingleton<ISecureSessionCheck>(sp => sp.GetRequiredService<PresenceCheck>());
 builder.Services.AddSingleton(sp => new EconomyLimits(sp.GetRequiredService<TimeProvider>()));
 builder.Services.AddSingleton<EconomyHelper>();
@@ -456,7 +459,8 @@ builder.Services.AddSingleton(sp =>
 });
 builder.Services.AddHostedService(sp => sp.GetRequiredService<MoneyServiceHost>());
 builder.Services.AddHostedService(sp => new MoneyMaintenance(sp.GetRequiredService<MoneyLedger>(), sp.GetRequiredService<MoneyGate>().ServiceMode,
-    sp.GetRequiredService<TimeProvider>(), sp.GetRequiredService<ILogger<MoneyMaintenance>>(), sp.GetRequiredService<MoneyStatus>()));
+    sp.GetRequiredService<TimeProvider>(), sp.GetRequiredService<ILogger<MoneyMaintenance>>(), sp.GetRequiredService<MoneyStatus>(),
+    sp.GetRequiredService<MoneyLocations>()));
 builder.Services.AddHostedService<GridHostedService>();
 // Moves regions into their owner's estate and back while they run; registered after GridHostedService, so it stops first.
 builder.Services.AddHostedService<RegionEstateSync>();
