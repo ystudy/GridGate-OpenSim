@@ -158,9 +158,13 @@ public sealed partial class MoneyLedger(
         if (who.AgentId == Guid.Empty || home.StartsWith("system:", StringComparison.Ordinal) || home.Length > 255)
             return (null, MoneyOutcome.NoWallet);
         var resident = home.Length == 0;
-        var visitorsOn = settings().VisitorWallets;
-        if (!resident && !visitorsOn && !staff)
-            return (null, MoneyOutcome.VisitorsOff);
+        var s = settings();
+        var visitorsOn = s.EffectiveVisitors != VisitorMoney.Off;
+        if (!resident && !staff)
+        {
+            if (!visitorsOn) return (null, MoneyOutcome.VisitorsOff);
+            if (s.EffectiveVisitors == VisitorMoney.Listed && !s.GridListed(home)) return (null, MoneyOutcome.VisitorGridNotListed);
+        }
 
         if (await FindAsync(conn, tx, who.AgentId, home, ct) is { } found)
             return (found, MoneyOutcome.Ok);

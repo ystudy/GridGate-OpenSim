@@ -38,6 +38,12 @@ public enum MoneyOutcome
     /// are frozen (money review 2026-11-15, L-3).
     /// </summary>
     HoldMismatch,
+
+    /// <summary>A hypergrid visitor from a grid the owner hasn't listed, on either side (verified-regions design §8.6).</summary>
+    VisitorGridNotListed,
+
+    /// <summary>A region key's daily spending or payout limit is used up (verified-regions design §8.7).</summary>
+    OverKeyLimit,
 }
 
 /// <summary>

@@ -6,6 +6,10 @@ namespace GridGate.Launcher.Core.Money;
 [JsonConverter(typeof(JsonStringEnumConverter<MoneyMode>))]
 public enum MoneyMode { Off, Play, Real, Gloebit }
 
+/// <summary>Which hypergrid visitors may pay and be paid (verified-regions design §8.6); saved by name.</summary>
+[JsonConverter(typeof(JsonStringEnumConverter<VisitorMoney>))]
+public enum VisitorMoney { Off, Listed, All }
+
 /// <summary>
 /// A Region Server paired with this Grid Asset Server's money (money plan 3): the address it paired from, which is the
 /// address its regions register with, its first region port, and the SHA-256 of its key. The key itself is never kept
@@ -45,13 +49,32 @@ public sealed record MoneySettings(
     Dictionary<string, string>? ProgramKeys = null,
     List<PairedServer>? PairedServers = null,
     ServerPairing? Pairing = null,
-    GloebitSettings? Gloebit = null)
+    GloebitSettings? Gloebit = null,
+    VisitorMoney? Visitors = null,
+    List<string>? ListedGrids = null,
+    long DailySpendLimit = 10_000,
+    long DailyKeySpendLimit = 100_000,
+    long DailyKeyPayoutLimit = 20_000)
 {
     private static readonly IReadOnlyDictionary<string, string> NoKeys = new Dictionary<string, string>();
 
     /// <summary><see cref="ProgramKeys"/>, never null.</summary>
     [JsonIgnore]
     public IReadOnlyDictionary<string, string> Keys => ProgramKeys ?? NoKeys;
+
+    /// <summary>
+    /// Whose visitors may use money: <see cref="Visitors"/> when set, else what an older file's <see cref="VisitorWallets"/>
+    /// meant (on read as only listed grids, off as none).
+    /// </summary>
+    [JsonIgnore]
+    public VisitorMoney EffectiveVisitors => Visitors ?? (VisitorWallets ? VisitorMoney.Listed : VisitorMoney.Off);
+
+    /// <summary>Whether <paramref name="home"/> is one of <see cref="ListedGrids"/>, compared as the ledger compares homes.</summary>
+    public bool GridListed(string home)
+    {
+        var wanted = MoneyHomes.Normal(home);
+        return !string.IsNullOrEmpty(wanted) && (ListedGrids ?? []).Any(g => MoneyHomes.Normal(g) == wanted);
+    }
 
     /// <summary>What a new resident starts with in <paramref name="effective"/> mode; 0 unless Play or Real.</summary>
     public long StartingBalance(MoneyMode effective) => effective switch

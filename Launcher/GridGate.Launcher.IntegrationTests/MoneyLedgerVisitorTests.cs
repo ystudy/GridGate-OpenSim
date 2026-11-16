@@ -90,7 +90,7 @@ public sealed class MoneyLedgerVisitorTests(MoneyMariaDb maria) : IClassFixture<
     [Fact]
     public async Task Visitor_wallets_off_refuses_both_sides()
     {
-        var settings = new MoneySettings(Mode: MoneyMode.Play);
+        var settings = new MoneySettings(Mode: MoneyMode.Play, Visitors: VisitorMoney.All);
         var current = settings;
         var db = await maria.FreshAsync();
         await db.EnsureSchemaAsync();
@@ -102,7 +102,7 @@ public sealed class MoneyLedgerVisitorTests(MoneyMariaDb maria) : IClassFixture<
         Assert.Equal(MoneyOutcome.Ok, (await ledger.GiveAsync(visitor, 10, Staff, Ct)).Outcome);
         await ledger.BalanceAsync(AccountRef.Resident(A), Ct);
 
-        current = settings with { VisitorWallets = false };
+        current = settings with { Visitors = VisitorMoney.Off };
 
         Assert.Equal(MoneyOutcome.VisitorsOff, (await ledger.TransferAsync(Pay(visitor, AccountRef.Resident(A), 5), Ct)).Outcome);
         Assert.Equal(MoneyOutcome.VisitorsOff, (await ledger.TransferAsync(Pay(AccountRef.Resident(A), visitor, 5), Ct)).Outcome);
@@ -111,10 +111,80 @@ public sealed class MoneyLedgerVisitorTests(MoneyMariaDb maria) : IClassFixture<
         Assert.Equal(100, await db.Scalar($"SELECT balance FROM `money`.`accounts` WHERE agent_id = '{A}'"));
     }
 
+    private const string Home = "http://other.example:8002";
+
+    /// <summary>A ledger whose settings the test can swap, with A a resident and V a recorded visitor from <see cref="Home"/>.</summary>
+    private async Task<(MoneyLedger Ledger, MoneyTestDatabase Db, Action<MoneySettings> Set)> Switchable(MoneySettings first)
+    {
+        var current = first;
+        var db = await maria.FreshAsync();
+        await db.EnsureSchemaAsync();
+        await db.AddUser(A);
+        await db.AddVisitor(V, Home + "/");
+        var ledger = new MoneyLedger(db.OpenMoney, () => current, () => MoneyMode.Play, MoneyLedgerTransferTests.LocalUsers(db),
+            MoneyLedgerTransferTests.KnownVisitors(db), new FakeTimeProvider(DateTimeOffset.UtcNow));
+        return (ledger, db, s => current = s);
+    }
+
+    [Fact]
+    public async Task Visitor_from_unlisted_grid_can_neither_pay_nor_be_paid()
+    {
+        var (ledger, db, _) = await Switchable(new MoneySettings(Mode: MoneyMode.Play, Visitors: VisitorMoney.Listed, ListedGrids: ["http://another.example:8002"]));
+        var visitor = new AccountRef(V, Home);
+        await ledger.BalanceAsync(AccountRef.Resident(A), Ct);
+
+        Assert.Equal(MoneyOutcome.VisitorGridNotListed, (await ledger.TransferAsync(Pay(visitor, AccountRef.Resident(A), 5), Ct)).Outcome);
+        Assert.Equal(MoneyOutcome.VisitorGridNotListed, (await ledger.TransferAsync(Pay(AccountRef.Resident(A), visitor, 5), Ct)).Outcome);
+        Assert.Equal(0, await Accounts(db, V));
+        Assert.Equal(100, await db.Scalar($"SELECT balance FROM `money`.`accounts` WHERE agent_id = '{A}'"));
+    }
+
+    [Fact]
+    public async Task Visitor_from_listed_grid_can_pay()
+    {
+        var (ledger, db, _) = await Switchable(new MoneySettings(Mode: MoneyMode.Play, Visitors: VisitorMoney.Listed, ListedGrids: ["http://Other.Example:8002/"]));
+        var visitor = new AccountRef(V, Home);
+        Assert.Equal(MoneyOutcome.Ok, (await ledger.GiveAsync(visitor, 20, Staff, Ct)).Outcome);
+
+        var r = await ledger.TransferAsync(Pay(visitor, AccountRef.Resident(A), 5), Ct);
+
+        Assert.Equal(MoneyOutcome.Ok, r.Outcome);
+        Assert.Equal(15, await db.Scalar($"SELECT balance FROM `money`.`accounts` WHERE agent_id = '{V}'"));
+    }
+
+    [Fact]
+    public async Task All_grids_lets_any_visitor_pay()
+    {
+        var (ledger, _, _) = await Switchable(new MoneySettings(Mode: MoneyMode.Play, Visitors: VisitorMoney.All));
+        var visitor = new AccountRef(V, Home);
+        Assert.Equal(MoneyOutcome.Ok, (await ledger.GiveAsync(visitor, 20, Staff, Ct)).Outcome);
+
+        Assert.Equal(MoneyOutcome.Ok, (await ledger.TransferAsync(Pay(visitor, AccountRef.Resident(A), 5), Ct)).Outcome);
+        Assert.Equal(MoneyOutcome.Ok, (await ledger.TransferAsync(Pay(AccountRef.Resident(A), visitor, 5), Ct)).Outcome);
+    }
+
+    [Fact]
+    public async Task Grid_taken_off_the_list_keeps_the_balance()
+    {
+        var listed = new MoneySettings(Mode: MoneyMode.Play, Visitors: VisitorMoney.Listed, ListedGrids: [Home]);
+        var (ledger, db, set) = await Switchable(listed);
+        var visitor = new AccountRef(V, Home);
+        Assert.Equal(MoneyOutcome.Ok, (await ledger.GiveAsync(visitor, 20, Staff, Ct)).Outcome);
+
+        set(listed with { ListedGrids = [] });
+
+        Assert.Equal(MoneyOutcome.VisitorGridNotListed, (await ledger.TransferAsync(Pay(visitor, AccountRef.Resident(A), 5), Ct)).Outcome);
+        Assert.Equal(MoneyOutcome.VisitorGridNotListed, (await ledger.BalanceAsync(visitor, Ct)).Outcome);
+        Assert.Equal(20, await db.Scalar($"SELECT balance FROM `money`.`accounts` WHERE agent_id = '{V}'"));
+        var found = await ((IMoneyBooks)ledger).FindBalanceAsync(visitor, Ct);
+        Assert.Equal(MoneyOutcome.Ok, found.Outcome);
+        Assert.Equal(20, found.FromBalance);
+    }
+
     [Fact]
     public async Task Visitor_wallets_off_still_lets_staff_take_back()
     {
-        var current = new MoneySettings(Mode: MoneyMode.Play);
+        var current = new MoneySettings(Mode: MoneyMode.Play, Visitors: VisitorMoney.All);
         var db = await maria.FreshAsync();
         await db.EnsureSchemaAsync();
         await db.AddVisitor(V, "http://other.example:8002/");
@@ -122,7 +192,7 @@ public sealed class MoneyLedgerVisitorTests(MoneyMariaDb maria) : IClassFixture<
             MoneyLedgerTransferTests.KnownVisitors(db), new FakeTimeProvider(DateTimeOffset.UtcNow));
         var visitor = new AccountRef(V, "http://other.example:8002");
         await ledger.GiveAsync(visitor, 10, Staff, Ct);
-        current = current with { VisitorWallets = false };
+        current = current with { Visitors = VisitorMoney.Off };
 
         Assert.Equal(MoneyOutcome.Ok, (await ledger.TakeAsync(visitor, 10, Staff, Ct)).Outcome);
         Assert.Equal(0, await db.Scalar($"SELECT balance FROM `money`.`accounts` WHERE agent_id = '{V}'"));
@@ -131,7 +201,7 @@ public sealed class MoneyLedgerVisitorTests(MoneyMariaDb maria) : IClassFixture<
     [Fact]
     public async Task Visitor_wallets_off_makes_no_new_wallet_even_for_staff()
     {
-        var (ledger, db, _) = await MoneyLedgerTransferTests.Setup(maria, new MoneySettings(Mode: MoneyMode.Play, VisitorWallets: false));
+        var (ledger, db, _) = await MoneyLedgerTransferTests.Setup(maria, new MoneySettings(Mode: MoneyMode.Play, Visitors: VisitorMoney.Off));
 
         Assert.Equal(MoneyOutcome.NoWallet, (await ledger.GiveAsync(new AccountRef(V, "http://other.example:8002"), 5, Staff, Ct)).Outcome);
         Assert.Equal(0, await Accounts(db, V));
@@ -208,7 +278,7 @@ public sealed class MoneyLedgerVisitorTests(MoneyMariaDb maria) : IClassFixture<
     {
         var db = await maria.FreshAsync();
         await db.EnsureSchemaAsync();
-        var s = new MoneySettings(Mode: MoneyMode.Play);
+        var s = new MoneySettings(Mode: MoneyMode.Play, Visitors: VisitorMoney.All);
         var closed = db.Settings with { MariaDbPort = MoneyMariaDb.FreePort() };
         var robustDown = new PresenceCheck(ct => Core.Database.GridDb.OpenRobustAsync(closed, 2, ct));
         var ledger = new MoneyLedger(db.OpenMoney, () => s, () => MoneyMode.Play, MoneyLedgerTransferTests.LocalUsers(db),

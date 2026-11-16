@@ -56,6 +56,13 @@ public static class MoneyPageRules
                 return $"The {name} must be 0 to the largest payment ({m.MaxPayment.ToString("N0", CultureInfo.InvariantCulture)}).";
         if (m.DailyPayoutLimit is < 0 or > MaxDailyPayoutLimit)
             return $"The daily payout limit must be 0 to {MaxDailyPayoutLimit.ToString("N0", CultureInfo.InvariantCulture)}.";
+        foreach (var (name, value) in new[]
+                 {
+                     ("daily spending limit", m.DailySpendLimit), ("daily region spending limit", m.DailyKeySpendLimit),
+                     ("daily region payout limit", m.DailyKeyPayoutLimit),
+                 })
+            if (value < 0)
+                return $"The {name} can't be negative.";
         return null;
     }
 
@@ -88,6 +95,7 @@ public static class MoneyPageRules
         MoneyOutcome.BadAmount => "That amount or reason isn't allowed.",
         MoneyOutcome.NoWallet => "That person has no wallet here.",
         MoneyOutcome.VisitorsOff => "Visitor wallets are off.",
+        MoneyOutcome.VisitorGridNotListed => "That visitor's grid isn't on your list.",
         MoneyOutcome.DuplicateReference => "That entry was already refunded.",
         _ => "That couldn't be done (" + Code(o) + ").",
     };

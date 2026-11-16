@@ -101,6 +101,105 @@ public sealed class MoneySettingsTests : IDisposable
         Assert.Equal("k", back.Money.Keys["a"]);
     }
 
+    private MoneySettings LoadMoney(string moneyJson)
+    {
+        var path = Path.Combine(_dir, "settings.json");
+        File.WriteAllText(path, $$"""
+            {
+              "schemaVersion": 7,
+              "db": { "rootPassword": "r", "robustPassword": "b", "opensimPassword": "o" },
+              "console": { "user": "u", "password": "p" },
+              "machineId": "m",
+              "money": {{moneyJson}}
+            }
+            """);
+        return new SettingsStore(path).LoadOrCreate().Money;
+    }
+
+    [Fact]
+    public void Old_settings_with_VisitorWallets_true_read_as_Listed()
+    {
+        var m = LoadMoney("""{ "mode": "Play", "visitorWallets": true }""");
+
+        Assert.Null(m.Visitors);
+        Assert.Equal(VisitorMoney.Listed, m.EffectiveVisitors);
+    }
+
+    [Fact]
+    public void Old_settings_with_VisitorWallets_false_read_as_Off()
+    {
+        var m = LoadMoney("""{ "mode": "Play", "visitorWallets": false }""");
+
+        Assert.Equal(VisitorMoney.Off, m.EffectiveVisitors);
+    }
+
+    [Fact]
+    public void Visitors_is_saved_by_name_and_wins_over_VisitorWallets()
+    {
+        var path = Path.Combine(_dir, "settings.json");
+        var store = new SettingsStore(path);
+        store.Save(store.LoadOrCreate() with
+        {
+            Money = new MoneySettings(VisitorWallets: false, Visitors: VisitorMoney.All, ListedGrids: ["http://a.example:8002"]),
+        });
+
+        Assert.Contains("\"All\"", File.ReadAllText(path));
+        var back = new SettingsStore(path).LoadOrCreate().Money;
+        Assert.Equal(VisitorMoney.All, back.EffectiveVisitors);
+        Assert.Equal(["http://a.example:8002"], back.ListedGrids);
+    }
+
+    [Fact]
+    public void New_settings_have_the_limit_defaults()
+    {
+        var m = new MoneySettings();
+
+        Assert.Equal(10_000, m.DailySpendLimit);
+        Assert.Equal(100_000, m.DailyKeySpendLimit);
+        Assert.Equal(20_000, m.DailyKeyPayoutLimit);
+        Assert.Equal(VisitorMoney.Listed, m.EffectiveVisitors);
+        Assert.False(m.GridListed("http://any.example:8002"));
+    }
+
+    [Fact]
+    public void Old_settings_read_with_the_limit_defaults()
+    {
+        var m = LoadMoney("""{ "mode": "Play" }""");
+
+        Assert.Equal(10_000, m.DailySpendLimit);
+        Assert.Equal(100_000, m.DailyKeySpendLimit);
+        Assert.Equal(20_000, m.DailyKeyPayoutLimit);
+    }
+
+    [Fact]
+    public void GridListed_matches_exactly_after_normalising()
+    {
+        var m = new MoneySettings(ListedGrids: ["http://Other.Example:8002/", "http://third.example"]);
+
+        Assert.True(m.GridListed("http://other.example:8002"));
+        Assert.True(m.GridListed("HTTP://OTHER.EXAMPLE:8002//"));
+        Assert.True(m.GridListed("http://third.example/"));
+        Assert.False(m.GridListed("http://other.example:8003"));
+        Assert.False(m.GridListed("http://other.example"));
+        Assert.False(m.GridListed(""));
+        // MoneyHomes.Normal turns an accented domain into punycode, so a look-alike is a different grid.
+        Assert.False(m.GridListed("http://othér.example:8002"));
+        Assert.False(new MoneySettings(ListedGrids: ["http://othér.example:8002"]).GridListed("http://other.example:8002"));
+        Assert.True(new MoneySettings(ListedGrids: ["http://othér.example:8002"]).GridListed("http://OTHÉR.example:8002/"));
+    }
+
+    [Fact]
+    public void Negative_limits_cant_be_saved()
+    {
+        var offered = new[] { MoneyMode.Off, MoneyMode.Play };
+
+        Assert.Null(GridGate.Launcher.Money.MoneyPageRules.Problem(new MoneySettings(), offered));
+        Assert.Contains("daily spending limit", GridGate.Launcher.Money.MoneyPageRules.Problem(new MoneySettings(DailySpendLimit: -1), offered));
+        Assert.Contains("region spending limit", GridGate.Launcher.Money.MoneyPageRules.Problem(new MoneySettings(DailyKeySpendLimit: -1), offered));
+        Assert.Contains("region payout limit", GridGate.Launcher.Money.MoneyPageRules.Problem(new MoneySettings(DailyKeyPayoutLimit: -1), offered));
+        Assert.Null(GridGate.Launcher.Money.MoneyPageRules.Problem(new MoneySettings(DailySpendLimit: 0), offered));
+    }
+
     [Fact]
     public void Money_port_is_taken() => Assert.Contains(8000, PortAllocator.Taken(TestSettings.Create()));
 }

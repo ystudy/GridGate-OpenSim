@@ -60,7 +60,7 @@ internal static class MoneyApi
         Post(app, "/money/v1/economy", c, (_, _, _) =>
         {
             var m = c.Settings().Money;
-            return Task.FromResult<object>(new EconomyAnswer("ok", m.CurrencySymbol, m.UploadFee, m.ClassifiedFee, m.VisitorWallets, m.ScriptPayouts, m.MaxPayment));
+            return Task.FromResult<object>(new EconomyAnswer("ok", m.CurrencySymbol, m.UploadFee, m.ClassifiedFee, m.EffectiveVisitors != VisitorMoney.Off, m.ScriptPayouts, m.MaxPayment));
         });
         Post(app, "/money/v1/balance", c, async (http, grant, ct) =>
         {
