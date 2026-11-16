@@ -25,7 +25,6 @@ public sealed record CoinsLine(DateTimeOffset At, string What, string Who, long 
 public sealed class CoinsModel(IMoneyBooks books, Func<LauncherSettings> settings, IRobustClient robust, AuditLog audit,
     IStringLocalizer<ResidentText> t, IMoneyRegions regions) : PageModel
 {
-    /// <summary>Money is paused for them: where they are now isn't verified. On another grid they have no location here.</summary>
     /// <summary>The text key of the line saying money is paused for them, and why; null when it isn't.</summary>
     public string? Paused { get; private set; }
 
