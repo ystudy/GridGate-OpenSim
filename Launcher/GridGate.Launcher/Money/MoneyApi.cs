@@ -101,7 +101,9 @@ internal static class MoneyApi
             return await WithViewer(c, w, grant, ct) is { } refusal ? Code(refusal) : Of(await c.Ledger.BalanceAsync(Account(w), ct));
         });
         // Every payment checks its payer. Receivers get no location check: they lose nothing by it and are
-        // often offline; the ledger's visitor rule still applies to them.
+        // often offline; the ledger's visitor rule still applies to them. A repeat of a payment that went through (the same
+        // key, transaction id and values: a module retrying a lost answer) gets its first answer before any check: the payer
+        // may have moved on, or the region lost its verification, in between.
         Post(app, "/money/v1/transfer", c, async (http, grant, ct) =>
         {
             var b = await Read<TransferBody>(http, ct);
@@ -109,6 +111,7 @@ internal static class MoneyApi
             if (!PaymentTypes.Contains(type)) throw new BadRequest();
             var (from, region) = (Need(b.From), Need(b.RegionId));
             var request = new TransferRequest(Scoped(grant, b.TxnId), type, Account(from), Account(Need(b.To)), Need(b.Amount), region, b.ObjectId, b.ObjectName, grant.KeyId);
+            if (await c.Ledger.EarlierAsync(request, ct) is { } earlier) return Of(earlier);
             return await WithPayer(c, from, grant, region, ct) is { } refusal ? Code(refusal) : Of(await Watched(c, grant, request.From.AgentId, await c.Ledger.TransferAsync(request, ct)));
         });
         // A script payout has no payer in the region (the object's owner is usually offline): it needs a verified region.
@@ -117,6 +120,7 @@ internal static class MoneyApi
             var b = await Read<PayoutBody>(http, ct);
             var region = Need(b.RegionId);
             var request = new PayoutRequest(Scoped(grant, b.TxnId), Need(b.OwnerId), Account(Need(b.To)), Need(b.Amount), region, Need(b.ObjectId), Need(b.ObjectName), grant.KeyId);
+            if (await c.Ledger.EarlierAsync(request, ct) is { } earlier) return Of(earlier);
             if (!grant.Regions.Contains(region)) return Code("wrong_region");
             if (!await Verification(c).IsVerifiedAsync(grant, region, ct)) return Code("unverified_region");
             // The owner's payout limit isn't their spending limit: only the key's limit raises an alert here.
@@ -127,6 +131,7 @@ internal static class MoneyApi
             var b = await Read<ChargeBody>(http, ct);
             var (payer, region) = (Need(b.Payer), Need(b.RegionId));
             var request = new ChargeRequest(Scoped(grant, b.TxnId), Need(b.Type), Account(payer), Need(b.Amount), b.PayTo, grant.KeyId);
+            if (await c.Ledger.EarlierAsync(request, ct) is { } earlier) return Of(earlier);
             return await WithPayer(c, payer, grant, region, ct) is { } refusal ? Code(refusal) : Of(await Watched(c, grant, request.Payer.AgentId, await c.Ledger.ChargeAsync(request, ct)));
         });
         Post(app, "/money/v1/hold", c, async (http, grant, ct) =>
