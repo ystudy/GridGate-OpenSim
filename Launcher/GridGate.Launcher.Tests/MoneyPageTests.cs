@@ -1461,6 +1461,14 @@ public sealed class MoneyPageTests
         Assert.Contains("Not heard from", Here(stale));
         Assert.DoesNotContain("On.", Here(stale));
 
+        // Handed on to a region that hasn't reported them (it can't verify anyone): paused, like unverified.
+        f.MoneyRegions.Where[Ann] = new SessionLocation(Guid.NewGuid(), Ann, OldDocks, "p1", LocationState.Handed, DateTime.UtcNow);
+        var handed = await PageAsync(c, page);
+        Assert.Contains("Off.", Here(handed));
+        Assert.Contains("Moved to Old Docks", Here(handed));
+        Assert.Contains("can't verify", Here(handed));
+        Assert.NotNull(handed.QuerySelector("#person-money-here a[href*='money-verification.md#']"));
+
         f.MoneyRegions.Where.Remove(Ann);
         Assert.Contains("Not in the world", Here(await PageAsync(c, page)));
         Assert.Contains($"where {Ann}", f.MoneyRegions.Calls);
@@ -1475,6 +1483,10 @@ public sealed class MoneyPageTests
 
         f.MoneyRegions.Where[TestAuth.GuestId] = new SessionLocation(Guid.NewGuid(), TestAuth.GuestId, OldDocks, "p1", LocationState.Unverified, DateTime.UtcNow);
         Assert.Equal("Money is paused for you until you next log in, because you came from a region that can't check where you are.",
+            (await PageAsync(c, "/guest/coins")).QuerySelector("#coins-paused")?.TextContent.Trim());
+
+        f.MoneyRegions.Where[TestAuth.GuestId] = new SessionLocation(Guid.NewGuid(), TestAuth.GuestId, OldDocks, "p1", LocationState.Handed, DateTime.UtcNow);
+        Assert.Equal("Money is paused for you until you next log in, because you moved to a region that can't check where you are.",
             (await PageAsync(c, "/guest/coins")).QuerySelector("#coins-paused")?.TextContent.Trim());
 
         f.MoneyRegions.Where[TestAuth.GuestId] = new SessionLocation(Guid.NewGuid(), TestAuth.GuestId, Welcome, "p1", LocationState.Verified, DateTime.UtcNow);

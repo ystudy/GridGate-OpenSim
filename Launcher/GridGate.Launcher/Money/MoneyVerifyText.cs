@@ -112,6 +112,7 @@ public static class MoneyVerifyText
             LocationState.Verified when region is { } r =>
                 ($"Off. They're in {place}, where money is off now: {Words(r.Status)}. On again when that region is verified.", Anchor(r.Status)),
             LocationState.Verified => ($"Off. They're in {place}, which isn't registered with the grid right now.", NotHeardAnchor),
+            LocationState.Handed => ($"Off. Moved to {place}, a region that can't verify where they are. On again at their next login.", PausedAnchor),
             _ => ($"Off. They're in {place}, but they came from a region that can't verify where they are (or two servers disagreed about it). On again at their next login.",
                 PausedAnchor),
         };

@@ -178,4 +178,54 @@ public sealed class MoneyVerificationStoryTests(MoneyMariaDb maria) : IClassFixt
         Assert.Equal(30, await rig.Db.Scalar($"SELECT balance FROM `money`.`accounts` WHERE agent_id = '{V}' AND home <> ''"));
         await rig.AssertBooksSoundAsync();
     }
+
+    [Fact]
+    public async Task Through_a_stock_region_and_back()
+    {
+        // A teleports from Here to Harbour, a region running stock OpenSim that never reports anyone. Here handed A on, so
+        // its program can't charge A any more. A then teleports on to There (stock OpenSim hands nobody off): nobody
+        // vouches for where A came from, so money stays paused, and nobody is blamed for it.
+        var rig = await StartAsync();
+        var harbour = Guid.Parse("f4000000-0000-0000-0000-00000000000f");
+        var moved = await Moved(rig);
+
+        Assert.Equal("ok", await rig.Handoff(Key, SessionA, Here, harbour));
+        Assert.Equal("unverified_avatar", CodeOf(await rig.Post("transfer", Pay(WhoA(), Resident(B), 10, Here))));
+
+        Assert.Equal("unverified_avatar", CodeOf(await rig.Arrived(Key2, SessionA, A, There)));
+        Assert.Equal("unverified_avatar", CodeOf(await rig.Post("transfer", Pay(WhoA(), Resident(B), 10, There), Key2)));
+        Assert.Equal(moved, await Moved(rig));
+        Assert.Empty(await rig.Alerts.OpenAsync(Ct));
+        await rig.AssertBooksSoundAsync();
+    }
+
+    [Fact]
+    public async Task A_move_that_fails_leaves_the_destination_nothing_to_charge()
+    {
+        // A tries to cross, then to teleport, from Here to There, and both fail: Here's program sends no handoff. There
+        // reports the arrival anyway, as a region the viewer touched might. It never becomes A's verified place.
+        var rig = await StartAsync();
+        var moved = await Moved(rig);
+
+        Assert.Equal("unverified_avatar", CodeOf(await rig.Arrived(Key2, SessionA, A, There)));
+
+        Assert.Equal("unverified_avatar", CodeOf(await rig.Post("transfer", Pay(WhoA(), Resident(B), 10, There), Key2)));
+        Assert.Equal(moved, await Moved(rig));
+        await rig.AssertBooksSoundAsync();
+    }
+
+    [Fact]
+    public async Task A_teleport_to_another_grid_that_fails_keeps_money_on()
+    {
+        // A starts a teleport to another grid from Here, which hands A off as leaving the grid, and the teleport fails: A
+        // is still at Here and can still pay there.
+        var rig = await StartAsync();
+
+        Assert.Equal("ok", await rig.Handoff(Key, SessionA, Here, There, "other_grid"));
+        Assert.Equal("unverified_avatar", CodeOf(await rig.Post("transfer", Pay(WhoA(), Resident(B), 10, Here))));
+        Assert.Equal("ok", CodeOf(await rig.Post("handoff/cancel", new { sessionId = SessionA, fromRegion = Here })));
+
+        Assert.Equal("ok", CodeOf(await rig.Post("transfer", Pay(WhoA(), Resident(B), 10, Here))));
+        await rig.AssertBooksSoundAsync();
+    }
 }

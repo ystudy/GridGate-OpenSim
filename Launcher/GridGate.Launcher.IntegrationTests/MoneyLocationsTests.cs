@@ -283,38 +283,186 @@ public sealed class MoneyLocationsTests(MoneyMariaDb maria) : IClassFixture<Mone
 
         _clock.Advance(MoneyLocations.HandoffLife + TimeSpan.FromSeconds(1));
 
-        Assert.Equal(PlaceOutcome.Refused, (await Arrive(P1, R5)).Outcome);
-        AssertAt(await Where(), R1, "p1", LocationState.Verified);
+        Assert.Equal(PlaceOutcome.PlacedUnverified, (await Arrive(P1, R5)).Outcome);
+        AssertAt(await Where(), R5, "p1", LocationState.Unverified);
     }
 
     [Fact]
-    public async Task New_handoff_replaces_an_open_one()
+    public async Task A_handoff_moves_the_session_and_it_is_not_payable_until_the_arrival()
     {
         await StartAsync();
         await LoggedInAtR1();
-        // A teleport to R5 that was cancelled without an event, then one to R2.
-        Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, R5));
+
         Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, R2));
 
-        Assert.Equal(1, await OpenHandoffs());
-        Assert.Equal(PlaceOutcome.Refused, (await Arrive(P1, R5)).Outcome);
+        // Handed on: no longer at R1, and not verified anywhere until R2 reports the arrival.
+        var handed = await Where();
+        AssertAt(handed, R2, "p1", LocationState.Handed);
+        Assert.Equal(_clock.GetUtcNow().UtcDateTime, handed!.Updated, TimeSpan.FromSeconds(1));
+        Assert.Equal(0, await VerifiedRows());
+        // The region left can't hand them on again.
+        Assert.Equal(PlaceOutcome.NotHeld, await Handoff(P1, R1, R5));
+
         Assert.Equal(PlaceOutcome.Ok, (await Arrive(P2, R2)).Outcome);
         AssertAt(await Where(), R2, "p2", LocationState.Verified);
     }
 
     [Fact]
-    public async Task Cancelled_handoff_does_not_count()
+    public async Task Handed_to_a_region_that_never_reports_stays_not_payable()
     {
         await StartAsync();
         await LoggedInAtR1();
-        Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, R5));
+
+        Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, R4)); // R4 runs stock OpenSim: no arrival will come
+        _clock.Advance(TimeSpan.FromHours(1));
+
+        AssertAt(await Where(), R4, "p1", LocationState.Handed);
+        Assert.Equal(0, await VerifiedRows());
+    }
+
+    [Fact]
+    public async Task Coming_back_from_a_region_that_never_reports_is_not_a_conflict()
+    {
+        await StartAsync();
+        await LoggedInAtR1();
+        Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, R4));
+
+        // From R4 (no handoff: stock OpenSim) on to R2, another key's verified region. Nobody else has them verified, so
+        // the arrival is answered at once, unverified, and nobody is blamed.
+        var result = await _locations.ArrivedAsync(P2, SessionU, U, R2, Ct).WaitAsync(TimeSpan.FromSeconds(5), Ct);
+
+        Assert.Equal(PlaceOutcome.PlacedUnverified, result.Outcome);
+        Assert.Null(result.VerifiedElsewhere);
+        AssertAt(await Where(), R2, "p2", LocationState.Unverified);
+    }
+
+    [Fact]
+    public async Task Only_a_verified_session_holds_an_unmatched_arrival()
+    {
+        await StartAsync();
+        await _db.AddSessionStart(SessionU, U, R4, "login");
+        Assert.Equal(PlaceOutcome.PlacedUnverified, (await Arrive(P4, R4)).Outcome);
+
+        // No handoff can be on its way for an unverified session, nor for one never placed: both are answered at once, with
+        // the clock standing still.
+        var unverified = await _locations.ArrivedAsync(P2, SessionU, U, R2, Ct).WaitAsync(TimeSpan.FromSeconds(5), Ct);
+        var unplaced = await _locations.ArrivedAsync(P2, SessionV, V, R2, Ct).WaitAsync(TimeSpan.FromSeconds(5), Ct);
+
+        Assert.Equal(PlaceOutcome.PlacedUnverified, unverified.Outcome);
+        Assert.Equal(PlaceOutcome.PlacedUnverified, unplaced.Outcome);
+    }
+
+    [Fact]
+    public async Task An_arrival_elsewhere_while_handed_is_unverified()
+    {
+        await StartAsync();
+        await LoggedInAtR1();
+        Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, R2));
+
+        var result = await _locations.ArrivedAsync(Paired, SessionU, U, R3, Ct).WaitAsync(TimeSpan.FromSeconds(5), Ct);
+
+        Assert.Equal(PlaceOutcome.PlacedUnverified, result.Outcome);
+        AssertAt(await Where(), R3, Paired.KeyId, LocationState.Unverified);
+        // The handoff to R2 can't verify them any more: they are no longer handed there.
+        Assert.Equal(PlaceOutcome.PlacedUnverified, (await Arrive(P2, R2)).Outcome);
+        Assert.Equal(0, await VerifiedRows());
+    }
+
+    [Fact]
+    public async Task A_destination_claim_without_a_handoff_cannot_verify()
+    {
+        await StartAsync();
+        await LoggedInAtR1();
+
+        // A teleport or crossing to R2 that failed sends no handoff; R2 claiming the arrival anyway can't verify U.
+        var result = await Arrive(P2, R2);
+
+        Assert.Equal(PlaceOutcome.Conflict, result.Outcome);
+        Assert.Equal(0, await VerifiedRows());
+    }
+
+    [Fact]
+    public async Task Cancel_restores_a_session_that_did_not_leave_the_grid()
+    {
+        await StartAsync();
+        await LoggedInAtR1();
+        Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, Elsewhere, HandoffKind.OtherGrid));
+        Assert.Equal(LocationState.LeftGrid, (await Where())!.State);
 
         await _locations.CancelHandoffAsync(P2, SessionU, R1, Ct); // not p2's region: ignored
-        Assert.Equal(1, await OpenHandoffs());
+        Assert.Equal(LocationState.LeftGrid, (await Where())!.State);
+        await _locations.CancelHandoffAsync(P1, SessionU, R5, Ct); // not where it was handed from: ignored
+        Assert.Equal(LocationState.LeftGrid, (await Where())!.State);
+
         await _locations.CancelHandoffAsync(P1, SessionU, R1, Ct);
 
-        Assert.Equal(0, await OpenHandoffs());
-        Assert.Equal(PlaceOutcome.Refused, (await Arrive(P1, R5)).Outcome);
+        AssertAt(await Where(), R1, "p1", LocationState.Verified);
+    }
+
+    [Fact]
+    public async Task Cancel_changes_nothing_once_the_session_moved_on()
+    {
+        await StartAsync();
+        await LoggedInAtR1();
+        Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, Elsewhere, HandoffKind.OtherGrid));
+        await _db.AddSessionStart(SessionU, U, R2, "gatekeeper");
+        Assert.Equal(PlaceOutcome.Ok, (await Arrive(P2, R2)).Outcome); // back home through the Gatekeeper
+
+        await _locations.CancelHandoffAsync(P1, SessionU, R1, Ct);
+
+        AssertAt(await Where(), R2, "p2", LocationState.Verified);
+    }
+
+    [Fact]
+    public async Task Cancel_leaves_a_teleport_handoff_alone()
+    {
+        await StartAsync();
+        await LoggedInAtR1();
+        Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, R2));
+
+        await _locations.CancelHandoffAsync(P1, SessionU, R1, Ct);
+
+        Assert.Equal(1, await OpenHandoffs());
+        Assert.Equal(PlaceOutcome.Ok, (await Arrive(P2, R2)).Outcome);
+        AssertAt(await Where(), R2, "p2", LocationState.Verified);
+    }
+
+    [Fact]
+    public async Task Cancel_after_the_handoff_life_changes_nothing()
+    {
+        await StartAsync();
+        await LoggedInAtR1();
+        Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, Elsewhere, HandoffKind.OtherGrid));
+        _clock.Advance(MoneyLocations.HandoffLife + TimeSpan.FromSeconds(1));
+
+        await _locations.CancelHandoffAsync(P1, SessionU, R1, Ct);
+
+        Assert.Equal(LocationState.LeftGrid, (await Where())!.State);
+    }
+
+    [Fact]
+    public async Task Gatekeeper_start_replaces_a_handed_place()
+    {
+        await StartAsync();
+        await LoggedInAtR1();
+        Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, R4)); // into stock OpenSim, then on to another grid and back
+
+        await _db.AddSessionStart(SessionU, U, R2, "gatekeeper");
+
+        Assert.Equal(PlaceOutcome.Ok, (await Arrive(P2, R2)).Outcome);
+        AssertAt(await Where(), R2, "p2", LocationState.Verified);
+    }
+
+    [Fact]
+    public async Task Handoff_only_from_the_key_that_placed_the_session()
+    {
+        await StartAsync();
+        await LoggedInAtR1();
+        // R1 is now p2's too (say the owner moved it to another program), but U was placed there under p1.
+        var p2WithR1 = new RegionKeyGrant("p2", new HashSet<Guid> { R1, R2 });
+
+        Assert.Equal(PlaceOutcome.NotHeld, await Handoff(p2WithR1, R1, R5));
+        AssertAt(await Where(), R1, "p1", LocationState.Verified);
     }
 
     [Fact]
@@ -506,14 +654,14 @@ public sealed class MoneyLocationsTests(MoneyMariaDb maria) : IClassFixture<Mone
         await LoggedInAtR1();
         Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, R2));
 
+        // The root event reported twice at once: one uses the handoff, the other finds the session already there.
         var results = await Settle(Task.WhenAll(
             _locations.ArrivedAsync(P2, SessionU, U, R2, Ct),
-            _locations.ArrivedAsync(P4, SessionU, U, R4, Ct))); // unverified: refused, not paused (Ruling 12)
+            _locations.ArrivedAsync(P2, SessionU, U, R2, Ct)));
 
-        Assert.Equal(PlaceOutcome.Ok, results[0].Outcome);
-        Assert.Equal(PlaceOutcome.Refused, results[1].Outcome);
-        AssertAt(results[1].VerifiedElsewhere, R2, "p2", LocationState.Verified);
+        Assert.All(results, r => Assert.Equal(PlaceOutcome.Ok, r.Outcome));
         AssertAt(await Where(), R2, "p2", LocationState.Verified);
+        Assert.Equal(1, await _db.Scalar($"SELECT COUNT(*) FROM `money`.`handoffs` WHERE session_id = '{SessionU}' AND kind = 'Used'"));
     }
 
     [Fact]
@@ -557,13 +705,12 @@ public sealed class MoneyLocationsTests(MoneyMariaDb maria) : IClassFixture<Mone
         await StartAsync();
         await LoggedInAtR1();
         var id = Guid.NewGuid();
-        Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, R5, id: id));
-        await _locations.CancelHandoffAsync(P1, SessionU, R1, Ct); // the teleport failed
+        Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, Elsewhere, HandoffKind.OtherGrid, id: id));
+        await _locations.CancelHandoffAsync(P1, SessionU, R1, Ct); // the teleport to the other grid failed
 
-        Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, R5, id: id)); // the module's late retry of the same send
+        // The module's late retry of the same send.
+        Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, Elsewhere, HandoffKind.OtherGrid, id: id));
 
-        Assert.Equal(0, await OpenHandoffs());
-        Assert.Equal(PlaceOutcome.Refused, (await Arrive(P1, R5)).Outcome);
         AssertAt(await Where(), R1, "p1", LocationState.Verified);
     }
 
@@ -611,7 +758,7 @@ public sealed class MoneyLocationsTests(MoneyMariaDb maria) : IClassFixture<Mone
         await _locations.CleanupAsync(Ct);
 
         Assert.Null(await Where());
-        AssertAt(await Where(SessionV), R1, "p1", LocationState.Verified); // still logged in, however old its row
+        AssertAt(await Where(SessionV), R2, "p1", LocationState.Handed); // still logged in, however old its row
         Assert.Equal(0, await _db.Scalar($"SELECT COUNT(*) FROM `money`.`handoffs` WHERE session_id = '{SessionU}'"));
         Assert.Equal(1, await _db.Scalar($"SELECT COUNT(*) FROM `money`.`handoffs` WHERE session_id = '{SessionV}'"));
     }
@@ -678,25 +825,5 @@ public sealed class MoneyLocationsTests(MoneyMariaDb maria) : IClassFixture<Mone
 
         Assert.Equal(PlaceOutcome.PlacedUnverified, (await Arrive(P1, R1)).Outcome);
         Assert.Equal(PlaceOutcome.PlacedUnverified, (await Arrive(P1, R1, SessionV, V)).Outcome);
-    }
-
-    [Fact]
-    public async Task Late_retry_of_a_replaced_handoff_changes_nothing()
-    {
-        await StartAsync();
-        await LoggedInAtR1();
-        var first = Guid.NewGuid();
-        Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, R5, id: first));
-        Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, R2)); // replaces the first
-
-        Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, R5, id: first)); // the module's late retry of the first
-
-        Assert.Equal(1, await OpenHandoffs());
-        Assert.Equal(R2.ToString(), await _db.Text($"SELECT to_region FROM `money`.`handoffs` WHERE session_id = '{SessionU}' AND kind IN ('Teleport', 'Crossing')"));
-        // The teleport to R2 fails too; a retry of the first still can't reopen R5.
-        await _locations.CancelHandoffAsync(P1, SessionU, R1, Ct);
-        Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, R5, id: first));
-        Assert.Equal(0, await OpenHandoffs());
-        Assert.Equal(PlaceOutcome.Refused, (await Arrive(P1, R5)).Outcome);
     }
 }

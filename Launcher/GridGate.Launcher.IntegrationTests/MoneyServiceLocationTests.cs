@@ -208,8 +208,9 @@ public sealed class MoneyServiceLocationTests(MoneyMariaDb maria) : IClassFixtur
         rig.Mode = MoneyMode.Off;
 
         Assert.Equal("unavailable", CodeOf(await rig.Post("transfer", Body("transfer", WhoA(), Here))));
-        // A teleport that fails, then one that works: where A is still follows them while coins are off.
-        Assert.Equal("ok", await rig.Handoff(Key, SessionA, Here, There));
+        // A teleport to another grid that fails, then a teleport that works: where A is still follows them while coins are
+        // off.
+        Assert.Equal("ok", await rig.Handoff(Key, SessionA, Here, There, "other_grid"));
         Assert.Equal("ok", CodeOf(await rig.Post("handoff/cancel", new { sessionId = SessionA, fromRegion = Here })));
         await rig.MoveToThere(SessionA);
 
