@@ -75,7 +75,7 @@ public sealed class MoneyNotices(MoneyGate gate, IMoneyBooks books, MoneyStatus 
         {
             AlertKind.UnhandedArrival when a.OtherKeyId is { } other =>
                 $"{level}: {KeyName(a.KeyId, s)} and {KeyName(other, s)} disagree about where {person ?? "someone"} is. Open Money to check it.",
-            // A warning can come from the key's count across its regions, or from one claim against another key's place, so
+            // A plain claim is a warning by the key's count of claims across its regions (a disagreement has its own row), so
             // this row's own count would understate it.
             AlertKind.UnhandedArrival when a.Level == AlertLevel.Warning =>
                 $"{level}: {KeyName(a.KeyId, s)} claimed avatars arrived in {RegionName(a.RegionId, s)} that it wasn't handed. Open Money to check it.",

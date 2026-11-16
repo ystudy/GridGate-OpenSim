@@ -130,7 +130,7 @@ public static class MoneyVerifyText
         {
             AlertKind.UnhandedArrival when otherKey is not null =>
                 $"{key} and {otherKey} disagree about where {person ?? "someone"} is: {region} says they arrived there, but {otherKey} had them. Either may be wrong. {when}",
-            // A warning can come from the key's count across its regions, or from one claim against another key's place, so
+            // A plain claim is a warning by the key's count of claims across its regions (a disagreement has its own row), so
             // this row's own count would understate it.
             AlertKind.UnhandedArrival when a.Level == AlertLevel.Warning =>
                 $"{region}, on {key}, claimed people arrived that it wasn't handed. {when}",
