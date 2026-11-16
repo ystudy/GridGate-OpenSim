@@ -200,6 +200,24 @@ public sealed class LslMoneyTests
         await NothingPaid(r, Payee);
     }
 
+    /// <summary>money review 2026-11-15, R-10: llTransferLindenDollars refuses group-owned objects, and says why.</summary>
+    [Fact]
+    public async Task llTransferLindenDollars_refuses_group_owned_objects()
+    {
+        var r = Setup();
+        r.Part.GroupID = Group;
+        r.Part.OwnerID = Group;
+        Grant(r, Group);
+
+        r.Api.llTransferLindenDollars(Payee.ToString(), 5);
+
+        var result = await TransactionResult(r);
+        Assert.Equal(0, ((LSL_Types.LSLInteger)result.Params[1]).value);
+        Assert.Equal("GROUP_OWNED", result.Params[2].ToString());
+        r.Part.OwnerID = Owner;
+        await NothingPaid(r, Payee);
+    }
+
     // --- auto_grant_all_perms never grants PERMISSION_DEBIT. --------------------------------------------------------
 
     [Theory]

@@ -1,6 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <!-- Tests for GridGate's region money module (money plan 2): its rules and actions, against a fake money service. -->
+  <!--
+    Tests for GridGate's region money module (money plan 2): its rules and actions, against a fake money service, and the
+    module itself on a test region built with OpenSim's own test helpers (tests/OpenSim.Tests.Common).
+  -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <IsPackable>false</IsPackable>
@@ -19,6 +22,12 @@
     <ProjectReference Include="../../addon-modules/GridGateMoney/GridGateMoney.csproj">
       <Private>True</Private>
     </ProjectReference>
+    <ProjectReference Include="../OpenSim.Tests.Common/OpenSim.Tests.Common.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- An avatar in the test region loads OpenSim's default animations. -->
+    <None Include="$(GgRoot)bin/data/avataranimations.xml" Link="data/avataranimations.xml" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>
@@ -33,6 +42,9 @@
     </Reference>
     <Reference Include="Nini">
       <HintPath>$(GgRoot)bin/Nini.dll</HintPath>
+    </Reference>
+    <Reference Include="OpenMetaverse.StructuredData">
+      <HintPath>$(GgRoot)bin/OpenMetaverse.StructuredData.dll</HintPath>
     </Reference>
   </ItemGroup>
 

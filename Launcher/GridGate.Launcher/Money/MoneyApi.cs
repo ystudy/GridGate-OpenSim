@@ -253,6 +253,13 @@ internal static class MoneyApi
         {
             answer = Code("unavailable");
         }
+        catch (BadHttpRequestException e)
+        {
+            // Kestrel's own refusal while the body is read: a body over MaxBodyBytes is a 413, not a failure of ours (money
+            // review 2026-11-15, found by the L-5 fuzz test).
+            http.Response.StatusCode = e.StatusCode;
+            return;
+        }
         catch (Exception e) when (e is not OperationCanceledException)
         {
             c.Log.LogError("A money request failed with {Error}.", e.GetType().Name);
