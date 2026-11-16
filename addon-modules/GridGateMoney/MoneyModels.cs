@@ -107,9 +107,12 @@ internal static class MoneyRules
         "not_enough" => "LINDENDOLLAR_INSUFFICIENTFUNDS",
         "no_wallet" => "LINDENDOLLAR_ENTITYDOESNOTEXIST",
         "not_allowed" => "TRANSFERS_DISABLED",
-        "over_daily_limit" => "THROTTLED",
+        "over_daily_limit" or "over_key_limit" => "THROTTLED",
         "bad_amount" => "INVALID_AMOUNT",
         "visitors_off" => "LINDENDOLLAR_ENTITYDOESNOTEXIST",
+        "unverified_region" => "REGION_NOT_VERIFIED",
+        "unverified_avatar" => "AVATAR_NOT_VERIFIED",
+        "visitor_grid_not_listed" => "VISITOR_GRID_NOT_LISTED",
         _ => "SERVICE_ERROR",
     };
 
@@ -137,7 +140,12 @@ internal static class MoneyRules
         "no_session" or "wrong_region" => "Please log in again to use money here.",
         "bad_amount" => "That amount can't be paid.",
         "not_allowed" => "That payment isn't allowed on this grid.",
-        "over_daily_limit" => "That's more than today's limit allows.",
+        // Verification and limits (money design §8.13).
+        "unverified_region" => "Money is off in this region: it can't verify who is here. You can still visit.",
+        "unverified_avatar" => "Money is paused for you until you next log in: you arrived from a region that can't verify where you are.",
+        "visitor_grid_not_listed" => "Visitors from your grid can't use money here. You're welcome to look around.",
+        "over_daily_limit" => "You've reached today's spending limit on this grid.",
+        "over_key_limit" => "This region has reached today's money limit. Try again later.",
         _ => "That payment couldn't be made. Please try again.",
     };
 }

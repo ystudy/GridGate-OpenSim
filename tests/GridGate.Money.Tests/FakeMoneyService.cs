@@ -60,6 +60,33 @@ internal sealed class FakeMoneyService : IMoneyService
     public Task<MoneyAnswer> ReturnAsync(Guid txn, long holdId, CancellationToken ct) => Record("return", txn, ct, holdId);
 
     public Task<EconomyInfo?> EconomyAsync(CancellationToken ct) => Task.FromResult(Economy);
+
+    /// <summary>
+    /// The place reports (health, handoffs, cancels and arrivals), kept apart from <see cref="Calls"/> and <see cref="Order"/>:
+    /// a region reports them on its own whenever someone arrives, whatever a test is paying for.
+    /// </summary>
+    public ConcurrentQueue<Call> Places { get; } = new();
+
+    public IEnumerable<Call> PlacesOf(string method) => Places.Where(c => c.Method == method);
+
+    private async Task<MoneyAnswer> Place(string method, Guid id, CancellationToken ct, params object?[] args)
+    {
+        Places.Enqueue(new Call(method, id, args));
+        if (Gate is { } gate) await gate(method).WaitAsync(ct);
+        lock (_queued)
+            return _queued.TryGetValue(method, out var q) && q.Count > 0 ? q.Dequeue() : Answer(method);
+    }
+
+    public Task<MoneyAnswer> HealthAsync(int protocol, IReadOnlyList<Guid> regions, CancellationToken ct) =>
+        Place("health", Guid.Empty, ct, protocol, regions.ToArray());
+
+    public Task<MoneyAnswer> HandoffAsync(Guid id, Guid sessionId, Guid fromRegion, Guid toRegion, string kind, CancellationToken ct) =>
+        Place("handoff", id, ct, sessionId, fromRegion, toRegion, kind);
+
+    public Task<MoneyAnswer> CancelHandoffAsync(Guid sessionId, Guid fromRegion, CancellationToken ct) => Place("cancel", Guid.Empty, ct, sessionId, fromRegion);
+
+    public Task<MoneyAnswer> ArrivedAsync(Guid id, Guid sessionId, Guid agentId, Guid regionId, CancellationToken ct) =>
+        Place("arrived", id, ct, sessionId, agentId, regionId);
 }
 
 /// <summary>The viewer and scene, faked: records what the actions told, pushed and raised.</summary>

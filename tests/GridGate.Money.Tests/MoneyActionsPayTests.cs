@@ -143,4 +143,19 @@ public sealed class MoneyActionsPayTests
         Assert.InRange(MoneyRules.GroupLandText.Length, 1, 250);
         Assert.InRange(MoneyRules.VisitorsOffText.Length, 1, 250);
     }
+
+    /// <summary>money design §8.13: the refusals verification and the limits add, as the viewer and a script see them.</summary>
+    [Theory]
+    [InlineData("unverified_region", "Money is off in this region: it can't verify who is here. You can still visit.", "REGION_NOT_VERIFIED")]
+    [InlineData("unverified_avatar", "Money is paused for you until you next log in: you arrived from a region that can't verify where you are.",
+        "AVATAR_NOT_VERIFIED")]
+    [InlineData("visitor_grid_not_listed", "Visitors from your grid can't use money here. You're welcome to look around.", "VISITOR_GRID_NOT_LISTED")]
+    [InlineData("over_daily_limit", "You've reached today's spending limit on this grid.", "THROTTLED")]
+    [InlineData("over_key_limit", "This region has reached today's money limit. Try again later.", "THROTTLED")]
+    public void New_codes_have_viewer_messages_under_250_chars(string code, string message, string reason)
+    {
+        Assert.Equal(message, MoneyRules.Message(code));
+        Assert.InRange(MoneyRules.Message(code).Length, 1, 249);
+        Assert.Equal(reason, MoneyRules.ScriptReason(code));
+    }
 }

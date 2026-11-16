@@ -109,6 +109,31 @@ public sealed class MoneyServiceClientTests(MoneyMariaDb maria) : IClassFixture<
         Assert.Equal("wrong_region", (await client.ChargeAsync(Guid.NewGuid(), "upload_fee", ClientA, 3, null, There, Ct)).Code);
     }
 
+    /// <summary>
+    /// money design §8.4: the module's health, handoff and arrival, as the client sends them, move A from Here to There, so
+    /// a fee is charged There and no longer Here. A cancel, a crossing and a handoff to another grid are accepted too.
+    /// </summary>
+    [Fact]
+    public async Task Client_handoff_and_arrival_place_an_avatar_on_the_real_service()
+    {
+        await StartAsync();
+        using var p1 = Client();
+        using var p2 = Client(key: Key2);
+
+        Assert.Equal("ok", (await p1.HealthAsync(2, [Here], Ct)).Code);
+        Assert.Equal("ok", (await p2.HealthAsync(2, [There], Ct)).Code);
+        Assert.Equal("ok", (await p1.HandoffAsync(Guid.NewGuid(), SessionA, Here, There, "teleport", Ct)).Code);
+        Assert.Equal("ok", (await p2.ArrivedAsync(Guid.NewGuid(), SessionA, A, There, Ct)).Code);
+
+        Assert.Equal("ok", (await p2.ChargeAsync(Guid.NewGuid(), "upload_fee", ClientA, 3, null, There, Ct)).Code);
+        Assert.Equal("wrong_region", (await p1.ChargeAsync(Guid.NewGuid(), "upload_fee", ClientA, 3, null, Here, Ct)).Code);
+
+        Assert.Equal("ok", (await p2.HandoffAsync(Guid.NewGuid(), SessionA, There, Here, "crossing", Ct)).Code);
+        Assert.Equal("ok", (await p2.CancelHandoffAsync(SessionA, There, Ct)).Code);
+        Assert.Equal("ok", (await p2.HandoffAsync(Guid.NewGuid(), SessionA, There, Guid.NewGuid(), "other_grid", Ct)).Code);
+        Assert.Equal("unverified_avatar", (await p2.ChargeAsync(Guid.NewGuid(), "upload_fee", ClientA, 3, null, There, Ct)).Code);
+    }
+
     [Fact]
     public async Task Every_body_the_client_sends_is_accepted()
     {
