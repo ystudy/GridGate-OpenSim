@@ -270,6 +270,21 @@ public sealed class RegionServerMoneyPageTests
     }
 
     [Fact]
+    public async Task Unpair_restarts_each_running_region_program_once()
+    {
+        await using var f = Make(new FakePairClient(), pairing: new ServerPairing("192.168.1.5", new string('A', 64), "k", DateTimeOffset.UtcNow),
+            regions: ThreeRegions());
+        f.Grid.ProgramStates["Far"] = GridGate.Launcher.Core.Processes.ProcessState.Stopped;
+
+        var doc = await PostAsync(await SignedInAsync(f), "Unpair", []);
+
+        Assert.Contains("Unpaired. Restarting this server's regions so they stop using its key;", MainText(doc));
+        Assert.Contains("remove it on the Grid Asset Server's Money page too", MainText(doc));
+        var only = Assert.Single(await RestartsAsync(f, 1));
+        Assert.True(only == $"RegionPower Restart {NearA}" || only == $"RegionPower Restart {NearB}", only);
+    }
+
+    [Fact]
     public async Task Stale_join_still_offers_pairing_and_saves_the_fresh_grid_info()
     {
         var fresh = Avalon() with { MoneyFingerprint = new string('B', 64) };
@@ -331,9 +346,9 @@ public sealed class RegionServerMoneyPageTests
 
     private static readonly GloebitSettings GApp = new("sandbox", "0b9e3c2a-1111-4c5d-8e9f-0123456789ab", "7d3f9a10-2222-4b6c-9d8e-fedcba987654", "RS Owner");
 
-    private static LauncherFactory GloebitGrid(GloebitSettings? app = null)
+    private static LauncherFactory GloebitGrid(GloebitSettings? app = null, IReadOnlyList<RegionSettings>? regions = null)
     {
-        var f = Make(new FakePairClient());
+        var f = Make(new FakePairClient(), regions: regions);
         f.Grid.UpdateSettings(s => s with { Join = s.Join! with { Money = MoneyMode.Gloebit }, Money = s.Money with { Gloebit = app } }, writeConfig: false);
         return f;
     }
@@ -364,12 +379,59 @@ public sealed class RegionServerMoneyPageTests
         });
 
         Assert.Equal(GApp, f.Grid.CurrentSettings().Money.Gloebit);
-        Assert.Contains("Saved. Restart the regions to start Gloebit.", MainText(doc));
+        Assert.Contains("Saved.", MainText(doc));
         var html = (await PageAsync(c, "/advanced/money")).DocumentElement.OuterHtml;
         Assert.DoesNotContain(GApp.Secret, html);
         Assert.DoesNotContain(GApp.Key, html);
         var line = Assert.Single(Audit(f), a => a.GetProperty("action").GetString() == "money-gloebit");
         Assert.DoesNotContain(GApp.Secret, line.GetRawText());
+    }
+
+    [Fact]
+    public async Task Saving_the_gloebit_app_restarts_each_running_region_program_once()
+    {
+        await using var f = GloebitGrid(regions: ThreeRegions());
+
+        var doc = await PostAsync(await SignedInAsync(f), "Gloebit", new()
+        {
+            ["Environment"] = "sandbox", ["Key"] = GApp.Key, ["Secret"] = GApp.Secret, ["OwnerName"] = "RS Owner", ["OwnerEmail"] = "",
+        });
+
+        Assert.Contains("Saved. Restarting this server's regions so they start Gloebit.", MainText(doc));
+        var restarts = await RestartsAsync(f, 2);
+        Assert.Equal(2, restarts.Length);
+        Assert.Contains($"RegionPower Restart {FarC}", restarts);
+    }
+
+    [Fact]
+    public async Task Saving_the_gloebit_app_with_no_region_running_says_when_it_starts()
+    {
+        await using var f = GloebitGrid(regions: ThreeRegions());
+        f.Grid.ProgramStates["Near"] = GridGate.Launcher.Core.Processes.ProcessState.Stopped;
+        f.Grid.ProgramStates["Far"] = GridGate.Launcher.Core.Processes.ProcessState.Stopped;
+
+        var doc = await PostAsync(await SignedInAsync(f), "Gloebit", new()
+        {
+            ["Environment"] = "sandbox", ["Key"] = GApp.Key, ["Secret"] = GApp.Secret, ["OwnerName"] = "RS Owner", ["OwnerEmail"] = "",
+        });
+
+        Assert.Contains("Saved. This server's regions start Gloebit when they start.", MainText(doc));
+        Assert.Empty(await RestartsAsync(f, 0));
+    }
+
+    [Fact]
+    public async Task A_refused_gloebit_app_restarts_nothing()
+    {
+        await using var f = GloebitGrid(regions: ThreeRegions());
+
+        var doc = await PostAsync(await SignedInAsync(f), "Gloebit", new()
+        {
+            ["Environment"] = "sandbox", ["Key"] = "", ["Secret"] = "", ["OwnerName"] = "RS Owner", ["OwnerEmail"] = "",
+        });
+
+        Assert.NotNull(doc.QuerySelector(".alert-danger"));
+        Assert.Null(f.Grid.CurrentSettings().Money.Gloebit);
+        Assert.Empty(await RestartsAsync(f, 0));
     }
 
     [Fact]

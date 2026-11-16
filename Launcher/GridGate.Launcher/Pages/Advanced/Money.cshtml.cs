@@ -118,7 +118,10 @@ public sealed class MoneyModel(IGridController grid, MoneyGate gate, IMoneyPairC
         if (Error is null)
         {
             grid.UpdateSettings(s => s with { Money = s.Money with { Gloebit = app } }, writeConfig: true);
-            Notice = "Saved. Restart the regions to start Gloebit.";
+            // Gloebit's module reads its app when its region program starts: the running ones restart now.
+            Notice = regions.RestartRunning("Gloebit app saved").Count == 0
+                ? "Saved. This server's regions start Gloebit when they start."
+                : "Saved. Restarting this server's regions so they start Gloebit. This takes a few minutes, and anyone in them is disconnected.";
         }
         audit.Write(User, Ip, "money-gloebit", "money", Error is null ? "ok" : "refused");
         Show();
@@ -130,7 +133,10 @@ public sealed class MoneyModel(IGridController grid, MoneyGate gate, IMoneyPairC
         if (!Show()) return NotFound();
         grid.UpdateSettings(s => s with { Money = s.Money with { Pairing = null } }, writeConfig: true);
         audit.Write(User, Ip, "money-unpair", "money", "ok");
-        Notice = "Unpaired. Restart the regions; remove it on the Grid Asset Server's Money page too, so its key ends there.";
+        // The running region programs still hold the key until they restart.
+        Notice = regions.RestartRunning("money unpairing").Count == 0
+            ? "Unpaired; remove it on the Grid Asset Server's Money page too, so its key ends there."
+            : "Unpaired. Restarting this server's regions so they stop using its key; remove it on the Grid Asset Server's Money page too, so its key ends there.";
         Show();
         return Page();
     }
