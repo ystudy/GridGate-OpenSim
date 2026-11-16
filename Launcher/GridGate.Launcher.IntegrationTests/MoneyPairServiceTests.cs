@@ -118,7 +118,7 @@ public sealed class MoneyPairServiceTests(MoneyMariaDb maria) : IClassFixture<Mo
     private static object Who(Guid agent) => new { agentId = agent, home = "", sessionId = Session, secureSessionId = Secure };
 
     /// <summary>
-    /// Logs <paramref name="agent"/> in at <paramref name="region"/> as the service learns it (money design §8.4): the
+    /// Logs <paramref name="agent"/> in at <paramref name="region"/> as the service learns it: the
     /// module behind <paramref name="key"/> checks in, Robust writes a start and the module reports the arrival.
     /// </summary>
     private async Task Place(MoneyTestDatabase db, string key, Guid agent, Guid region, Guid? session = null, Guid? secure = null)
@@ -365,7 +365,7 @@ public sealed class MoneyPairServiceTests(MoneyMariaDb maria) : IClassFixture<Mo
     [Fact]
     public async Task Transfer_in_a_hijacked_region_is_wrong_region()
     {
-        // L-4: server A's program registers B's region id at A's address. B's region stays B's; A's key gets nothing there.
+        // Server A's program registers B's region id at A's address. B's region stays B's; A's key gets nothing there.
         var db = await StartAsync();
         const string hostA = "192.168.1.40";
         var keyB = await PairAsync(ServerHost);

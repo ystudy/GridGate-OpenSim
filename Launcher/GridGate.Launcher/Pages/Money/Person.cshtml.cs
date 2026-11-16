@@ -14,7 +14,7 @@ namespace GridGate.Launcher.Pages.Money;
 
 /// <summary>
 /// One person's coins (<c>/money/person?id=…&amp;home=…</c>; money design §9.1): balance, the newest history, whether money
-/// works for them right now and their daily limits (verified-regions design §8.12), and for admins give, take, freeze and
+/// works for them right now and their daily limits, and for admins give, take, freeze and
 /// the script payout switch; the owner may give them limits of their own. A visitor is named by id and home grid, and can
 /// be moved to a new home address (money plan 3). Opening the page never creates a wallet. Only while money is on.
 /// </summary>
@@ -28,7 +28,7 @@ public sealed class PersonModel(MoneyGate gate, IMoneyBooks books, AuditLog audi
     /// <summary>Their daily limits and use; null without a wallet.</summary>
     public LimitView? Limits { get; private set; }
 
-    /// <summary>Only the owner gives a person limits of their own (verified-regions design §8.7).</summary>
+    /// <summary>Only the owner gives a person limits of their own.</summary>
     public bool CanSetLimits { get; private set; }
 
     /// <summary>"Daily spending: 2,300 of 10,000 used (grid default)."</summary>
@@ -36,7 +36,7 @@ public sealed class PersonModel(MoneyGate gate, IMoneyBooks books, AuditLog audi
         $"{what}: {N(used)} of {N(limit)} used ({(own ? "own limit" + (until is { } u ? $" until {u:yyyy-MM-dd HH:mm} UTC" : "") : "grid default")}).";
 
     /// <summary>
-    /// The owner's limits for this person (verified-regions design §8.7): any amount, or empty for the grid default (both
+    /// The owner's limits for this person: any amount, or empty for the grid default (both
     /// empty goes back to the defaults). An end date is optional: the limits end at 00:00 UTC on it. Needs a reason; audited.
     /// </summary>
     public async Task<IActionResult> OnPostLimitsAsync(long? dailySpend, long? dailyPayout, DateTime? until, CancellationToken ct)
@@ -258,8 +258,8 @@ public sealed class PersonModel(MoneyGate gate, IMoneyBooks books, AuditLog audi
     }
 
     /// <summary>
-    /// Whether money works for them now (verified-regions design §8.12): a visitor from a grid whose visitors can't use money
-    /// is told so; anyone else by where their newest logged-in session is (Ruling 3).
+    /// Whether money works for them now: a visitor from a grid whose visitors can't use money
+    /// is told so; anyone else by where their newest logged-in session is.
     /// </summary>
     private async Task<(string, string?)> MoneyHereAsync(CancellationToken ct)
     {

@@ -19,15 +19,15 @@ namespace GridGate.Launcher.Pages.Money;
 public sealed record KeyLimitRow(string KeyId, string Name, LimitView? View);
 
 /// <summary>
-/// One open alert as the Money page shows it (verified-regions design §8.8): what happened, the person affected (named,
+/// One open alert as the Money page shows it: what happened, the person affected (named,
 /// with their page when they're a resident), and the paired server a warning may offer to remove.
 /// </summary>
 public sealed record AlertRow(MoneyAlert Alert, string Text, string? Person, Guid? PersonPage, Guid? RemovableServer);
 
 /// <summary>
 /// The Money page (<c>/money</c>; money design §9.1): the mode and settings, visitor money and listed grids, and while money
-/// is on the totals, the self-check, the grid-wide freeze, refunds, moving fees, finding a person, and (verified-regions
-/// design §8.12) the regions and whether each is verified, each region program's and Region Server's own limits, and the
+/// is on the totals, the self-check, the grid-wide freeze, refunds, moving fees, finding a person, and the regions and
+/// whether each is verified, each region program's and Region Server's own limits, and the
 /// open alerts. Every staff member may look; only admins and the owner may change anything, and only the owner may set a
 /// region program's or server's own limits or settle a moved region (each POST checks). Every change is audited.
 /// </summary>
@@ -42,7 +42,7 @@ public sealed class IndexModel(IGridController grid, MoneyGate gate, IMoneyBooks
     /// <summary>Only the owner sets a program's or server's own limits and settles a moved region.</summary>
     public bool IsOwner { get; private set; }
 
-    /// <summary>Every region Robust lists, with whether money works there (verified-regions design §8.2).</summary>
+    /// <summary>Every region Robust lists, with whether money works there.</summary>
     public IReadOnlyList<RegionState> Regions { get; private set; } = [];
     public bool RegionsDown { get; private set; }
 
@@ -227,7 +227,7 @@ public sealed class IndexModel(IGridController grid, MoneyGate gate, IMoneyBooks
         return Page();
     }
 
-    /// <summary>Which hypergrid visitors may pay and be paid (verified-regions design §8.6).</summary>
+    /// <summary>Which hypergrid visitors may pay and be paid.</summary>
     public async Task<IActionResult> OnPostVisitorsAsync(VisitorMoney visitors, CancellationToken ct)
     {
         if (!Admin) return StatusCode(StatusCodes.Status403Forbidden);
@@ -245,7 +245,7 @@ public sealed class IndexModel(IGridController grid, MoneyGate gate, IMoneyBooks
         return Page();
     }
 
-    /// <summary>Lists a grid whose visitors may use money (§8.6), by its home address, stored as the ledger stores homes.</summary>
+    /// <summary>Lists a grid whose visitors may use money, by its home address, stored as the ledger stores homes.</summary>
     public async Task<IActionResult> OnPostAddGridAsync(string? address, CancellationToken ct)
     {
         if (!Admin) return StatusCode(StatusCodes.Status403Forbidden);
@@ -268,7 +268,7 @@ public sealed class IndexModel(IGridController grid, MoneyGate gate, IMoneyBooks
         return Page();
     }
 
-    /// <summary>Takes a grid off the list (§8.6): its visitors' wallets stay, frozen in place, until it is listed again.</summary>
+    /// <summary>Takes a grid off the list: its visitors' wallets stay, frozen in place, until it is listed again.</summary>
     public async Task<IActionResult> OnPostRemoveGridAsync(string address, CancellationToken ct)
     {
         if (!Admin) return StatusCode(StatusCodes.Status403Forbidden);
@@ -289,7 +289,7 @@ public sealed class IndexModel(IGridController grid, MoneyGate gate, IMoneyBooks
     }
 
     /// <summary>
-    /// A region program's or Region Server's own daily limits (§8.7): any amount, or empty for the grid default (both empty
+    /// A region program's or Region Server's own daily limits: any amount, or empty for the grid default (both empty
     /// removes them). Owner only, with a reason; the audit line is the only record of a removal.
     /// </summary>
     public async Task<IActionResult> OnPostKeyLimitsAsync(string keyId, long? dailySpend, long? dailyPayout, CancellationToken ct)
@@ -326,7 +326,7 @@ public sealed class IndexModel(IGridController grid, MoneyGate gate, IMoneyBooks
     }
 
     /// <summary>
-    /// Approves a moved region (§8.3): it is pinned to the Region Server Robust now lists it at, and its move notice is
+    /// Approves a moved region: it is pinned to the Region Server Robust now lists it at, and its move notice is
     /// cleared. Owner only; audited.
     /// </summary>
     public async Task<IActionResult> OnPostApproveMoveAsync(Guid region, Guid server, CancellationToken ct)
@@ -345,7 +345,7 @@ public sealed class IndexModel(IGridController grid, MoneyGate gate, IMoneyBooks
             else
             {
                 await regions.ApproveMoveAsync(region, server, ct);
-                // §8.3: "Approving re-pins it to A, with an audit entry": written as soon as the pin moved, whatever follows.
+                // The approval is audited as soon as the pin moved, whatever follows.
                 audit.Write(User, Ip, "money-region-move", LogText.Clean(moved.Name), "approved");
                 Notice = $"Approved: {moved.Name} now belongs to the {MoneyVerifyText.ServerName(to)}. Money works there once its module checks in.";
                 try
@@ -367,7 +367,7 @@ public sealed class IndexModel(IGridController grid, MoneyGate gate, IMoneyBooks
     }
 
     /// <summary>
-    /// Keeps a moved region off (§8.3, Ruling 23): no pin changes, so money comes back if the server it belongs to registers
+    /// Keeps a moved region off: no pin changes, so money comes back if the server it belongs to registers
     /// it again. Clears its move notice, which comes back at most once a day while the other server lists it. Owner only; audited.
     /// </summary>
     public async Task<IActionResult> OnPostKeepOffAsync(Guid region, CancellationToken ct)
@@ -395,7 +395,7 @@ public sealed class IndexModel(IGridController grid, MoneyGate gate, IMoneyBooks
         return Page();
     }
 
-    /// <summary>Clears an alert once it has been dealt with (§8.8). The alert keeps who cleared it and when.</summary>
+    /// <summary>Clears an alert once it has been dealt with. The alert keeps who cleared it and when.</summary>
     public async Task<IActionResult> OnPostClearAlertAsync(long id, CancellationToken ct)
     {
         if (!Admin) return StatusCode(StatusCodes.Status403Forbidden);
@@ -426,7 +426,7 @@ public sealed class IndexModel(IGridController grid, MoneyGate gate, IMoneyBooks
             await alerts.ClearAsync(a.Id, StaffName, ct);
     }
 
-    /// <summary>Every key here: each region program's, then each paired Region Server's (§8.7: "per key" means every key).</summary>
+    /// <summary>Every key here: each region program's, then each paired Region Server's (a limit "per key" applies to every one).</summary>
     private static List<string> KeyIds(LauncherSettings s) =>
         [.. s.Programs.Select(p => p.Instance), .. (s.Money.PairedServers ?? []).Select(MoneyVerifyText.KeyOf)];
 

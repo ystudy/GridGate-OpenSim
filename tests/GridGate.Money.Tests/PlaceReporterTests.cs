@@ -18,7 +18,7 @@ using GridRegion = OpenSim.Services.Interfaces.GridRegion;
 namespace GridGate.Money.Tests;
 
 /// <summary>
-/// The region module tells the money service where avatars go (money design §8.4, §8.10): arrivals, teleport and crossing
+/// The region module tells the money service where avatars go: arrivals, teleport and crossing
 /// handoffs, leaving the grid, failed teleports and the program's health. It never makes a teleport wait for the service.
 /// </summary>
 [Collection(SceneCollection.Name)]
@@ -33,7 +33,7 @@ public sealed class PlaceReporterTests
     /// <summary>The place reports other than health, in the order the service got them.</summary>
     private static List<Call> Moves(FakeMoneyService service) => service.Places.Where(c => c.Method != "health").ToList();
 
-    /// <summary>money design §8.2 (Review Focus 2): a region coming up says at once which regions this program runs, at protocol 2.</summary>
+    /// <summary>A region coming up says at once which regions this program runs, at protocol 2.</summary>
     [Fact]
     public void Health_is_sent_when_a_region_is_added()
     {
@@ -46,7 +46,7 @@ public sealed class PlaceReporterTests
         Assert.Equal(new[] { Region.Guid }, (Guid[])health.Args[1]!);
     }
 
-    /// <summary>money design §8.4: becoming a root agent is one arrival, with the avatar's session, id and region; a child agent is none.</summary>
+    /// <summary>Becoming a root agent is one arrival, with the avatar's session, id and region; a child agent is none.</summary>
     [Fact]
     public void Arrival_is_reported_once_per_root()
     {
@@ -63,7 +63,7 @@ public sealed class PlaceReporterTests
         Assert.Equal(new object?[] { client.SessionId.Guid, Buyer.Guid, Region.Guid }, arrived.Args);
     }
 
-    /// <summary>money design §8.4 (Review Focus 4): NPCs are never placed: their arrivals, teleports and crossings report nothing.</summary>
+    /// <summary>NPCs are never placed: their arrivals, teleports and crossings report nothing.</summary>
     [Fact]
     public void Npc_is_never_reported()
     {
@@ -91,7 +91,7 @@ public sealed class PlaceReporterTests
         Assert.Equal(Buyer.Guid, Assert.Single(Moves(region.Service)).Args[1]);
     }
 
-    /// <summary>money design §8.4 (Review Focus 4): a teleport within the region hands nobody over.</summary>
+    /// <summary>A teleport within the region hands nobody over.</summary>
     [Fact]
     public void Same_region_teleport_reports_nothing()
     {
@@ -208,7 +208,7 @@ public sealed class PlaceReporterTests
     }
 
     /// <summary>
-    /// money design §8.10: a send the service answers "unavailable" is tried again after 1, 3, 9 and 17 seconds with the same
+    /// A send the service answers "unavailable" is tried again after 1, 3, 9 and 17 seconds with the same
     /// id, then dropped with one warning that names nobody.
     /// </summary>
     [Fact]
@@ -261,7 +261,7 @@ public sealed class PlaceReporterTests
     }
 
     /// <summary>
-    /// Controller ruling 28: OpenSim adds a region before registering it with the grid, so a Region Server's key doesn't
+    /// OpenSim adds a region before registering it with the grid, so a Region Server's key doesn't
     /// cover it at that first report. Once the region has started it is reported again, with the region in it.
     /// </summary>
     [Fact]
@@ -280,7 +280,7 @@ public sealed class PlaceReporterTests
         Assert.Equal(new[] { Region.Guid }, (Guid[])health[^1].Args[1]!);
     }
 
-    /// <summary>Controller ruling 28: removing a region reports health at once without it, and its start no longer reports.</summary>
+    /// <summary>Removing a region reports health at once without it, and its start no longer reports.</summary>
     [Fact]
     public void Health_is_sent_without_a_removed_region()
     {
@@ -416,7 +416,7 @@ public sealed class PlaceReporterTests
     }
 
     /// <summary>
-    /// Controller ruling 26: a handoff or arrival older than the service's 2-minute handoff life is dropped unsent, with
+    /// A handoff or arrival older than the service's 2-minute handoff life is dropped unsent, with
     /// one warning that counts them and names nobody; a newer one still goes.
     /// </summary>
     [Fact]
@@ -438,7 +438,7 @@ public sealed class PlaceReporterTests
         Assert.DoesNotContain(Buyer.ToString(), warning);
     }
 
-    /// <summary>Controller ruling 26: at most one health report waits; the newest takes its place, so an outage can't stack them.</summary>
+    /// <summary>At most one health report waits; the newest takes its place, so an outage can't stack them.</summary>
     [Fact]
     public async Task Health_reports_waiting_are_coalesced()
     {
@@ -457,7 +457,7 @@ public sealed class PlaceReporterTests
         Assert.Empty(held.Warnings);
     }
 
-    /// <summary>Controller ruling 26: past 1,000 waiting reports the oldest go, with one warning that counts them.</summary>
+    /// <summary>Past 1,000 waiting reports the oldest go, with one warning that counts them.</summary>
     [Fact]
     public async Task The_queue_cap_drops_the_oldest()
     {

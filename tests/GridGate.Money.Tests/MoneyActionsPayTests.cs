@@ -144,7 +144,7 @@ public sealed class MoneyActionsPayTests
         Assert.InRange(MoneyRules.VisitorsOffText.Length, 1, 250);
     }
 
-    /// <summary>money design §8.13: the refusals verification and the limits add, as the viewer and a script see them.</summary>
+    /// <summary>The refusals verification and the limits add, as the viewer and a script see them.</summary>
     [Theory]
     [InlineData("unverified_region", "Money is off in this region: it can't verify who is here. You can still visit.", "REGION_NOT_VERIFIED")]
     [InlineData("unverified_avatar", "Money is paused for you until you next log in: you arrived from a region that can't verify where you are.",

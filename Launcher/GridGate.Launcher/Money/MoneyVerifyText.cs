@@ -5,12 +5,12 @@ using GridGate.Launcher.Core.Settings;
 namespace GridGate.Launcher.Money;
 
 /// <summary>
-/// The staff pages' words for verified regions, where a person is, and the owner's money alerts (verified-regions design
-/// §8.2, §8.8, §8.12), and the headings of the owner's guide (<c>docs/money-verification.md</c>) they link to.
+/// The staff pages' words for verified regions, where a person is, and the owner's money alerts, and the headings of the
+/// owner's guide (<c>docs/money-verification.md</c>) they link to.
 /// </summary>
 public static class MoneyVerifyText
 {
-    /// <summary>The owner's guide (verified-regions design §10).</summary>
+    /// <summary>The owner's guide.</summary>
     public const string Guide = "https://github.com/ystudy/GridGate-OpenSim/blob/main/docs/money-verification.md";
 
     // The guide's headings, as GitHub makes their anchors. The guide must keep these headings.
@@ -50,7 +50,7 @@ public static class MoneyVerifyText
         _ => "Not heard from",
     };
 
-    /// <summary>What a status means and what the owner can do about it (§8.2).</summary>
+    /// <summary>What a status means and what the owner can do about it.</summary>
     public static string Help(RegionStatus status) => status switch
     {
         RegionStatus.Verified =>
@@ -97,10 +97,10 @@ public static class MoneyVerifyText
             : "This computer";
 
     /// <summary>
-    /// Whether money works for a person now, as their page says it (§8.12, "A person's page"), and the guide heading that
+    /// Whether money works for a person now, as their page says it, and the guide heading that
     /// explains why when it doesn't. <paramref name="name"/> is the name of the region they're in, and <paramref name="region"/>
     /// its state now (null when Robust doesn't list it): money is on only where both they and the region are verified. A
-    /// session on another grid is out of Presence, so it has no location here (Ruling 24): "not in the world".
+    /// session on another grid is out of Presence, so it has no location here: "not in the world".
     /// </summary>
     public static (string Text, string? Anchor) MoneyHere(SessionLocation? where, RegionState? region, string? name)
     {

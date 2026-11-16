@@ -103,7 +103,7 @@ public sealed class MoneyAlerts(Func<CancellationToken, Task<MySqlConnection>> o
         RaiseAsync(AlertKind.KeyLimitReached, keyId, null, null, (_, _) => Fixed(AlertLevel.Warning), ct);
 
     /// <summary>
-    /// Region <paramref name="regionId"/> is listed at the server of <paramref name="toKeyId"/> but pinned to another (§8.3):
+    /// Region <paramref name="regionId"/> is listed at the server of <paramref name="toKeyId"/> but pinned to another:
     /// a notice. Raised at most once per region and listing key per <see cref="Window"/>; a repeat within it does nothing at
     /// all. An open row for the region counts up only when another key lists it now, so its count is moves seen.
     /// </summary>

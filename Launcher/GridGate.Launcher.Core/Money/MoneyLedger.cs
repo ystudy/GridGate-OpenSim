@@ -93,7 +93,7 @@ public sealed partial class MoneyLedger(
     /// Locks both accounts in id order, applies any allowance due, then debits (guarded unless <paramref name="guarded"/> is
     /// false: settling a hold), credits and writes the entry. <paramref name="staffTakes"/> is staff taking coins back or
     /// refunding: the balance is still checked, but a frozen account isn't refused, since freezing an account is how staff
-    /// stop it spending while they claw coins back (money review 2026-11-15, L-7). <paramref name="limited"/> is a region
+    /// stop it spending while they claw coins back. <paramref name="limited"/> is a region
     /// spending from the payer: it must fit the payer's daily limit and, with <see cref="Entry.KeyId"/>, the key's, checked
     /// once both accounts are locked (and the key before them).
     /// </summary>

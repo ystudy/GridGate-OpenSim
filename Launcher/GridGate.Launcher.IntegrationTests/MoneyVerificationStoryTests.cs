@@ -95,7 +95,7 @@ public sealed class MoneyVerificationStoryTests(MoneyMariaDb maria) : IClassFixt
 
         Assert.Equal(moved, await Moved(rig)); // no coins moved
         foreach (var (agent, _, _) in people) Assert.Equal(before[agent], await Balance(rig, agent));
-        var warning = Assert.Single(await rig.Alerts.OpenAsync(Ct)); // grouped per key and region (Ruling 2)
+        var warning = Assert.Single(await rig.Alerts.OpenAsync(Ct)); // grouped per key and region
         Assert.Equal((AlertKind.UnhandedArrival, AlertLevel.Warning, "p2", There, 3), (warning.Kind, warning.Level, warning.KeyId, warning.RegionId, warning.Count));
         await rig.AssertBooksSoundAsync();
     }
@@ -135,14 +135,13 @@ public sealed class MoneyVerificationStoryTests(MoneyMariaDb maria) : IClassFixt
     [Fact]
     public async Task Grid_H_sends_our_resident_into_a_Region_Server()
     {
-        // A visits grid H. While A is still away, grid H asks our Gatekeeper to send A to Neon Pier, on Sam's Region Server,
-        // and Neon Pier reports the arrival. A Gatekeeper start counts
-        // only in the Grid Asset Server's own regions, so A travels, but Neon Pier can't charge them.
+        // A visits grid H, then comes in through the Gatekeeper straight to Neon Pier, on Sam's Region Server. A Gatekeeper
+        // start counts only in the Grid Asset Server's own regions, so A travels, but Neon Pier can't charge them.
         var rig = await StartAsync();
         await PairAsync(rig, SamHost, SamKey, NeonPier);
         Assert.Equal("ok", await rig.Handoff(Key, SessionA, Here, There, "other_grid")); // A leaves for grid H
         await rig.Db.Sql($"DELETE FROM `robust`.`Presence` WHERE SessionID = '{SessionA}'");
-        // The Gatekeeper lets A in at Neon Pier, as grid H asked: Presence and a start, then Neon Pier's arrival.
+        // The Gatekeeper lets A in at Neon Pier: Presence and a start, then Neon Pier's arrival.
         await rig.Db.AddPresence(A, NeonPier, SessionA, SecureA);
         Assert.Equal("unverified_avatar", await rig.Place(SessionA, NeonPier, "gatekeeper", SamKey));
         var moved = await Moved(rig);

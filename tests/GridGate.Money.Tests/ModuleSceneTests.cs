@@ -454,7 +454,7 @@ public sealed class ModuleSceneTests
         Assert.Null(charge.Args[3]);
     }
 
-    /// <summary>money design §8.5: a fee is charged in the region the payer is in, so the service can check they are there.</summary>
+    /// <summary>A fee is charged in the region the payer is in, so the service can check they are there.</summary>
     [Fact]
     public void Charge_sends_the_region()
     {

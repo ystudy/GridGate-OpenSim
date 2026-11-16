@@ -57,9 +57,9 @@ public interface IMoneyService
     /// <summary>The settings, or null when the service can't be reached.</summary>
     Task<EconomyInfo?> EconomyAsync(CancellationToken ct);
 
-    // Where avatars are (money design §8.4): the region module's place reports.
+    // Where avatars are: the region module's place reports.
 
-    /// <summary>The money protocol this program speaks and the regions it runs (money design §8.2).</summary>
+    /// <summary>The money protocol this program speaks and the regions it runs.</summary>
     Task<MoneyAnswer> HealthAsync(int protocol, IReadOnlyList<Guid> regions, CancellationToken ct);
 
     /// <summary><paramref name="sessionId"/> leaves <paramref name="fromRegion"/> for <paramref name="toRegion"/>; <paramref name="kind"/> is teleport, crossing or other_grid.</summary>
@@ -83,8 +83,8 @@ public sealed class MoneyServiceClient : IMoneyService, IDisposable
     public static readonly TimeSpan Timeout = TimeSpan.FromSeconds(10);
 
     /// <summary>
-    /// The longest an arrival waits. The service holds an arrival up to 10 seconds while its handoff may still be on the way
-    /// (money design §8.4), so it needs longer than <see cref="Timeout"/> to get its answer; only the region module's
+    /// The longest an arrival waits. The service holds an arrival up to 10 seconds while its handoff may still be on the way,
+    /// so it needs longer than <see cref="Timeout"/> to get its answer; only the region module's
     /// background reporter sends arrivals, never an OpenSim thread.
     /// </summary>
     public static readonly TimeSpan ArrivalTimeout = TimeSpan.FromSeconds(20);

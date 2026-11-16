@@ -121,7 +121,7 @@ public static class MoneyPageRules
     public const int MaxGridAddress = 255;
 
     /// <summary>
-    /// A listed grid's address as it is stored and compared (verified-regions design §8.6: as the ledger stores homes), or
+    /// A listed grid's address as it is stored and compared (as the ledger stores homes), or
     /// null when <paramref name="address"/> isn't an absolute http(s) address with a host.
     /// </summary>
     public static string? GridAddress(string? address)

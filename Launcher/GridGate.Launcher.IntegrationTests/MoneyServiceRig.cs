@@ -18,7 +18,7 @@ namespace GridGate.Launcher.IntegrationTests;
 /// the money review of 2026-11-15 found missing (L-5, L-8). Program p1 holds region Here and p2 region There; residents A
 /// and B and visitor V from <see cref="VisitorHome"/> are logged in. Unless asked not to, both programs' modules have
 /// checked in (so Here and There are verified) and the service has placed A and V at Here and B at There, as a start and
-/// an arrival do (money design §8.4): Robust's Presence no longer says where anyone is.
+/// an arrival do: Robust's Presence no longer says where anyone is.
 /// </summary>
 internal sealed class MoneyServiceRig : IAsyncDisposable
 {
@@ -56,7 +56,7 @@ internal sealed class MoneyServiceRig : IAsyncDisposable
     /// <summary>The clock the location record reads: an arrival nothing vouches for is held until a test moves it on.</summary>
     public FakeTimeProvider LocationClock { get; } = new(DateTimeOffset.UtcNow);
     public MoneyLocations Locations { get; private set; } = null!;
-    /// <summary>The owner's alerts (money design §8.8), on the rig's database unless the rig was started with them down.</summary>
+    /// <summary>The owner's alerts, on the rig's database unless the rig was started with them down.</summary>
     public MoneyAlerts Alerts { get; private set; } = null!;
     /// <summary>The wrong-key counter: a test checks that refused claims never count against a key's address.</summary>
     public MoneyAuthFailures Failures { get; private set; } = null!;
@@ -170,7 +170,7 @@ internal sealed class MoneyServiceRig : IAsyncDisposable
     }
 
     /// <summary>
-    /// Places <paramref name="session"/> at <paramref name="region"/> as the service learns it (money design §8.4): Robust
+    /// Places <paramref name="session"/> at <paramref name="region"/> as the service learns it: Robust
     /// writes a start, and the region's module reports the arrival with its key. Verified once that module has checked in.
     /// For a region or session that isn't the rig's own, pass the <paramref name="key"/> that covers the region and the
     /// session's <paramref name="agent"/>.
@@ -185,7 +185,7 @@ internal sealed class MoneyServiceRig : IAsyncDisposable
     }
 
     /// <summary>
-    /// A module's arrival report. One nothing vouches for is held (money design §8.4): the location clock moves on while it
+    /// A module's arrival report. One nothing vouches for is held: the location clock moves on while it
     /// waits, so it gets its answer.
     /// </summary>
     public async Task<(HttpStatusCode Status, JsonNode? Body, string Raw)> Arrived(string key, Guid session, Guid agent, Guid region)

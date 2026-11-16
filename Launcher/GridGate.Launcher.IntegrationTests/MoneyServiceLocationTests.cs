@@ -7,9 +7,9 @@ using static GridGate.Launcher.IntegrationTests.MoneyServiceRig;
 namespace GridGate.Launcher.IntegrationTests;
 
 /// <summary>
-/// The payer check through the service (money design §8.5): coins leave an avatar only when the service's own record has
+/// The payer check through the service: coins leave an avatar only when the service's own record has
 /// them verified in the calling key's region the request names, and that region is verified. Where they are comes from
-/// <c>/handoff</c> and <c>/arrived</c> (§8.4), never from Robust's Presence.
+/// <c>/handoff</c> and <c>/arrived</c>, never from Robust's Presence.
 /// </summary>
 [Collection(GridCollection.Name)]
 public sealed class MoneyServiceLocationTests(MoneyMariaDb maria) : IClassFixture<MoneyMariaDb>, IAsyncDisposable
@@ -160,7 +160,7 @@ public sealed class MoneyServiceLocationTests(MoneyMariaDb maria) : IClassFixtur
     [Fact]
     public async Task Neon_Pier_story_cannot_charge_someone_it_saw_next_door()
     {
-        // p2's There saw A next door in Here and claims A arrived, to charge them (money design §8.4, the Neon Pier attack).
+        // p2's There reports A arrived, though nobody handed A to it: it can't charge A.
         var rig = await StartAsync();
         var balance = await rig.Db.Scalar($"SELECT balance FROM `money`.`accounts` WHERE agent_id = '{A}'");
 
@@ -178,7 +178,7 @@ public sealed class MoneyServiceLocationTests(MoneyMariaDb maria) : IClassFixtur
     [Fact]
     public async Task Offline_vendor_owner_can_be_paid()
     {
-        // Receivers need no place (money design §8.5): a vendor's owner is usually offline.
+        // Receivers need no place: a vendor's owner is usually offline.
         var rig = await StartAsync();
         await rig.Db.AddUser(C);
 
@@ -260,7 +260,7 @@ public sealed class MoneyServiceLocationTests(MoneyMariaDb maria) : IClassFixtur
         await rig.Db.AddSessionStart(SessionA, A, Here, "login");
         Assert.Equal("ok", CodeOf(await rig.Arrived(Key, SessionA, A, Here)));
         Assert.Equal("ok", CodeOf(await rig.Arrived(Key, SessionA, A, Here))); // reported again: the same place
-        // p2 hasn't checked in, so There can't knock A out of Here: refused, and A still pays at Here.
+        // p2 hasn't checked in, so There's arrival moves nobody: refused, and A still pays at Here.
         Assert.Equal("refused", CodeOf(await rig.Arrived(Key2, SessionA, A, There)));
         Assert.Equal("ok", CodeOf(await rig.Post("transfer", Body("transfer", WhoA(), Here))));
     }

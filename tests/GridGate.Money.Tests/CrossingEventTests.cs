@@ -23,7 +23,7 @@ public sealed class CrossingEventTests
 {
     /// <remarks>
     /// OpenSim sometimes tries a crossing again on a later update before the avatar is in transit (about one run in eight
-    /// here), firing the event again; the money module takes each as another handoff (controller ruling 27).
+    /// here), firing the event again; the money module takes each as another handoff.
     /// </remarks>
     [Fact]
     public void Crossing_fires_OnCrossAgentToNewRegion_with_the_destination_before_the_arrival()

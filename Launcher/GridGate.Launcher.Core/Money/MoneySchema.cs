@@ -13,7 +13,7 @@ public enum AccountKind { Person, Visitor, Bank, Fees, Holding }
 /// </summary>
 public static class MoneySchema
 {
-    /// <summary>3: key ids on entries and holds, and the tables for locations, handoffs, pins, limits and alerts. 2: homes compared byte for byte (money review 2026-11-15, L-2).</summary>
+    /// <summary>3: key ids on entries and holds, and the tables for locations, handoffs, pins, limits and alerts. 2: homes compared byte for byte.</summary>
     public const int Version = 3;
 
     /// <summary>The system accounts' fixed ids.</summary>

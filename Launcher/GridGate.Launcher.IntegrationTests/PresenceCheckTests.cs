@@ -36,7 +36,7 @@ public sealed class PresenceCheckTests(MoneyMariaDb maria) : IClassFixture<Money
     [Fact]
     public async Task Logged_in_in_any_region_is_Ok()
     {
-        var check = await Setup(There); // Presence.RegionID is no longer read (money design §8.4)
+        var check = await Setup(There); // Presence.RegionID is no longer read
 
         Assert.Equal(PresenceOutcome.Ok, await check.LoggedInAsync(User, Session, Secure, Ct));
         Assert.Equal(PresenceOutcome.NoSession, await check.LoggedInAsync(User, Session, Guid.NewGuid(), Ct));

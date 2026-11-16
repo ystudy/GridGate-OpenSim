@@ -4,7 +4,7 @@ using Xunit;
 
 namespace GridGate.Launcher.IntegrationTests;
 
-/// <summary>Region ids belong to the paired Region Server they were first seen under (money design §8.3, review finding L-4).</summary>
+/// <summary>Region ids belong to the paired Region Server they were first seen under.</summary>
 [Collection(GridCollection.Name)]
 public sealed class RegionPinsTests(MoneyMariaDb maria) : IClassFixture<MoneyMariaDb>
 {

@@ -380,7 +380,7 @@ public sealed class MoneyActionsTests
         var call = Assert.Single(_service.Of("charge"));
         Assert.Equal("group_join_fee", call.Args[0]);
         Assert.Equal((Guid?)Them, call.Args[3]);
-        Assert.Equal(Region, call.Args[4]); // the service checks the payer is in this region (money design §8.11)
+        Assert.Equal(Region, call.Args[4]); // the service checks the payer is in this region
         Assert.Contains(_view.Pushed, x => x.Agent == Me && x.Balance == 90 && x.Note!.TransactionType == Type("GroupJoin"));
     }
 

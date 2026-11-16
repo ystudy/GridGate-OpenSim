@@ -381,9 +381,9 @@ public sealed class MoneyLocations(Func<CancellationToken, Task<MySqlConnection>
             if (await r.ReadAsync(ct)) return new Match(r.GetValue(0).ToString(), null);
         }
 
-        // A start never moves a verified session (that would let a replay through the Gatekeeper take someone who is still
-        // here). Only a start newer than last_start_id counts, so each start places once and a used one can't verify the
-        // session again.
+        // A start never moves a verified session: a second start through the Gatekeeper is refused while the session is
+        // verified here. Only a start newer than last_start_id counts, so each start places once and a used one can't verify
+        // the session again.
         var after = row?.LastStartId ?? 0;
 
         // 2. A login start counts only when the session was never placed. A login region could otherwise hold back its own

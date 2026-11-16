@@ -12,7 +12,7 @@ using static GridGate.Launcher.IntegrationTests.MoneyServiceRig;
 namespace GridGate.Launcher.IntegrationTests;
 
 /// <summary>
-/// The owner's alerts (money design §8.8): arrivals a key's region claimed without being handed the avatar, daily limits
+/// The owner's alerts: arrivals a key's region claimed without being handed the avatar, daily limits
 /// reached, and regions moving between servers. One row per kind and group per 24 hours, counted up; a row's level only
 /// rises. Raising an alert never changes the answer that raised it.
 /// </summary>

@@ -4,7 +4,7 @@ using GridGate.Launcher.Core.Settings;
 namespace GridGate.Launcher.Money;
 
 /// <summary>
-/// What the money pages show about regions and where people are (verified-regions design §8.12): which regions are
+/// What the money pages show about regions and where people are: which regions are
 /// verified, what each key's module last reported, approving a moved region, and where a person is now. A seam so the
 /// pages can be tested without a database. A database failure is <see cref="MoneyUnavailableException"/>.
 /// </summary>

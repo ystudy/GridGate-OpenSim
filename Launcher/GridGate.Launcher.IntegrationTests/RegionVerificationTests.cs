@@ -5,7 +5,7 @@ using static GridGate.Launcher.IntegrationTests.MoneyServiceRig;
 
 namespace GridGate.Launcher.IntegrationTests;
 
-/// <summary>Which regions the money service counts as verified, and why not when they aren't (money design §8.2).</summary>
+/// <summary>Which regions the money service counts as verified, and why not when they aren't.</summary>
 [Collection(GridCollection.Name)]
 public sealed class RegionVerificationTests(MoneyMariaDb maria) : IClassFixture<MoneyMariaDb>, IAsyncDisposable
 {

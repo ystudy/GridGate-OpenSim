@@ -5,7 +5,7 @@ namespace GridGate.Launcher.Money;
 /// <summary>
 /// Keeps the books honest in the background (money design §7.1, §7.2): the self-check at start and every 24 hours, and
 /// expired holds returned to their buyers every 30 seconds. On the same sweep, at most hourly, the location records of
-/// logged-out sessions and old handoffs are dropped (money design §8.4). Does nothing while the effective mode is Off.
+/// logged-out sessions and old handoffs are dropped. Does nothing while the effective mode is Off.
 /// </summary>
 public sealed class MoneyMaintenance(MoneyLedger ledger, Func<MoneyMode> effective, TimeProvider time, ILogger<MoneyMaintenance> log,
     MoneyStatus? status = null, MoneyLocations? locations = null) : BackgroundService

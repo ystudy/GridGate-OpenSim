@@ -80,7 +80,7 @@ public sealed class MoneyServiceRefusalTests(MoneyMariaDb maria) : IClassFixture
     [Fact]
     public async Task Presence_saying_an_avatar_is_here_is_not_enough()
     {
-        // Any region can rewrite Presence.RegionID (money review 2026-11-15, L-1): B's row claims Here, the service has B at There.
+        // Any region can rewrite Presence.RegionID: B's row claims Here, the service has B at There.
         var rig = await StartAsync();
         await rig.Db.Sql($"UPDATE `robust`.`Presence` SET RegionID = '{Here}' WHERE UserID = '{B}'");
 

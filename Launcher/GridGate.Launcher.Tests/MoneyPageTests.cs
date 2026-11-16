@@ -1124,7 +1124,7 @@ public sealed class MoneyPageTests
         Assert.NotNull(on.QuerySelector($"a[href='/money/person?id={Ann}']"));
     }
 
-    // ---- verified regions, visitors, limits and alerts (verified-regions design §8.12) ----
+    // ---- verified regions, visitors, limits and alerts ----
 
     private static readonly Guid Sam = Guid.Parse("d0000000-0000-0000-0000-0000000000d5");
     private static readonly Guid Jo = Guid.Parse("d0000000-0000-0000-0000-0000000000d6");
@@ -1241,7 +1241,7 @@ public sealed class MoneyPageTests
         Assert.DoesNotContain(f.MoneyRegions.Calls, x => x.StartsWith("approve"));
         Assert.Single(alerts.Open);
 
-        // Keeping it off changes no pin (Ruling 23): it only clears the notice and is audited.
+        // Keeping it off changes no pin: it only clears the notice and is audited.
         using (var kept = await PostAsync(owner, "/money", "KeepOff", new() { ["Region"] = Market.ToString() }))
             Assert.Equal(HttpStatusCode.OK, kept.StatusCode);
         Assert.DoesNotContain(f.MoneyRegions.Calls, x => x.StartsWith("approve"));

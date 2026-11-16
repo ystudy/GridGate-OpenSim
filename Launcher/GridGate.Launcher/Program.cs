@@ -424,7 +424,7 @@ builder.Services.AddSingleton<MoneyStatus>();
 builder.Services.AddSingleton(sp => new MoneyPairing(sp.GetRequiredService<TimeProvider>()));
 builder.Services.AddSingleton<IMoneyPairClient>(sp => new MoneyPairClient(sp.GetRequiredService<IGridJoinClient>(), sp.GetRequiredService<TimeProvider>()));
 builder.Services.AddSingleton(sp => new RegionHosts(MoneyConnections.Robust(sp.GetRequiredService<Func<LauncherSettings>>())));
-// The owner's money alerts (money design §8.8): raised by the money service, read on the dashboard and the Money page.
+// The owner's money alerts: raised by the money service, read on the dashboard and the Money page.
 builder.Services.AddSingleton(sp => new MoneyAlerts(MoneyConnections.Money(sp.GetRequiredService<Func<LauncherSettings>>()),
     sp.GetRequiredService<TimeProvider>(), sp.GetRequiredService<ILogger<MoneyAlerts>>(), sp.GetRequiredService<AuditLog>()));
 builder.Services.AddSingleton<IMoneyAlerts>(sp => sp.GetRequiredService<MoneyAlerts>());
@@ -435,7 +435,7 @@ builder.Services.AddSingleton(sp => new RegionVerification(MoneyConnections.Mone
 builder.Services.AddSingleton(sp => new MoneyLocations(MoneyConnections.Money(sp.GetRequiredService<Func<LauncherSettings>>()),
     MoneyConnections.Robust(sp.GetRequiredService<Func<LauncherSettings>>()), sp.GetRequiredService<RegionVerification>(),
     sp.GetRequiredService<PresenceCheck>(), sp.GetRequiredService<TimeProvider>()));
-// The money pages' view of regions and where people are (verified-regions design §8.12); tests swap it.
+// The money pages' view of regions and where people are; tests swap it.
 builder.Services.AddSingleton<IMoneyRegions>(sp => new MoneyRegions(sp.GetRequiredService<RegionVerification>(), sp.GetRequiredService<RegionPins>(),
     sp.GetRequiredService<MoneyLocations>()));
 builder.Services.AddSingleton<ISecureSessionCheck>(sp => sp.GetRequiredService<PresenceCheck>());

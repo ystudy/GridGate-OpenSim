@@ -45,7 +45,7 @@ public sealed class MoneyPageAuthTests
 
     /// <summary>
     /// One POST handler, with a form that would act if the caller were allowed. <paramref name="OwnerOnly"/>: an admin is
-    /// refused too (verified-regions design: limit overrides and moved regions are the owner's).
+    /// refused too (limit overrides and moved regions are the owner's).
     /// </summary>
     private sealed record Case(string Page, string Handler, Site Site, Dictionary<string, string> Form, Effect Effect, string? BooksCall = null,
         bool CodePending = false, bool OwnerOnly = false);

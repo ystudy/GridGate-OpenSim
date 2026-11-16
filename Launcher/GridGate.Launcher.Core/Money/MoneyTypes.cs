@@ -39,10 +39,10 @@ public enum MoneyOutcome
     /// </summary>
     HoldMismatch,
 
-    /// <summary>A hypergrid visitor from a grid the owner hasn't listed, on either side (verified-regions design §8.6).</summary>
+    /// <summary>A hypergrid visitor from a grid the owner hasn't listed, on either side.</summary>
     VisitorGridNotListed,
 
-    /// <summary>A region key's daily spending or payout limit is used up (verified-regions design §8.7).</summary>
+    /// <summary>A region key's daily spending or payout limit is used up.</summary>
     OverKeyLimit,
 }
 

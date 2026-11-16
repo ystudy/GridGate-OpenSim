@@ -110,7 +110,7 @@ public sealed class MoneyServiceClientTests(MoneyMariaDb maria) : IClassFixture<
     }
 
     /// <summary>
-    /// money design §8.4: the module's health, handoff and arrival, as the client sends them, move A from Here to There, so
+    /// The module's health, handoff and arrival, as the client sends them, move A from Here to There, so
     /// a fee is charged There and no longer Here. A cancel, a crossing and a handoff to another grid are accepted too.
     /// </summary>
     [Fact]

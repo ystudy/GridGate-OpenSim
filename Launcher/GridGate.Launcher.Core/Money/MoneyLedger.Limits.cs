@@ -7,7 +7,7 @@ namespace GridGate.Launcher.Core.Money;
 public enum LimitKind { Person, Key }
 
 /// <summary>
-/// One person or one key the daily limits apply to (verified-regions design §8.7). A person is named by their wallet's
+/// One person or one key the daily limits apply to. A person is named by their wallet's
 /// <c>accounts.id</c> as text; a key by its grant's <see cref="RegionKeyGrant.KeyId"/> (a program's instance, or
 /// <c>server:</c> and the paired server's id), the text <see cref="RegionPins.CarryOverAsync"/> rewrites on a new pairing.
 /// </summary>
@@ -29,7 +29,7 @@ public sealed record LimitTarget(LimitKind Kind, string Id)
 public sealed record LimitView(long DailySpend, long DailyPayout, bool OwnSpend, bool OwnPayout, DateTime? Until, long SpentToday, long PaidOutToday);
 
 /// <summary>
-/// The daily limits (verified-regions design §8.7). Over the last 24 hours, rolling: a person's spending is what left their
+/// The daily limits. Over the last 24 hours, rolling: a person's spending is what left their
 /// wallet in the entry types a region starts (<see cref="SpendTypes"/>), a hold counted when made unless it was returned;
 /// a key's spending is the same, by the key that asked; a key's payouts are its script payouts. Staff movements never
 /// count. A request with a key locks the key first (<see cref="LockKeyAsync"/>), then the accounts in their usual order,

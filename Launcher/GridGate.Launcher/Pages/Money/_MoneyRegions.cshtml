@@ -4,7 +4,7 @@
 @{
     var s = Model.Current;
 }
-@* Every region and whether money works there (verified-regions design §8.2, §8.3, §8.12). *@
+@* Every region and whether money works there. *@
 <section class="work-panel" id="money-regions" aria-labelledby="money-regions-title">
     <h2 id="money-regions-title" class="panel-title">Regions<help-tip>Every region on the grid, and whether money works there. Money works only in verified regions: their program runs GridGate's money module, says where people go when they leave, and checked in within the last 10 minutes. Everywhere else people can still visit; only money is off.</help-tip></h2>
     <p><a href="@MoneyVerifyText.Link(MoneyVerifyText.VerifiedAnchor)" target="_blank" rel="noopener noreferrer">What "verified" means</a></p>

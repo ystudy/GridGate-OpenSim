@@ -18,14 +18,14 @@ public sealed record CoinsLine(DateTimeOffset At, string What, string Who, long 
 
 /// <summary>
 /// My coins (<c>/guest/coins</c>; money design §9.5): the resident's balance, the newest 50 lines, and the "my scripts may
-/// pay out" switch, which is off until they turn it on; and one line when money is paused for them (verified-regions
-/// design §8.12). Not there while money is off.
+/// pay out" switch, which is off until they turn it on; and one line when money is paused for them. Not there while money
+/// is off.
 /// </summary>
 [MoneyPagesOnly]
 public sealed class CoinsModel(IMoneyBooks books, Func<LauncherSettings> settings, IRobustClient robust, AuditLog audit,
     IStringLocalizer<ResidentText> t, IMoneyRegions regions) : PageModel
 {
-    /// <summary>Money is paused for them: where they are now isn't verified. On another grid they have no location here (Ruling 24).</summary>
+    /// <summary>Money is paused for them: where they are now isn't verified. On another grid they have no location here.</summary>
     /// <summary>The text key of the line saying money is paused for them, and why; null when it isn't.</summary>
     public string? Paused { get; private set; }
 
@@ -101,7 +101,7 @@ public sealed class CoinsModel(IMoneyBooks books, Func<LauncherSettings> setting
         }
         try
         {
-            // Their newest logged-in session (Ruling 3); nothing when they aren't in the world.
+            // Their newest logged-in session; nothing when they aren't in the world.
             Paused = (await regions.WhereAgentAsync(principal, ct))?.State switch
             {
                 LocationState.Unverified => "MyCoins.MoneyPaused",

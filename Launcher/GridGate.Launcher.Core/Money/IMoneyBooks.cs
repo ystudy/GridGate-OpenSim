@@ -22,7 +22,7 @@ public interface IMoneyBooks
     Task<MoneyResult> SetPayoutsAllowedAsync(Guid residentId, bool allowed, CancellationToken ct);
     Task<SelfCheckResult> SelfCheckAsync(CancellationToken ct);
 
-    /// <summary>A person's or key's daily limits now; null for a person without a wallet (verified-regions design §8.7).</summary>
+    /// <summary>A person's or key's daily limits now; null for a person without a wallet.</summary>
     Task<LimitView?> LimitsAsync(LimitTarget target, CancellationToken ct);
     Task<LimitView?> PersonLimitsAsync(AccountRef person, CancellationToken ct);
 

@@ -2,7 +2,7 @@ using MySqlConnector;
 
 namespace GridGate.Launcher.Core.Money;
 
-/// <summary>What Robust's Presence table says about a session. Where it is isn't Presence's to say (money design §8.4).</summary>
+/// <summary>What Robust's Presence table says about a session. Where it is isn't Presence's to say.</summary>
 public enum PresenceOutcome { Ok, NoSession, Unavailable }
 
 /// <summary>The economy helper's check of a viewer's secure session (money design §8.5); a seam so tests can fake it.</summary>
@@ -20,13 +20,13 @@ public sealed class PresenceCheck(Func<CancellationToken, Task<MySqlConnection>>
     /// <summary>
     /// Ok when <paramref name="agentId"/> is logged in with both session ids, in any region. Only Robust's login and the
     /// Gatekeeper write a Presence row, so this part is trustworthy; <c>Presence.RegionID</c> isn't, since any region can
-    /// rewrite it, so where the avatar is comes from the money service's own record instead (money design §8.4, L-1).
+    /// rewrite it, so where the avatar is comes from the money service's own record instead.
     /// </summary>
     public Task<PresenceOutcome> LoggedInAsync(Guid agentId, Guid sessionId, Guid secureSessionId, CancellationToken ct) =>
         secureSessionId == Guid.Empty ? Task.FromResult(PresenceOutcome.NoSession)
             : HasRowAsync(agentId, sessionId, secureSessionId, ct);
 
-    /// <summary>Ok when <paramref name="agentId"/> is logged in with <paramref name="sessionId"/>, in any region: what an arrival needs (money design §8.4).</summary>
+    /// <summary>Ok when <paramref name="agentId"/> is logged in with <paramref name="sessionId"/>, in any region: what an arrival needs.</summary>
     public Task<PresenceOutcome> HasSessionAsync(Guid agentId, Guid sessionId, CancellationToken ct) =>
         HasRowAsync(agentId, sessionId, null, ct);
 

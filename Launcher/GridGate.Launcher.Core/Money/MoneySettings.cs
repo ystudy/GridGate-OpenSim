@@ -6,7 +6,7 @@ namespace GridGate.Launcher.Core.Money;
 [JsonConverter(typeof(JsonStringEnumConverter<MoneyMode>))]
 public enum MoneyMode { Off, Play, Real, Gloebit }
 
-/// <summary>Which hypergrid visitors may pay and be paid (verified-regions design §8.6); saved by name.</summary>
+/// <summary>Which hypergrid visitors may pay and be paid; saved by name.</summary>
 [JsonConverter(typeof(JsonStringEnumConverter<VisitorMoney>))]
 public enum VisitorMoney { Off, Listed, All }
 

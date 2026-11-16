@@ -34,7 +34,7 @@ internal static class MoneyApi
     internal sealed record ChargeBody(Guid? TxnId, string? Type, Who? Payer, long? Amount, Guid? PayTo, Guid? RegionId);
     internal sealed record HoldBody(Guid? TxnId, string? Kind, Who? Buyer, Who? Seller, long? Amount, Guid? RegionId, Guid? ObjectId, string? ObjectName);
     internal sealed record SettleBody(Guid? TxnId, long? HoldId);
-    /// <summary>A module's handoff (money design §8.4); <c>Kind</c> is <c>teleport</c>, <c>crossing</c> or <c>other_grid</c>.</summary>
+    /// <summary>A module's handoff; <c>Kind</c> is <c>teleport</c>, <c>crossing</c> or <c>other_grid</c>.</summary>
     internal sealed record HandoffBody(Guid? Id, Guid? SessionId, Guid? FromRegion, Guid? ToRegion, string? Kind);
     internal sealed record CancelBody(Guid? SessionId, Guid? FromRegion);
     internal sealed record ArrivedBody(Guid? Id, Guid? SessionId, Guid? AgentId, Guid? RegionId);
@@ -52,8 +52,8 @@ internal static class MoneyApi
     /// <summary>
     /// What the endpoints need. <see cref="Pairing"/>, <see cref="Update"/> and <see cref="Pins"/> are for Region Servers
     /// (money plan 3): without them nobody can pair and a server key gets <c>unavailable</c>. <see cref="Fingerprint"/> is
-    /// the certificate this listener serves. Without <see cref="Verification"/> and <see cref="Locations"/> nobody can pay
-    /// (money design §8.5): every payment, balance, handoff and arrival is <c>unavailable</c>.
+    /// the certificate this listener serves. Without <see cref="Verification"/> and <see cref="Locations"/> nobody can pay:
+    /// every payment, balance, handoff and arrival is <c>unavailable</c>.
     /// </summary>
     internal sealed record Context(MoneyLedger Ledger, PresenceCheck Presence, Func<LauncherSettings> Settings, MoneyAuthFailures Failures, ILogger Log,
         MoneyPairing? Pairing = null, Func<Func<LauncherSettings, LauncherSettings>, LauncherSettings>? Update = null, RegionPins? Pins = null,
@@ -65,7 +65,7 @@ internal static class MoneyApi
     }
 
     /// <summary>
-    /// An arrival nothing vouches for yet is held up to <see cref="MoneyLocations.ArrivalWait"/> (money design §8.4), looking
+    /// An arrival nothing vouches for yet is held up to <see cref="MoneyLocations.ArrivalWait"/>, looking
     /// again every <see cref="MoneyLocations.ArrivalRetry"/>. A key may have this many open at once; past that it is refused
     /// before anything is looked up, so a key spamming arrivals can't take the database's connections.
     /// </summary>
@@ -100,7 +100,7 @@ internal static class MoneyApi
             var w = await Read<Who>(http, ct);
             return await WithViewer(c, w, grant, ct) is { } refusal ? Code(refusal) : Of(await c.Ledger.BalanceAsync(Account(w), ct));
         });
-        // Every payment checks its payer (money design §8.5). Receivers get no location check: they lose nothing by it and are
+        // Every payment checks its payer. Receivers get no location check: they lose nothing by it and are
         // often offline; the ledger's visitor rule still applies to them.
         Post(app, "/money/v1/transfer", c, async (http, grant, ct) =>
         {
@@ -139,7 +139,7 @@ internal static class MoneyApi
                 ? Code(refusal)
                 : Of(await Watched(c, grant, request.Buyer.AgentId, await c.Ledger.HoldAsync(request, ct))) with { ToBalance = null };
         });
-        // Where avatars are (money design §8.4). These keep working while coins are off, so the record still follows everyone
+        // Where avatars are. These keep working while coins are off, so the record still follows everyone
         // when they come back on.
         Post(app, "/money/v1/handoff", c, async (http, grant, ct) =>
         {
@@ -223,7 +223,7 @@ internal static class MoneyApi
                         c.Log.LogInformation("Paired a Region Server at {Host}, region ports from {FirstPort}{Replacing}.", LogText.Clean(host), firstPort,
                             replacing ? ", replacing its earlier pairing" : "");
                         answer = new PairAnswer("ok", key, PairingProof.Server(code, c.Fingerprint, nonce, key));
-                        // Pins follow the same machine (money design §8.3); a different machine at that address gets none. Only
+                        // Pins follow the same machine; a different machine at that address gets none. Only
                         // after the settings hold the new key: if this fails the pairing stands, and the regions stay pinned to
                         // the old server id, so they show as moves until the owner approves them (money stays off there).
                         if (c.Pins is { } pins)
@@ -343,8 +343,8 @@ internal static class MoneyApi
         object answer;
         try
         {
-            // A paired Region Server's key covers the regions Robust lists at its address that are pinned to it (money design
-            // §8.3), never this computer's own.
+            // A paired Region Server's key covers the regions Robust lists at its address that are pinned to it, never this
+            // computer's own.
             if (grant.ServerHost is not null)
             {
                 if (c.Pins is null) throw new MoneyUnavailableException(new InvalidOperationException("no region pins"));
@@ -392,7 +392,7 @@ internal static class MoneyApi
         await JsonSerializer.DeserializeAsync<T>(http.Request.Body, Json, ct) ?? throw new BadRequest();
 
     /// <summary>
-    /// Null when coins may leave <paramref name="w"/> in <paramref name="regionId"/> (money design §8.5); otherwise the
+    /// Null when coins may leave <paramref name="w"/> in <paramref name="regionId"/>; otherwise the
     /// refusal's code. In order: logged in with both session ids (Presence, which only Robust writes); verified somewhere
     /// by the service's own record, never Presence's region; that place is one of the key's regions and the one the request
     /// names; and that region is verified.
@@ -433,7 +433,7 @@ internal static class MoneyApi
     private static CancellationToken AlertToken => CancellationToken.None;
 
     /// <summary>
-    /// Raises the alert a payment's answer calls for (money design §8.8): a key over its daily limit, or
+    /// Raises the alert a payment's answer calls for: a key over its daily limit, or
     /// <paramref name="payer"/> over their daily spending limit. Returns <paramref name="r"/> unchanged.
     /// </summary>
     private static async Task<MoneyResult> Watched(Context c, RegionKeyGrant grant, Guid? payer, MoneyResult r)

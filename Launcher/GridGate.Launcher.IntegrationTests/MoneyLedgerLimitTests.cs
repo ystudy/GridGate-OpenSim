@@ -5,7 +5,7 @@ using Xunit;
 namespace GridGate.Launcher.IntegrationTests;
 
 /// <summary>
-/// Daily limits per person and per region key, with the owner's own limits (verified-regions design §8.7), on a real
+/// Daily limits per person and per region key, with the owner's own limits, on a real
 /// MariaDB. Key p1 and p2 are region programs; <see cref="Server"/> is a paired Region Server's key id.
 /// </summary>
 [Collection(GridCollection.Name)]
@@ -82,7 +82,7 @@ public sealed class MoneyLedgerLimitTests(MoneyMariaDb maria) : IClassFixture<Mo
         Assert.Equal(10_000, (await ledger.PersonLimitsAsync(AccountRef.Resident(A), Ct))!.SpentToday);
 
         // B pays A, and staff refund it: the coins go back from A to B, but neither the payer's nor the payee's spending
-        // changes (Ruling 15), nor the key's.
+        // changes, nor the key's.
         var paid = await ledger.TransferAsync(Pay(B, 50), Ct);
         Assert.Equal(MoneyOutcome.Ok, paid.Outcome);
         Assert.Equal(MoneyOutcome.Ok, await Outcome(ledger.RefundAsync(paid.EntryId!.Value, Owner, Ct)));

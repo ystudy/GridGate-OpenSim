@@ -2,11 +2,11 @@ using MySqlConnector;
 
 namespace GridGate.Launcher.Core.Money;
 
-/// <summary>A region Robust lists at one paired server but that is pinned to another (money design §8.3): covered by neither.</summary>
+/// <summary>A region Robust lists at one paired server but that is pinned to another: covered by neither.</summary>
 public sealed record RegionMove(Guid RegionId, Guid PinnedTo, Guid ListedAt);
 
 /// <summary>
-/// Which paired Region Server a region id belongs to (money design §8.3, review finding L-4). The first time a region id is
+/// Which paired Region Server a region id belongs to. The first time a region id is
 /// listed in Robust at a paired server's address and ports it is pinned to that server in the money database; after that
 /// only that server's key covers it, however Robust's list changes. A region listed at another server stays uncovered
 /// until the owner approves the move; a request that finds it raises a <see cref="AlertKind.RegionMoved"/> alert when
@@ -46,7 +46,7 @@ public sealed class RegionPins(Func<CancellationToken, Task<MySqlConnection>> op
         {
             throw new MoneyUnavailableException(e);
         }
-        // §8.8: a region listed here but pinned to another server has moved; the owner hears of it, once a day at most.
+        // A region listed here but pinned to another server has moved; the owner hears of it, once a day at most.
         // Raising it never fails this answer, nor does the caller hanging up (no token).
         if (raiseMoves && alerts is not null)
             foreach (var moved in listed.Where(r => pins.TryGetValue(r, out var to) && to != server.Id))

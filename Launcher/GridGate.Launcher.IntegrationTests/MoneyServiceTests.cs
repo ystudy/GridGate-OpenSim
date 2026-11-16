@@ -100,7 +100,7 @@ public sealed class MoneyServiceTests(MoneyMariaDb maria) : IClassFixture<MoneyM
 
     /// <summary>
     /// <paramref name="key"/>'s module checks in for <paramref name="region"/>, Robust writes a login start for the session
-    /// and the module reports the arrival: the service has the avatar verified there (money design §8.4).
+    /// and the module reports the arrival: the service has the avatar verified there.
     /// </summary>
     private async Task Place(MoneyTestDatabase db, string key, Guid agent, Guid region, Guid session)
     {

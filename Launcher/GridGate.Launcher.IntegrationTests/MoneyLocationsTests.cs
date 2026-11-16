@@ -5,7 +5,7 @@ using Xunit;
 namespace GridGate.Launcher.IntegrationTests;
 
 /// <summary>
-/// The money service's own record of where each session is (money design §8.4, review finding L-1). Programs p1 (R1, R5)
+/// The money service's own record of where each session is. Programs p1 (R1, R5)
 /// and p2 (R2) are local programs whose modules have checked in; p4 (R4) has never called (stock OpenSim, so R4 isn't
 /// verified); the paired Region Server (R3) has checked in. Resident U and visitor V are logged in.
 /// </summary>
@@ -153,7 +153,7 @@ public sealed class MoneyLocationsTests(MoneyMariaDb maria) : IClassFixture<Mone
         await LoggedInAtR1();
         var before = await Where();
 
-        // Neon Pier saw U next door and claims they arrived, to charge them. Two keys disagree (Ruling 12): U is paused.
+        // An arrival in R3 nobody handed U to, while p1 has U verified: two keys disagree, so U is paused.
         var result = await Arrive(Paired, R3);
 
         Assert.Equal(PlaceOutcome.Conflict, result.Outcome);
@@ -169,7 +169,7 @@ public sealed class MoneyLocationsTests(MoneyMariaDb maria) : IClassFixture<Mone
         await _db.AddSessionStart(SessionU, U, R3, "login");
         Assert.Equal(PlaceOutcome.Ok, (await Arrive(Paired, R3)).Outcome); // U really was in Neon Pier
 
-        // U teleports to R2; Neon Pier keeps its handoff back so U would stay its verified, chargeable avatar.
+        // U arrives in R2 with no handoff from R3, while R3's key still has U verified: neither key is trusted.
         var result = await Arrive(P2, R2);
 
         Assert.Equal(PlaceOutcome.Conflict, result.Outcome);
@@ -200,7 +200,7 @@ public sealed class MoneyLocationsTests(MoneyMariaDb maria) : IClassFixture<Mone
         await LoggedInAtR1();
         var before = await Where();
 
-        // R4 isn't verified: it must not be able to knock anyone out.
+        // R4 isn't verified: its arrival moves nobody.
         var result = await Arrive(P4, R4);
 
         Assert.Equal(PlaceOutcome.Refused, result.Outcome);
@@ -258,7 +258,7 @@ public sealed class MoneyLocationsTests(MoneyMariaDb maria) : IClassFixture<Mone
         await StartAsync();
         await LoggedInAtR1();
 
-        var arrival = _locations.ArrivedAsync(P1, SessionU, U, R5, Ct); // the same key: refused, not paused (Ruling 12)
+        var arrival = _locations.ArrivedAsync(P1, SessionU, U, R5, Ct); // the same key: refused, not paused
         for (var i = 0; i < 19; i++) // 9.5 s
         {
             await Task.Delay(30, Ct);
@@ -537,7 +537,7 @@ public sealed class MoneyLocationsTests(MoneyMariaDb maria) : IClassFixture<Mone
         await StartAsync();
         await _db.AddSessionStart(SessionV, V, R3, "gatekeeper");
 
-        // The owner's rule (§8.4): only the Grid Asset Server's own regions count a Gatekeeper start.
+        // The owner's rule: only the Grid Asset Server's own regions count a Gatekeeper start.
         Assert.Equal(PlaceOutcome.PlacedUnverified, (await Arrive(Paired, R3, SessionV, V)).Outcome);
 
         AssertAt(await Where(SessionV), R3, Paired.KeyId, LocationState.Unverified);
@@ -551,8 +551,8 @@ public sealed class MoneyLocationsTests(MoneyMariaDb maria) : IClassFixture<Mone
         await _db.AddSessionStart(SessionV, V, R1, "gatekeeper");
         Assert.Equal(PlaceOutcome.Ok, (await Arrive(P1, R1, SessionV, V)).Outcome);
 
-        // V's own grid asks our Gatekeeper to send them to R5 (same program) while they are still in R1. Through another
-        // key's region the same replay pauses V instead (Ruling 12, as the Neon Pier test shows); either way no start
+        // A second Gatekeeper start, into R5 (same program), while V is verified in R1. Through another key's region the
+        // same start pauses V instead; either way no start
         // moves a verified session.
         await _db.AddSessionStart(SessionV, V, R5, "gatekeeper");
         var result = await Arrive(P1, R5, SessionV, V);
@@ -670,11 +670,11 @@ public sealed class MoneyLocationsTests(MoneyMariaDb maria) : IClassFixture<Mone
         await StartAsync();
         await _db.AddSessionStart(SessionU, U, R1, "login");
 
-        // Neon Pier claims U before U's viewer reaches R1: nothing vouches for it, so it can only place U unverified.
+        // An arrival in R3 before U's viewer reaches R1: nothing vouches for it, so U is only placed unverified.
         Assert.Equal(PlaceOutcome.PlacedUnverified, (await Arrive(Paired, R3)).Outcome);
         AssertAt(await Where(), R3, Paired.KeyId, LocationState.Unverified);
 
-        // A login start places only a session not yet placed (Ruling 10), so money is paused until the next login, and
+        // A login start places only a session not yet placed, so money is paused until the next login, and
         // nobody is verified anywhere.
         Assert.Equal(PlaceOutcome.PlacedUnverified, (await Arrive(P1, R1)).Outcome);
         AssertAt(await Where(), R1, "p1", LocationState.Unverified);
@@ -684,14 +684,14 @@ public sealed class MoneyLocationsTests(MoneyMariaDb maria) : IClassFixture<Mone
     public async Task Withheld_login_arrival_cannot_later_verify_a_moved_avatar()
     {
         await StartAsync();
-        await _db.AddSessionStart(SessionU, U, R3, "login"); // U logs in to Neon Pier, which never reports the arrival
+        await _db.AddSessionStart(SessionU, U, R3, "login"); // U logs in to R3, whose arrival isn't reported
 
-        // U teleports on to R2. Neon Pier's handoff isn't held (it never placed U), so R2 can only place U unverified.
+        // U teleports on to R2. R3's handoff isn't held (it never placed U), so R2 can only place U unverified.
         Assert.Equal(PlaceOutcome.NotHeld, await Handoff(Paired, R3, R2));
         Assert.Equal(PlaceOutcome.PlacedUnverified, (await Arrive(P2, R2)).Outcome);
         AssertAt(await Where(), R2, "p2", LocationState.Unverified);
 
-        // Now Neon Pier claims U with the login start it held back.
+        // A late arrival in R3, with its unused login start, is refused.
         var claim = await Arrive(Paired, R3);
 
         Assert.NotEqual(PlaceOutcome.Ok, claim.Outcome);
@@ -721,10 +721,10 @@ public sealed class MoneyLocationsTests(MoneyMariaDb maria) : IClassFixture<Mone
         await LoggedInAtR1();
         Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, Elsewhere, HandoffKind.OtherGrid));
 
-        // While U is away, Neon Pier claims them.
+        // While U is away, an arrival in R3 is reported for them.
         Assert.Equal(PlaceOutcome.PlacedUnverified, (await Arrive(Paired, R3)).Outcome);
 
-        // U comes home through the Gatekeeper into a local region: the new start still places them (Ruling 8).
+        // U comes home through the Gatekeeper into a local region: the new start still places them.
         await _db.AddSessionStart(SessionU, U, R2, "gatekeeper");
         Assert.Equal(PlaceOutcome.Ok, (await Arrive(P2, R2)).Outcome);
         AssertAt(await Where(), R2, "p2", LocationState.Verified);
@@ -796,7 +796,7 @@ public sealed class MoneyLocationsTests(MoneyMariaDb maria) : IClassFixture<Mone
     public async Task Leaving_the_grid_and_returning_does_not_rearm_a_used_login_start()
     {
         await StartAsync();
-        await _db.AddSessionStart(SessionU, U, R3, "login"); // U logs in at Neon Pier, which learns the session id
+        await _db.AddSessionStart(SessionU, U, R3, "login"); // U logs in at R3
         Assert.Equal(PlaceOutcome.Ok, (await Arrive(Paired, R3)).Outcome);
         Assert.Equal(PlaceOutcome.Ok, await Handoff(Paired, R3, Elsewhere, HandoffKind.OtherGrid));
         await _db.Sql($"DELETE FROM `robust`.`Presence` WHERE SessionID = '{SessionU}'"); // HG logout while away
@@ -808,7 +808,7 @@ public sealed class MoneyLocationsTests(MoneyMariaDb maria) : IClassFixture<Mone
         // U comes home through the Gatekeeper, same session id, into the local region R2.
         await _db.AddPresence(U, R2, SessionU, SecureU);
         await _db.AddSessionStart(SessionU, U, R2, "gatekeeper");
-        // Neon Pier claims U again with the login start it already used.
+        // An arrival in R3 again, with the login start it already used, is refused.
         Assert.NotEqual(PlaceOutcome.Ok, (await Arrive(Paired, R3)).Outcome);
 
         Assert.Equal(PlaceOutcome.Ok, (await Arrive(P2, R2)).Outcome);
