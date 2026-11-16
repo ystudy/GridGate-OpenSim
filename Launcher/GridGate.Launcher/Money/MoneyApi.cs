@@ -142,9 +142,6 @@ internal static class MoneyApi
                     var replacing = replaced.Count > 0;
                     try
                     {
-                        // Pins follow the same machine (money design §8.3); a different machine at that address gets none.
-                        if (c.Pins is { } pins)
-                            foreach (var old in replaced) await pins.CarryOverAsync(old, server, ct);
                         update(s => s with
                         {
                             Money = s.Money with
@@ -157,6 +154,22 @@ internal static class MoneyApi
                         c.Log.LogInformation("Paired a Region Server at {Host}, region ports from {FirstPort}{Replacing}.", LogText.Clean(host), firstPort,
                             replacing ? ", replacing its earlier pairing" : "");
                         answer = new PairAnswer("ok", key, PairingProof.Server(code, c.Fingerprint, nonce, key));
+                        // Pins follow the same machine (money design §8.3); a different machine at that address gets none. Only
+                        // after the settings hold the new key: if this fails the pairing stands, and the regions stay pinned to
+                        // the old server id, so they show as moves until the owner approves them (money stays off there).
+                        if (c.Pins is { } pins)
+                            foreach (var old in replaced)
+                            {
+                                try
+                                {
+                                    await pins.CarryOverAsync(old, server, ct);
+                                }
+                                catch (MoneyUnavailableException e)
+                                {
+                                    c.Log.LogError("A Region Server's pins couldn't be carried over to its new pairing ({Error}); its regions wait for approval.",
+                                        e.GetType().Name);
+                                }
+                            }
                     }
                     catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidOperationException)
                     {

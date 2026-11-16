@@ -35,6 +35,7 @@ public sealed class MoneyPairServiceTests(MoneyMariaDb maria) : IClassFixture<Mo
     private LauncherSettings _settings = null!;
     private MoneyMode _mode = MoneyMode.Play;
     private bool _saveFails;
+    private bool _moneyDown;
     private MoneyPairing _pairing = null!;
     private string _fingerprint = "";
 
@@ -77,7 +78,7 @@ public sealed class MoneyPairServiceTests(MoneyMariaDb maria) : IClassFixture<Mo
         _host = new MoneyServiceHost(ledger, presence, () => _settings, () => _mode, () => cert,
             new MoneyAuthFailures(time, loggers.CreateLogger<MoneyAuthFailures>()), loggers, new MoneyStatus(), _pairing,
             change => _saveFails ? throw new IOException("disk full") : _settings = change(_settings),
-            new RegionPins(MoneyConnections.Money(() => dbSettings), new RegionHosts(MoneyConnections.Robust(() => dbSettings)), TimeProvider.System));
+            new RegionPins(MoneyConnections.Money(() => _moneyDown ? dbSettings with { MariaDbPort = MoneyMariaDb.FreePort() } : dbSettings), new RegionHosts(MoneyConnections.Robust(() => dbSettings)), TimeProvider.System));
         await _host.StartAsync(Ct);
         _http = new HttpClient(new SocketsHttpHandler
         {
@@ -360,6 +361,50 @@ public sealed class MoneyPairServiceTests(MoneyMariaDb maria) : IClassFixture<Mo
         Assert.Equal("wrong_region", (string?)(await Post("balance", Who(A), keyA)).Body!["code"]);
         Assert.Equal("wrong_region", (string?)(await Post("balance", Who(A), keyB)).Body!["code"]); // listed elsewhere: B doesn't cover it now either
         Assert.Equal(0, (await Post("health", new { }, keyA)).Body!["regions"]!.GetValue<int>());
+    }
+
+    [Fact]
+    public async Task Re_pairing_whose_save_fails_leaves_the_old_key_and_its_pins_alone()
+    {
+        var db = await StartAsync();
+        await db.AddPresence(A, Theirs, Session, Secure);
+        var old = await PairAsync(machineId: "rs-1");
+        Assert.Equal(1, (await Post("health", new { }, old)).Body!["regions"]!.GetValue<int>());
+        var oldId = _settings.Money.PairedServers!.Single().Id;
+        var (code, _) = _pairing.Issue();
+        var nonce = NewNonce();
+        _saveFails = true;
+
+        var body = (await Post("pair", new { host = ServerHost, firstPort = 9000, machineId = "rs-1", nonce, proof = PairingProof.Client(code, _fingerprint, nonce, ServerHost) })).Body;
+        _saveFails = false;
+
+        Assert.Equal("refused", (string?)body!["code"]);
+        Assert.Equal(oldId, _settings.Money.PairedServers!.Single().Id);
+        Assert.Equal(1, (await Post("health", new { }, old)).Body!["regions"]!.GetValue<int>());
+        Assert.Equal(oldId.ToString("N"), await db.Text($"SELECT server_id FROM `money`.`region_pins` WHERE region_id = '{Theirs}'"));
+    }
+
+    [Fact]
+    public async Task Re_pairing_while_the_money_database_is_down_still_pairs_and_leaves_the_regions_as_moves()
+    {
+        var db = await StartAsync();
+        await db.AddPresence(A, Theirs, Session, Secure);
+        var old = await PairAsync(machineId: "rs-1");
+        Assert.Equal(1, (await Post("health", new { }, old)).Body!["regions"]!.GetValue<int>());
+        var oldId = _settings.Money.PairedServers!.Single().Id;
+        _moneyDown = true;
+
+        var fresh = await PairAsync(machineId: "rs-1"); // not a 500: the pairing itself is saved
+        _moneyDown = false;
+
+        var server = Assert.Single(_settings.Money.PairedServers!);
+        Assert.NotEqual(oldId, server.Id);
+        Assert.Equal(0, (await Post("health", new { }, fresh)).Body!["regions"]!.GetValue<int>());
+        Assert.Equal(oldId.ToString("N"), await db.Text($"SELECT server_id FROM `money`.`region_pins` WHERE region_id = '{Theirs}'"));
+        var log = string.Join("\n", _logs);
+        Assert.Contains("MoneyUnavailableException", log);
+        Assert.DoesNotContain(oldId.ToString("N"), log);
+        Assert.DoesNotContain(server.Id.ToString("N"), log);
     }
 
     [Fact]
