@@ -3,7 +3,10 @@
 It uses the plan charts' colours, fonts and light/dark switch (../plans/make_charts.py), so the two sets match.
 The numbers come from the bench runs on the 2-vCPU Debian 12 test VM, written up in
 docs/superpowers/specs/2026-11-06-rapier-early-results.md (busy regions, DragonFyre start-up) and
-ThirdParty/ubODE/README.md (the start-up fix). The freeze and wake numbers are from the region freeze tests,
+ThirdParty/ubODE/README.md (the start-up fix). Memory is the region's RSS 12 minutes after DragonFyre starts
+from the database (past the 6-minute asset memory cache), three runs per engine of build 5572142 on 2026-11-15:
+ubODE 491-501 MB, Rapier 634-667 MB (the early results' 1.1 GB came before Rapier's memory fixes).
+The freeze and wake numbers are from the region freeze tests,
 which are not a GridGate feature yet.
 Run: python make_charts.py              rewrites the SVG next to this script
      python make_charts.py <dir> --previews   also writes an always-dark copy and preview.html to <dir>
@@ -131,8 +134,8 @@ def chart():
                       'Seconds until the region is ready, lower is better.'))
     rows = [
         ('ubODE before the fix', 'The OpenSim original', 'bo', 19.7, '19.7 s', ''),
-        ('ubODE in GridGate', '', 'bu', 5.3, '5.3 s', '465 MB of memory'),
-        ('Rapier', '', 'br', 7.8, '7.8 s', '1,150 MB of memory'),
+        ('ubODE in GridGate', '', 'bu', 5.3, '5.3 s', 'about 500 MB of memory'),
+        ('Rapier', '', 'br', 7.8, '7.8 s', 'about 650 MB of memory'),
     ]
     y0 = y + 44
     rh = 44
@@ -168,8 +171,8 @@ def chart():
     desc = ('Physics engines compared. Busy region, physics milliseconds per 91 ms frame, ubODE then Rapier: '
             '100 objects moving 1.5 and 3.0; 500 in a pile 48.4 and 10.9; 1,000 moving 29.3 and 26.5; '
             '2,000 moving 121.4 (region at a quarter speed) and 57.9; DragonFyre with a 500-object pile 54.8 and 14.2. '
-            'DragonFyre start-up: ubODE before the fix 19.7 s, ubODE in GridGate 5.3 s with 465 MB, '
-            'Rapier 7.8 s with 1,150 MB. Freeze test (not in GridGate yet): cold start 5.3 s, freeze 0.005 s, '
+            'DragonFyre start-up: ubODE before the fix 19.7 s, ubODE in GridGate 5.3 s with about 500 MB, '
+            'Rapier 7.8 s with about 650 MB. Freeze test (not in GridGate yet): cold start 5.3 s, freeze 0.005 s, '
             'wake 0.015 s, memory 468 MB to 82 MB while frozen.')
     return 'Physics engines: busy regions, start-up, freeze and wake', desc, h, ''.join(out)
 
