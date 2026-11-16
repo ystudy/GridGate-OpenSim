@@ -105,23 +105,45 @@ public sealed class PlaceReporterTests
         Assert.Empty(region.Service.PlacesOf("handoff"));
     }
 
-    /// <summary>money design §8.4: a teleport's start hands the session from this region to its final destination.</summary>
+    /// <summary>A teleport's start hands nobody over yet: the handoff goes when this region lets the avatar go.</summary>
     [Fact]
-    public void Teleport_start_sends_a_teleport_handoff()
+    public void Teleport_hands_off_when_the_avatar_is_let_go()
     {
         var region = Build();
         var client = region.Arrive(Buyer);
+        var sp = region.Scene.GetScenePresence(Buyer);
 
         TeleportStart(region, client, Elsewhere);
+        region.FlushPlaces();
+        Assert.Empty(region.Service.PlacesOf("handoff"));
+        region.Scene.EventManager.TriggerOnMakeChildAgent(sp);
         region.FlushPlaces();
 
         var handoff = Assert.Single(region.Service.PlacesOf("handoff"));
         Assert.NotEqual(Guid.Empty, handoff.Txn);
         Assert.Equal(new object?[] { client.SessionId.Guid, Region.Guid, Elsewhere.RegionID.Guid, "teleport" }, handoff.Args);
         Assert.Equal(new[] { "arrived", "handoff" }, Moves(region.Service).Select(c => c.Method));
+
+        // Sent once: letting the avatar go again sends nothing more.
+        region.Scene.EventManager.TriggerOnMakeChildAgent(sp);
+        region.FlushPlaces();
+        Assert.Single(region.Service.PlacesOf("handoff"));
     }
 
-    /// <summary>money design §8.4: a teleport to another grid is "left the grid".</summary>
+    /// <summary>Being let go with no teleport or crossing remembered hands nobody over.</summary>
+    [Fact]
+    public void Letting_go_with_nothing_remembered_sends_nothing()
+    {
+        var region = Build();
+        region.Arrive(Buyer);
+
+        region.Scene.EventManager.TriggerOnMakeChildAgent(region.Scene.GetScenePresence(Buyer));
+        region.FlushPlaces();
+
+        Assert.Equal(new[] { "arrived" }, Moves(region.Service).Select(c => c.Method));
+    }
+
+    /// <summary>A teleport to another grid is "left the grid", at once; letting the avatar go afterwards sends nothing more.</summary>
     [Fact]
     public void Leaving_the_grid_sends_other_grid()
     {
@@ -130,118 +152,59 @@ public sealed class PlaceReporterTests
 
         TeleportStart(region, client, Elsewhere, gridLogout: true);
         region.FlushPlaces();
+        region.Scene.EventManager.TriggerOnMakeChildAgent(region.Scene.GetScenePresence(Buyer));
+        region.FlushPlaces();
 
         var handoff = Assert.Single(region.Service.PlacesOf("handoff"));
         Assert.Equal(new object?[] { client.SessionId.Guid, Region.Guid, Elsewhere.RegionID.Guid, "other_grid" }, handoff.Args);
     }
 
-    /// <summary>money design §8.4: a failed teleport cancels the session's open handoff from this region.</summary>
+    /// <summary>A failed teleport sends its cancel and forgets the destination: nobody is handed over.</summary>
     [Fact]
-    public void Teleport_fail_cancels()
+    public void Teleport_fail_cancels_and_hands_nobody_over()
     {
         var region = Build();
         var client = region.Arrive(Buyer);
         TeleportStart(region, client, Elsewhere);
 
         region.Scene.EventManager.TriggerTeleportFail(client, false);
+        region.Scene.EventManager.TriggerOnMakeChildAgent(region.Scene.GetScenePresence(Buyer));
         region.FlushPlaces();
 
         var cancel = Assert.Single(region.Service.PlacesOf("cancel"));
         Assert.Equal(new object?[] { client.SessionId.Guid, Region.Guid }, cancel.Args);
-        Assert.Equal(new[] { "arrived", "handoff", "cancel" }, Moves(region.Service).Select(c => c.Method));
+        Assert.Equal(new[] { "arrived", "cancel" }, Moves(region.Service).Select(c => c.Method));
     }
 
-    /// <summary>
-    /// money design §8.9, §8.10: a border crossing hands the avatar to the next region before it is told, so the handoff
-    /// reaches the service before the arrival there. Built like <see cref="CrossingEventTests"/>, with the money module
-    /// shared by both regions as OpenSim shares it.
-    /// </summary>
+    /// <summary>A crossing that fails never lets the avatar go, so it hands nobody over.</summary>
     [Fact]
-    public void Crossing_sends_a_crossing_handoff()
+    public void A_failed_crossing_sends_nothing()
     {
-        Util.FireAndForgetMethod = FireAndForgetMethod.RegressionTest;
-        var previousServer = MainServer.Instance;
-        var httpServer = new BaseHttpServer(99999);
-        MainServer.AddHttpServer(httpServer);
-        MainServer.Instance = httpServer;
-        TestScene? sceneA = null, sceneB = null;
-        try
-        {
-            var userId = TestHelpers.ParseTail(0x1);
-            var etmA = new EntityTransferModule();
-            var etmB = new EntityTransferModule();
-            var lscm = new LocalSimulationConnectorModule();
-            IConfigSource config = new IniConfigSource();
-            var modules = config.AddConfig("Modules");
-            modules.Set("EntityTransferModule", etmA.Name);
-            modules.Set("SimulationServices", lscm.Name);
+        var region = Build();
+        region.Arrive(Buyer);
 
-            var sh = new SceneHelpers();
-            sceneA = sh.SetupScene("sceneA", TestHelpers.ParseTail(0x100), 1000, 1000);
-            sceneB = sh.SetupScene("sceneB", TestHelpers.ParseTail(0x200), 1000, 999);
-            SceneHelpers.SetupSceneModules(new Scene[] { sceneA, sceneB }, config, lscm);
-            SceneHelpers.SetupSceneModules(sceneA, config, new CapabilitiesModule(), etmA);
-            SceneHelpers.SetupSceneModules(sceneB, config, new CapabilitiesModule(), etmB);
-            var service = new FakeMoneyService();
-            var money = NewModule(service);
-            AddTo(money, sceneA);
-            AddTo(money, sceneB);
+        region.Scene.EventManager.TriggerCrossAgentToNewRegion(region.Scene.GetScenePresence(Buyer), false, Elsewhere);
+        region.FlushPlaces();
 
-            var acd = SceneHelpers.GenerateAgentData(userId);
-            var tc = new TestClient(acd, sceneA);
-            EntityTransferHelpers.SetupInformClientOfNeighbourTriggersNeighbourClientCreate(tc, []);
-            var sp = SceneHelpers.AddScenePresence(sceneA, tc, acd);
-            sp.AbsolutePosition = new Vector3(128, 32, 10);
-            sp.HandleAgentUpdate(sp.ControllingClient, new AgentUpdateArgs
-            {
-                BodyRotation = Quaternion.CreateFromEulers(new Vector3(0, 0, (float)-(Math.PI / 2))),
-                ControlFlags = (uint)(AgentManager.ControlFlags.AGENT_CONTROL_AT_POS | AgentManager.ControlFlags.AGENT_CONTROL_FAST_AT),
-            });
-            for (var i = 0; i < 101; i++) sceneA.Update(1);
-            Assert.True(sceneA.GetScenePresence(userId)!.IsChildAgent);
-            ((TestClient)sceneB.GetScenePresence(userId)!.ControllingClient).CompleteMovement();
-            Flush(money);
-
-            // The arrival in A, then the crossing's handoff, then the arrival in B. OpenSim sometimes tries the crossing again
-            // on a later update before the avatar is in transit (seen in about one run in five here): each try is a handoff.
-            var moves = Moves(service);
-            Assert.True(moves.Count >= 3, string.Join(",", moves.Select(c => c.Method)));
-            Assert.Equal(new object?[] { tc.SessionId.Guid, userId.Guid, sceneA.RegionInfo.RegionID.Guid }, moves[0].Args);
-            Assert.All(moves.Skip(1).SkipLast(1), h =>
-            {
-                Assert.Equal("handoff", h.Method);
-                Assert.Equal(new object?[] { tc.SessionId.Guid, sceneA.RegionInfo.RegionID.Guid, sceneB.RegionInfo.RegionID.Guid, "crossing" }, h.Args);
-            });
-            Assert.Equal("arrived", moves[^1].Method);
-            Assert.Equal(sceneB.RegionInfo.RegionID.Guid, moves[^1].Args[2]);
-            Assert.Equal(new[] { sceneA.RegionInfo.RegionID.Guid, sceneB.RegionInfo.RegionID.Guid }, (Guid[])service.PlacesOf("health").Last().Args[1]!);
-        }
-        finally
-        {
-            sceneA?.Close();
-            sceneB?.Close();
-            if (previousServer is not null) MainServer.Instance = previousServer;
-            MainServer.RemoveHttpServer(99999);
-            Util.FireAndForgetMethod = Util.DefaultFireAndForgetMethod;
-        }
+        Assert.Empty(region.Service.PlacesOf("handoff"));
     }
 
-    /// <summary>A retried crossing can fire the event again: each is another handoff, with its own id (the service replaces the older one).</summary>
+    /// <summary>A retried crossing can raise the event again: the latest destination is the one handed off to, once.</summary>
     [Fact]
-    public void A_repeated_crossing_is_another_handoff()
+    public void A_repeated_crossing_is_one_handoff()
     {
         var region = Build();
         region.Arrive(Buyer);
         var sp = region.Scene.GetScenePresence(Buyer);
+        var next = new GridRegion { RegionID = TestHelpers.ParseTail(0x301), RegionName = "Next" };
 
         region.Scene.EventManager.TriggerCrossAgentToNewRegion(sp, false, Elsewhere);
-        region.Scene.EventManager.TriggerCrossAgentToNewRegion(sp, false, Elsewhere);
+        region.Scene.EventManager.TriggerCrossAgentToNewRegion(sp, false, next);
+        region.Scene.EventManager.TriggerOnMakeChildAgent(sp);
         region.FlushPlaces();
 
-        var handoffs = region.Service.PlacesOf("handoff").ToList();
-        Assert.Equal(2, handoffs.Count);
-        Assert.All(handoffs, h => Assert.Equal("crossing", h.Args[3]));
-        Assert.NotEqual(handoffs[0].Txn, handoffs[1].Txn);
+        var handoff = Assert.Single(region.Service.PlacesOf("handoff"));
+        Assert.Equal(new object?[] { sp.ControllingClient.SessionId.Guid, Region.Guid, next.RegionID.Guid, "crossing" }, handoff.Args);
     }
 
     /// <summary>
@@ -351,6 +314,7 @@ public sealed class PlaceReporterTests
     {
         var region = Build();
         var client = region.Arrive(Buyer);
+        var sp = region.Scene.GetScenePresence(Buyer);
         var service = new FakeMoneyService();
         service.Queue("handoff", MoneyAnswer.Unavailable, MoneyAnswer.Unavailable);
         var warnings = new List<string>();
@@ -359,6 +323,7 @@ public sealed class PlaceReporterTests
         foreach (var n in new[] { 1, 2, 3 })
         {
             places.TeleportStarting(client, Region.Guid, HeldReporter.To(n), false);
+            places.Released(sp);
             await places.FlushAsync().WaitAsync(TimeSpan.FromSeconds(15), TestContext.Current.CancellationToken);
         }
 
@@ -405,11 +370,14 @@ public sealed class PlaceReporterTests
         public RecordingClient Client { get; }
         public ScenePresence Avatar { get; }
 
+        /// <summary>The test region the avatars are in; its own module reports to its own fake service.</summary>
+        public MoneyScene Here { get; }
+
         public HeldReporter()
         {
-            var region = Build();
-            Client = region.Arrive(Buyer);
-            Avatar = region.Scene.GetScenePresence(Buyer);
+            Here = Build();
+            Client = Here.Arrive(Buyer);
+            Avatar = Here.Scene.GetScenePresence(Buyer);
             Service.Gate = _ => Interlocked.Increment(ref _calls) == 1 ? _release.Task : Task.CompletedTask;
             Places = new PlaceReporter(Service, Time, w => { lock (Warnings) Warnings.Add(w); });
             Teleport(0);
@@ -424,7 +392,11 @@ public sealed class PlaceReporterTests
         public static GridRegion To(int n) => new() { RegionID = TestHelpers.ParseTail(0x10000 + n), RegionName = "R" + n };
 
         /// <summary>Queues a teleport handoff from the test region to region <paramref name="n"/>.</summary>
-        public void Teleport(int n) => Places.TeleportStarting(Client, Region.Guid, To(n), false);
+        public void Teleport(int n)
+        {
+            Places.TeleportStarting(Client, Region.Guid, To(n), false);
+            Places.Released(Avatar);
+        }
 
         /// <summary>Lets the first report through and waits until everything queued is answered or dropped.</summary>
         public async Task ReleaseAndFlushAsync()
@@ -501,27 +473,64 @@ public sealed class PlaceReporterTests
     }
 
     /// <summary>
-    /// money design §8.10 (anti-goal: no slower teleports): the teleport's event returns at once while the service holds an
-    /// earlier report, and reports go out one at a time.
+    /// A waiting handoff goes ahead of other people's waiting arrivals, which the service may hold for their own handoff
+    /// for up to 10 seconds; the rest go oldest first.
+    /// </summary>
+    [Fact]
+    public async Task Waiting_handoffs_go_ahead_of_other_peoples_arrivals()
+    {
+        using var held = new HeldReporter();
+        held.Here.Arrive(Stranger);
+        var stranger = held.Here.Scene.GetScenePresence(Stranger);
+        held.Places.Arrived(stranger);
+        held.Places.Health([Region.Guid]);
+        held.Teleport(1);
+        held.Places.Arrived(stranger);
+
+        await held.ReleaseAndFlushAsync();
+
+        Assert.Equal(new[] { "handoff", "handoff", "arrived", "health", "arrived" }, held.Service.Places.Select(c => c.Method));
+        Assert.Equal(new[] { 0, 1 }, held.HandedTo());
+    }
+
+    /// <summary>A handoff never goes ahead of an arrival of the same session queued before it: that arrival may be what places them where the handoff starts.</summary>
+    [Fact]
+    public async Task A_handoff_waits_behind_its_own_sessions_arrival()
+    {
+        using var held = new HeldReporter();
+        held.Places.Arrived(held.Avatar);
+        held.Teleport(1);
+
+        await held.ReleaseAndFlushAsync();
+
+        Assert.Equal(new[] { "handoff", "arrived", "handoff" }, held.Service.Places.Select(c => c.Method));
+    }
+
+    /// <summary>
+    /// No slower teleports: letting the avatar go returns at once while the service holds an earlier report, and reports go
+    /// out one at a time.
     /// </summary>
     [Fact]
     public void A_teleport_never_waits_for_the_service()
     {
         var region = Build();
         var client = region.Arrive(Buyer);
+        var sp = region.Scene.GetScenePresence(Buyer);
         region.FlushPlaces();
         var release = new TaskCompletionSource();
         region.Service.Gate = m => m == "handoff" ? release.Task : Task.CompletedTask;
         try
         {
             TeleportStart(region, client, Elsewhere);
+            region.Scene.EventManager.TriggerOnMakeChildAgent(sp);
             region.WaitForPlace("handoff");
 
-            var clock = Stopwatch.StartNew();
             TeleportStart(region, client, Elsewhere);
+            var clock = Stopwatch.StartNew();
+            region.Scene.EventManager.TriggerOnMakeChildAgent(sp);
             clock.Stop();
 
-            Assert.True(clock.ElapsedMilliseconds < 50, $"the teleport event took {clock.ElapsedMilliseconds} ms");
+            Assert.True(clock.ElapsedMilliseconds < 50, $"the event took {clock.ElapsedMilliseconds} ms");
             Thread.Sleep(100);
             Assert.Single(region.Service.PlacesOf("handoff"));
         }

@@ -61,7 +61,7 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
 
     /// <summary>
     /// The one place reporter of this program (the module is shared by all its regions), made with the first region: one
-    /// queue, so a handoff from one region always goes before the arrival in the next.
+    /// queue, so a move between two of its regions is handed off before the arrival it vouches for.
     /// </summary>
     internal PlaceReporter? Places { get; private set; }
 
@@ -132,13 +132,16 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
         _actions[regionId] = new MoneyActions(_client!, regionId.Guid, KnownEconomy, new View(this));
         scene.EventManager.OnNewClient += OnNewClient;
         scene.EventManager.OnClientClosed += OnClientClosed;
-        // Where avatars are (money design §8.4): reported in the background, never holding up a teleport or crossing.
+        // Where avatars are: reported in the background, never holding up a teleport or crossing. A teleport or crossing is
+        // remembered when it starts and handed off once the avatar is let go here (or has arrived in another of this
+        // program's regions), so one that fails hands nobody over.
         scene.EventManager.OnMakeRootAgent += OnMakeRootAgent;
         scene.EventManager.OnTeleportStart += OnTeleportStart;
         scene.EventManager.OnTeleportFail += OnTeleportFail;
         scene.EventManager.OnCrossAgentToNewRegion += OnCrossAgentToNewRegion;
+        scene.EventManager.OnMakeChildAgent += OnMakeChildAgent;
         // Reported now and again once the region has started. OpenSim adds the region before registering it with the grid,
-        // so a Region Server's key doesn't cover it yet and the service ignores it in this first report (ruling 28).
+        // so a Region Server's key doesn't cover it yet and the service ignores it in this first report.
         scene.EventManager.OnRegionStarted += OnRegionStarted;
         ReportHealth();
     }
@@ -164,6 +167,7 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
         scene.EventManager.OnTeleportStart -= OnTeleportStart;
         scene.EventManager.OnTeleportFail -= OnTeleportFail;
         scene.EventManager.OnCrossAgentToNewRegion -= OnCrossAgentToNewRegion;
+        scene.EventManager.OnMakeChildAgent -= OnMakeChildAgent;
         scene.EventManager.OnRegionStarted -= OnRegionStarted;
         lock (_scenes) _scenes.Remove(scene);
         _actions.TryRemove(scene.RegionInfo.RegionID, out _);
@@ -180,7 +184,7 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
 
     // ---- where avatars are --------------------------------------------------------------------------
 
-    /// <summary>The program's regions, at once on each new region and every <see cref="HealthEvery"/> (money design §8.2).</summary>
+    /// <summary>The program's regions, at once on each new region and every <see cref="HealthEvery"/>.</summary>
     private void ReportHealth()
     {
         List<Guid> regions;
@@ -220,6 +224,9 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
     }
 
     private void OnCrossAgentToNewRegion(ScenePresence sp, bool isFlying, GridRegion newRegion) => Places?.Crossing(sp, newRegion);
+
+    // Raised by the scene the avatar is leaving, once a teleport or crossing out of it has succeeded.
+    private void OnMakeChildAgent(ScenePresence sp) => Places?.Released(sp);
 
     // ---- economy settings ----------------------------------------------------------------------------
 
