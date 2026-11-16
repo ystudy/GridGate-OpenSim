@@ -201,7 +201,8 @@ builder.Services.AddRazorPages(o =>
     o.Conventions.AuthorizeFolder("/People", AuthSchemes.StaffPolicy);
     o.Conventions.AddFolderApplicationModelConvention("/Staff", m => m.Filters.Add(new StaffPagesOnly()));
     o.Conventions.AddFolderApplicationModelConvention("/People", m => m.Filters.Add(new StaffPagesOnly()));
-    // The Money pages (money plan 2): every staff member may look, the handlers let only admins change anything.
+    // The Money pages (money plan 2): every staff member may look; the handlers let only admins change anything, and keep
+    // some changes for the owner (turning Gloebit on, its app, own limits, moved regions).
     o.Conventions.AuthorizeFolder("/Money", AuthSchemes.StaffPolicy);
     o.Conventions.AddFolderApplicationModelConvention("/Money", m => m.Filters.Add(new StaffPagesOnly()));
     o.Conventions.AuthorizeFolder("/Guest", AuthSchemes.GuestPolicy);

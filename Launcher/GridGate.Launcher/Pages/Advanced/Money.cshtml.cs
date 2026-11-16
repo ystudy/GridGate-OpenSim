@@ -1,6 +1,7 @@
 using GridGate.Launcher.Core.Grid;
 using GridGate.Launcher.Core.Logs;
 using GridGate.Launcher.Core.Money;
+using GridGate.Launcher.Core.Security;
 using GridGate.Launcher.Core.Settings;
 using GridGate.Launcher.Endpoints;
 using GridGate.Launcher.Security;
@@ -12,7 +13,7 @@ namespace GridGate.Launcher.Pages.Advanced;
 /// <summary>
 /// A Region Server's money (<c>/advanced/money</c>; money design §7.7, money plan 3): the mode its Grid Asset Server
 /// publishes, and pairing with that server's money service by a one-time code. Region Servers only; admins only (the
-/// Advanced folder's rule). The code and the key are never shown or audited.
+/// Advanced folder's rule), and only the owner saves the Gloebit app. The code and the key are never shown or audited.
 /// </summary>
 public sealed class MoneyModel(IGridController grid, MoneyGate gate, IMoneyPairClient pair, AuditLog audit, RegionActions regions) : PageModel
 {
@@ -28,6 +29,9 @@ public sealed class MoneyModel(IGridController grid, MoneyGate gate, IMoneyPairC
     /// <summary>The grid runs Gloebit: this Region Server enters its own Gloebit app instead of pairing (money plan 4).</summary>
     public bool Gloebit { get; private set; }
     public GloebitSettings? App { get; private set; }
+
+    /// <summary>Only this computer's owner saves its Gloebit app (money design §9.1).</summary>
+    public bool IsOwner => StaffSignIn.RoleOf(User) == StaffRole.Owner;
     public string? Error { get; private set; }
     public string? Notice { get; private set; }
 
@@ -109,6 +113,12 @@ public sealed class MoneyModel(IGridController grid, MoneyGate gate, IMoneyPairC
     public IActionResult OnPostGloebit(string? environment, string? key, string? secret, string? ownerName, string? ownerEmail)
     {
         if (!Show()) return NotFound();
+        // Residents' dollars go through this app: only this computer's owner sets it.
+        if (!IsOwner)
+        {
+            audit.Write(User, Ip, "money-gloebit", "money", "refused: the owner's");
+            return StatusCode(StatusCodes.Status403Forbidden);
+        }
         if (!Gloebit)
         {
             Error = "The grid doesn't use Gloebit.";

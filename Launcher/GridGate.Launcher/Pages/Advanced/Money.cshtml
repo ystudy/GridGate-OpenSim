@@ -21,7 +21,14 @@
             <p id="rs-gloebit-app">This computer's Gloebit app: @Model.App.Environment, key @GridGate.Launcher.Core.Money.GloebitRules.Masked(Model.App.Key).</p>
         }
         <p>Gloebit runs inside each region, so this computer needs its own app from Gloebit's merchant tools. There is nothing to pair.</p>
-        @await Html.PartialAsync("_GloebitForm", new GridGate.Launcher.Money.GloebitFormModel(Model.App, "/advanced/money?handler=Gloebit"))
+        @if (Model.IsOwner)
+        {
+            @await Html.PartialAsync("_GloebitForm", new GridGate.Launcher.Money.GloebitFormModel(Model.App, "/advanced/money?handler=Gloebit"))
+        }
+        else
+        {
+            <p id="rs-gloebit-owner">Only this computer's owner can save its Gloebit app.</p>
+        }
     }
     @if (Model.CanPair)
     {

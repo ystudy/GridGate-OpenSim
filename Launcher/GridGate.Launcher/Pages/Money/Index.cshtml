@@ -32,9 +32,13 @@
                 <select class="form-select mb-3" id="money-mode" name="Mode">
                     @foreach (var mode in Model.Offered)
                     {
-                        <option value="@mode" selected="@(mode == f.Mode)">@(mode switch { MoneyMode.Off => "Off", MoneyMode.Gloebit => "Gloebit", _ => "Play coins" })</option>
+                        <option value="@mode" selected="@(mode == f.Mode)" disabled="@Model.ModeLocked(mode)">@(mode switch { MoneyMode.Off => "Off", MoneyMode.Gloebit => "Gloebit", _ => "Play coins" })</option>
                     }
                 </select>
+                @if (Model.Offered.Contains(MoneyMode.Gloebit) && !Model.IsOwner)
+                {
+                    <p id="money-gloebit-owner" class="form-text mt-0 mb-3">@MoneyPageRules.OwnerOnlyNote</p>
+                }
                 <div class="row g-3">
                     <div class="col-sm-6"><label class="form-label" for="money-symbol">Currency symbol</label>
                         <input class="form-control" id="money-symbol" name="CurrencySymbol" value="@f.CurrencySymbol" maxlength="4" required></div>
@@ -109,7 +113,7 @@
             {
                 <p id="money-gloebit-app">App: @app.Environment, key @GridGate.Launcher.Core.Money.GloebitRules.Masked(app.Key), secret @(app.Secret.Length > 0 ? "saved" : "not set").</p>
             }
-            @if (Model.CanChange)
+            @if (Model.IsOwner)
             {
                 @await Html.PartialAsync("_GloebitForm", new GridGate.Launcher.Money.GloebitFormModel(m.Gloebit, "/money?handler=Gloebit"))
             }
