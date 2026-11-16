@@ -1,5 +1,6 @@
 @page "/money/person"
 @model GridGate.Launcher.Pages.Money.PersonModel
+@using GridGate.Launcher.Money
 @{
     ViewData["Title"] = "Coins: " + Model.Name;
     ViewData["Wide"] = true;
@@ -16,6 +17,44 @@
     <div class="error-box error alert alert-danger" role="alert">The money database can't be reached right now.</div>
 }
 <div class="list-columns">
+    <section class="work-panel" aria-labelledby="person-now-title">
+        <h2 id="person-now-title" class="panel-title">Money and limits<help-tip>Whether this person can pay and be paid right now, and how much of their daily limits the last 24 hours used.</help-tip></h2>
+        <p id="person-money-here">Money here now: @Model.MoneyHere<help-tip>Money works for someone only while the money service knows where they are: they logged in, or a verified region handed them on. Arriving from a region that can't verify where they are pauses it until their next login.</help-tip>
+            @if (Model.MoneyHereAnchor is { } anchor)
+            {
+                <a href="@MoneyVerifyText.Link(anchor)" target="_blank" rel="noopener noreferrer">Why</a>
+            }
+        </p>
+        @if (Model.Limits is { } limits)
+        {
+            <p id="person-limits">
+                @PersonModel.LimitLine("Daily spending", limits.SpentToday, limits.DailySpend, limits.OwnSpend, limits.Until)<help-tip>What regions took from their wallet in the last 24 hours: paying, buying, land, passes and fees.</help-tip><br>
+                @PersonModel.LimitLine("Daily script payouts", limits.PaidOutToday, limits.DailyPayout, limits.OwnPayout, limits.Until)<help-tip>What their own scripts paid out of their wallet in the last 24 hours.</help-tip>
+            </p>
+            @if (Model.CanSetLimits)
+            {
+                <form method="post" action="/money/person?handler=Limits&@query" asp-antiforgery="true">
+                    <h3 class="h6">Set this person's limits<help-tip>Higher or lower than the grid's, for example higher for a land sale, or lower when they ask. Leave a box empty for the grid default; leave both empty to go back to the defaults.</help-tip></h3>
+                    <label class="form-label" for="limit-spend">Daily spending limit</label>
+                    <input class="form-control mb-2" id="limit-spend" name="DailySpend" type="number" min="0" max="@MoneyPageRules.MaxDailyPayoutLimit" placeholder="Grid default"
+                           value="@(limits.OwnSpend ? (long?)limits.DailySpend : null)">
+                    <label class="form-label" for="limit-payout">Daily script payout limit</label>
+                    <input class="form-control mb-2" id="limit-payout" name="DailyPayout" type="number" min="0" max="@MoneyPageRules.MaxDailyPayoutLimit" placeholder="Grid default"
+                           value="@(limits.OwnPayout ? (long?)limits.DailyPayout : null)">
+                    <label class="form-label" for="limit-until">Ends on (optional; UTC, the limits end at 00:00 UTC that day)</label>
+                    <input class="form-control mb-2" id="limit-until" name="Until" type="date" value="@(limits.Until?.ToString("yyyy-MM-dd"))">
+                    <label class="form-label" for="limit-reason">Reason</label>
+                    <input class="form-control mb-2" id="limit-reason" name="Reason" maxlength="@MoneyPageRules.MaxReason" required>
+                    <button type="submit" class="btn btn-outline-secondary">Set limits</button>
+                </form>
+            }
+        }
+        else if (!Model.DatabaseDown)
+        {
+            <p id="person-limits-none">No wallet yet, so the grid's daily limits apply.</p>
+        }
+        <p class="mb-0"><a href="@MoneyVerifyText.Link(MoneyVerifyText.OwnLimitsAnchor)" target="_blank" rel="noopener noreferrer">Giving one person their own limits</a></p>
+    </section>
     <section class="work-panel" aria-labelledby="person-balance-title">
         <h2 id="person-balance-title" class="panel-title">Balance</h2>
         <p id="person-balance" class="fs-4">@(Model.Balance is { } b ? Model.Symbol + PersonModel.N(b) : "—")</p>

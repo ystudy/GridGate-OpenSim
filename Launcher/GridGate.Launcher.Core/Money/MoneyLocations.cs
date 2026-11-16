@@ -58,6 +58,9 @@ public sealed class MoneyLocations(Func<CancellationToken, Task<MySqlConnection>
     private const int DeadlockRetries = 3;
     private const int ErDeadlock = 1213, ErLockWaitTimeout = 1205;
 
+    /// <summary>The most of one person's sessions <see cref="WhereAgentAsync"/> looks at, newest first.</summary>
+    private const int MaxSessionsLooked = 20;
+
     /// <summary>The state of the row an arrival adds to lock a session the service has never placed; only a placement commits it, with a real state.</summary>
     private const string Placeholder = "Pending";
 
@@ -201,6 +204,39 @@ public sealed class MoneyLocations(Func<CancellationToken, Task<MySqlConnection>
         {
             throw new MoneyUnavailableException(e);
         }
+    }
+
+    /// <summary>
+    /// Where <paramref name="agentId"/> is now, for the website (Ruling 3): the newest location of theirs whose session is
+    /// still logged in (in Robust's Presence), or null when none is. A database failure is <see cref="MoneyUnavailableException"/>.
+    /// </summary>
+    public async Task<SessionLocation?> WhereAgentAsync(Guid agentId, CancellationToken ct)
+    {
+        var rows = new List<SessionLocation>();
+        try
+        {
+            await using var conn = await openMoney(ct);
+            await using var cmd = Command(conn, null, $"""
+                SELECT session_id, region_id, key_id, state, updated FROM session_locations
+                WHERE agent_id = @a AND state <> @placeholder ORDER BY updated DESC LIMIT {MaxSessionsLooked}
+                """, ("@a", agentId.ToString()), ("@placeholder", Placeholder));
+            await using var r = await cmd.ExecuteReaderAsync(ct);
+            while (await r.ReadAsync(ct))
+                rows.Add(new SessionLocation(ToGuid(r.GetValue(0)), agentId, r.IsDBNull(1) ? null : ToGuid(r.GetValue(1)), r.IsDBNull(2) ? null : r.GetString(2),
+                    Enum.Parse<LocationState>(r.GetString(3)), DateTime.SpecifyKind(r.GetDateTime(4), DateTimeKind.Utc)));
+        }
+        catch (MySqlException e)
+        {
+            throw new MoneyUnavailableException(e);
+        }
+        // A logged-out session's row stays for KeepAbsentFor; only Presence says which sessions are still in the world.
+        foreach (var row in rows)
+            switch (await presence.HasSessionAsync(agentId, row.SessionId, ct))
+            {
+                case PresenceOutcome.Ok: return row;
+                case PresenceOutcome.Unavailable: throw new MoneyUnavailableException(new InvalidOperationException("Robust's Presence can't be read."));
+            }
+        return null;
     }
 
     /// <summary>

@@ -2,6 +2,7 @@
 @model GridGate.Launcher.Pages.Money.IndexModel
 @using GridGate.Launcher.Core.Money
 @using GridGate.Launcher.Core.OpenSim
+@using GridGate.Launcher.Money
 @{
     ViewData["Title"] = "Money";
     ViewData["Wide"] = true;
@@ -49,18 +50,24 @@
                         <input class="form-control" id="money-upload" name="UploadFee" type="number" min="0" value="@f.UploadFee"></div>
                     <div class="col-sm-6"><label class="form-label" for="money-classified">Classified ad fee</label>
                         <input class="form-control" id="money-classified" name="ClassifiedFee" type="number" min="0" value="@f.ClassifiedFee"></div>
-                    <div class="col-sm-6"><label class="form-label" for="money-daily">Daily script payout limit</label>
-                        <input class="form-control" id="money-daily" name="DailyPayoutLimit" type="number" min="0" value="@f.DailyPayoutLimit"></div>
                     <div class="col-sm-6"><label class="form-label" for="money-max">Largest payment</label>
                         <input class="form-control" id="money-max" name="MaxPayment" type="number" min="1" value="@f.MaxPayment"></div>
                 </div>
+                <h3 class="h6 mt-3">Daily limits<help-tip>Each limit counts the last 24 hours, rolling, so there is no midnight reset to time an attack around. Staff gifts, take-backs and refunds never count. These are the grid's defaults: the owner can give one person, one region program or one Region Server its own.</help-tip></h3>
+                <div class="row g-3">
+                    <div class="col-sm-6"><label class="form-label" for="money-spend">Daily spending limit per person<help-tip>The most coins regions may take from one person's wallet in a day: paying, buying, land, passes and fees.</help-tip></label>
+                        <input class="form-control" id="money-spend" name="DailySpendLimit" type="number" min="0" max="@MoneyPageRules.MaxDailyPayoutLimit" value="@f.DailySpendLimit"></div>
+                    <div class="col-sm-6"><label class="form-label" for="money-key-spend">Daily region limit per region program or Region Server<help-tip>The most coins all the regions of one region program, or of one Region Server, may take from everyone's wallets in a day.</help-tip></label>
+                        <input class="form-control" id="money-key-spend" name="DailyKeySpendLimit" type="number" min="0" max="@MoneyPageRules.MaxDailyPayoutLimit" value="@f.DailyKeySpendLimit"></div>
+                    <div class="col-sm-6"><label class="form-label" for="money-key-payout">Daily script payouts per region program or Region Server<help-tip>The most coins all the objects in one region program's, or one Region Server's, regions may pay out in a day.</help-tip></label>
+                        <input class="form-control" id="money-key-payout" name="DailyKeyPayoutLimit" type="number" min="0" max="@MoneyPageRules.MaxDailyPayoutLimit" value="@f.DailyKeyPayoutLimit"></div>
+                    <div class="col-sm-6"><label class="form-label" for="money-daily">Daily script payout limit per resident<help-tip>The most coins one resident's own scripts may pay out of their wallet in a day.</help-tip></label>
+                        <input class="form-control" id="money-daily" name="DailyPayoutLimit" type="number" min="0" max="@MoneyPageRules.MaxDailyPayoutLimit" value="@f.DailyPayoutLimit"></div>
+                </div>
+                <p class="mt-2 mb-0"><a href="@MoneyVerifyText.Link(MoneyVerifyText.LimitsAnchor)" target="_blank" rel="noopener noreferrer">How the daily limits work</a></p>
                 <div class="form-check mt-3">
                     <input class="form-check-input" type="checkbox" id="money-scripts" name="ScriptPayouts" value="true" checked="@f.ScriptPayouts">
                     <label class="form-check-label" for="money-scripts">Scripts may pay out, for residents who allow it</label>
-                </div>
-                <div class="form-check">
-                    <input class="form-check-input" type="checkbox" id="money-visitors" name="VisitorWallets" value="true" checked="@f.VisitorWallets">
-                    <label class="form-check-label" for="money-visitors">Hypergrid visitors get wallets</label>
                 </div>
                 @if (Model.Offered.Contains(MoneyMode.Gloebit))
                 {
@@ -78,10 +85,14 @@
                 <dt>Mode</dt><dd>@(m.Mode == MoneyMode.Off ? "Off" : m.Mode.ToString())</dd>
                 <dt>Currency</dt><dd>@m.CurrencyName (@m.CurrencySymbol)</dd>
                 <dt>Upload fee</dt><dd>@IndexModel.N(m.UploadFee)</dd>
-                <dt>Daily script payout limit</dt><dd>@IndexModel.N(m.DailyPayoutLimit)</dd>
+                <dt>Daily spending limit per person</dt><dd>@IndexModel.N(m.DailySpendLimit)</dd>
+                <dt>Daily region limit per region program or Region Server</dt><dd>@IndexModel.N(m.DailyKeySpendLimit)</dd>
+                <dt>Daily script payouts per region program or Region Server</dt><dd>@IndexModel.N(m.DailyKeyPayoutLimit)</dd>
+                <dt>Daily script payout limit per resident</dt><dd>@IndexModel.N(m.DailyPayoutLimit)</dd>
             </dl>
         }
     </section>
+    @await Html.PartialAsync("_MoneyVisitors", Model)
     @if (Model.ShowGloebit)
     {
         <section class="work-panel" id="money-gloebit" aria-labelledby="money-gloebit-title">
@@ -117,6 +128,8 @@
                 <dt>Moved today</dt><dd>@m.CurrencySymbol@IndexModel.N(t.MovedToday)</dd>
             </dl>
         </section>
+        @await Html.PartialAsync("_MoneyAlerts", Model)
+        @await Html.PartialAsync("_MoneyRegions", Model)
         <section class="work-panel" aria-labelledby="money-check-title">
             <h2 id="money-check-title" class="panel-title">Self-check</h2>
             @if (Model.LastCheck is { } last)
@@ -163,6 +176,7 @@
                 </form>
             }
         </section>
+        @await Html.PartialAsync("_MoneyLimits", Model)
         @if (Model.CanChange)
         {
             <section class="work-panel" aria-labelledby="money-refund-title">
@@ -227,8 +241,20 @@
                     <ul id="money-paired" class="mb-0">
                         @foreach (var server in Model.Servers)
                         {
-                            <li>
+                            var heard = Model.KeysHeard.GetValueOrDefault(MoneyVerifyText.KeyOf(server));
+                            var serverStatus = heard?.Status ?? RegionStatus.NoGridGateMoney;
+                            <li id="money-server-@server.Id">
                                 @server.Host@(server.FirstPort > 0 ? $", region ports from {server.FirstPort}" : ""), paired @server.PairedAt.ToString("yyyy-MM-dd")
+                                @if (!Model.RegionsDown)
+                                {
+                                    <span class="money-server-status">
+                                        · @MoneyVerifyText.Words(serverStatus)@(heard is null ? "" : $", money protocol {heard.Protocol}")<help-tip>@MoneyVerifyText.ServerHelp(serverStatus)</help-tip>
+                                        @if (serverStatus != RegionStatus.Verified)
+                                        {
+                                            <a href="@MoneyVerifyText.Link(MoneyVerifyText.Anchor(serverStatus))" target="_blank" rel="noopener noreferrer">How to fix</a>
+                                        }
+                                    </span>
+                                }
                                 @if (Model.CanChange)
                                 {
                                     <form method="post" action="/money?handler=RemoveServer" asp-antiforgery="true" class="d-inline">

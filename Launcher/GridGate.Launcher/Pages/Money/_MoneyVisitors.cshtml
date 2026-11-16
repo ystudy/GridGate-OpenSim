@@ -1,0 +1,73 @@
+@model GridGate.Launcher.Pages.Money.IndexModel
+@using GridGate.Launcher.Core.Money
+@using GridGate.Launcher.Money
+@{
+    var m = Model.Saved;
+    var mode = m.EffectiveVisitors;
+    var grids = m.ListedGrids ?? [];
+    var choices = new (VisitorMoney Value, string Words, string Help)[]
+    {
+        (VisitorMoney.Off, "Off", "No visitor from another grid can pay or be paid here."),
+        (VisitorMoney.Listed, "Only grids I list", "Visitors from the grids listed below can pay and be paid. Listing a grid means trusting the people who run it."),
+        (VisitorMoney.All, "All grids", "Any visitor the grid lets in can pay and be paid."),
+    };
+}
+@* Visitor money and listed grids (verified-regions design §8.6, §8.12). *@
+<section class="work-panel" id="money-visitors" aria-labelledby="money-visitors-title">
+    <h2 id="money-visitors-title" class="panel-title">Visitors<help-tip>Whether people visiting from other grids can pay and be paid here. They can visit either way: only money depends on this.</help-tip></h2>
+    <p>People arriving from another grid straight into a Region Server's region can visit, but money is paused for that visit. Keep your hypergrid welcome region on this computer.</p>
+    @if (Model.CanChange)
+    {
+        <form method="post" action="/money?handler=Visitors" asp-antiforgery="true" class="mb-3">
+            <fieldset>
+                <legend class="form-label fs-6">Visitor money</legend>
+                @foreach (var (value, words, help) in choices)
+                {
+                    <div class="form-check form-check-inline">
+                        <input class="form-check-input" type="radio" id="money-visitors-@value" name="Visitors" value="@value" checked="@(mode == value)">
+                        <label class="form-check-label" for="money-visitors-@value">@words<help-tip>@help</help-tip></label>
+                    </div>
+                }
+            </fieldset>
+            <button type="submit" class="btn btn-outline-secondary mt-2">Save</button>
+        </form>
+    }
+    else
+    {
+        <p id="money-visitors-view">Visitor money: @choices.First(c => c.Value == mode).Words<help-tip>@choices.First(c => c.Value == mode).Help</help-tip></p>
+    }
+    <h3 class="h6">Listed grids<help-tip>A grid is listed by its home address, the one its residents' names show when they visit, like http://hg.friendgrid.net:8002. A visitor's coins stay when their grid is taken off the list: they are frozen, and work again if it is listed again.</help-tip></h3>
+    @if (grids.Count == 0)
+    {
+        <p id="money-no-grids">No grid is listed yet@(mode == VisitorMoney.Listed ? ", so no visitor can use money" : "").</p>
+    }
+    else
+    {
+        <ul id="money-grids">
+            @foreach (var g in grids)
+            {
+                <li>
+                    <code>@g</code>
+                    @if (Model.CanChange)
+                    {
+                        <form method="post" action="/money?handler=RemoveGrid" asp-antiforgery="true" class="d-inline">
+                            <input type="hidden" name="Address" value="@g">
+                            <button type="submit" class="btn btn-sm btn-outline-danger">Remove</button>
+                        </form>
+                    }
+                </li>
+            }
+        </ul>
+    }
+    @if (Model.CanChange)
+    {
+        <form method="post" action="/money?handler=AddGrid" asp-antiforgery="true" class="mb-2">
+            <label class="form-label" for="money-grid-address">Grid address</label>
+            <div class="d-flex gap-2">
+                <input class="form-control" id="money-grid-address" name="Address" maxlength="@MoneyPageRules.MaxGridAddress" placeholder="http://hg.friendgrid.net:8002" required>
+                <button type="submit" class="btn btn-outline-secondary">Add</button>
+            </div>
+        </form>
+    }
+    <p class="mb-0"><a href="@MoneyVerifyText.Link(MoneyVerifyText.VisitorsAnchor)" target="_blank" rel="noopener noreferrer">How visitor money and listed grids work</a></p>
+</section>

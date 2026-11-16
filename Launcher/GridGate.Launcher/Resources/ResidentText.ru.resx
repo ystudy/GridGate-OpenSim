@@ -596,6 +596,8 @@
   <data name="MyCoins.PayoutsTurnOn" xml:space="preserve"><value>Разрешить моим скриптам платить</value></data>
   <data name="MyCoins.PayoutsTurnOff" xml:space="preserve"><value>Запретить моим скриптам платить</value></data>
   <data name="MyCoins.PayoutsOffGrid" xml:space="preserve"><value>В этом гриде скрипты не могут платить.</value></data>
+  <data name="MyCoins.MoneyPaused" xml:space="preserve"><value>Деньги для вас приостановлены до следующего входа: вы пришли из региона, который не может проверить, где вы находитесь.</value></data>
+  <data name="MyCoins.MoneyPausedOtherGrid" xml:space="preserve"><value>Деньги для вас приостановлены, пока вы в гостях на другом гриде.</value></data>
   <data name="MyCoins.History" xml:space="preserve"><value>История</value></data>
   <data name="MyCoins.NoHistory" xml:space="preserve"><value>Пока ничего.</value></data>
   <data name="MyCoins.When" xml:space="preserve"><value>Когда</value></data>

@@ -10,6 +10,13 @@ public enum RegionStatus { Verified, NotPaired, Moved, NoGridGateMoney, NeedsUpd
 public sealed record RegionState(Guid RegionId, string Name, string ServerIp, int Port, string? KeyId, RegionStatus Status, string? PinnedKeyId = null);
 
 /// <summary>
+/// A key's last health call, for the Region Servers list (money design §8.12): the money protocol its module speaks, when it
+/// called (UTC), and what that makes it: <see cref="RegionStatus.Verified"/>, <see cref="RegionStatus.NeedsUpdate"/> or
+/// <see cref="RegionStatus.NotHeardFrom"/>. A key that never called has none.
+/// </summary>
+public sealed record KeyHeard(int Protocol, DateTime At, RegionStatus Status);
+
+/// <summary>
 /// Which regions the money service treats as verified (money design §8.2): covered by a key (pinned, for a Region Server),
 /// whose program called <c>/money/v1/health</c> recently with a protocol that has handoffs, listing the region. The last
 /// health call of each key is kept in the money database. A database failure is <see cref="MoneyUnavailableException"/>.
@@ -92,14 +99,22 @@ public sealed class RegionVerification(Func<CancellationToken, Task<MySqlConnect
         return states;
     }
 
+    /// <summary>Every key's last health call, by key id. A database failure is <see cref="MoneyUnavailableException"/>.</summary>
+    public async Task<IReadOnlyDictionary<string, KeyHeard>> KeysAsync(CancellationToken ct) =>
+        (await HeardByKeyAsync(null, ct)).ToDictionary(k => k.Key, k => new KeyHeard(k.Value.Protocol, Utc(k.Value.At),
+            k.Value.Protocol < HandoffProtocol ? RegionStatus.NeedsUpdate : Recent(k.Value) ? RegionStatus.Verified : RegionStatus.NotHeardFrom));
+
     private RegionStatus StatusOf(Heard? heard, Guid regionId)
     {
         if (heard is null) return RegionStatus.NoGridGateMoney;
         if (heard.Protocol < HandoffProtocol) return RegionStatus.NeedsUpdate;
-        // At comes back from the database without a kind: it is UTC.
-        var at = new DateTimeOffset(DateTime.SpecifyKind(heard.At, DateTimeKind.Utc));
-        return time.GetUtcNow() - at > HeardWithin || !heard.Regions.Contains(regionId) ? RegionStatus.NotHeardFrom : RegionStatus.Verified;
+        return !Recent(heard) || !heard.Regions.Contains(regionId) ? RegionStatus.NotHeardFrom : RegionStatus.Verified;
     }
+
+    private bool Recent(Heard heard) => time.GetUtcNow() - new DateTimeOffset(Utc(heard.At)) <= HeardWithin;
+
+    /// <summary>At comes back from the database without a kind: it is UTC.</summary>
+    private static DateTime Utc(DateTime at) => DateTime.SpecifyKind(at, DateTimeKind.Utc);
 
     private async Task<Dictionary<string, Heard>> HeardByKeyAsync(string? keyId, CancellationToken ct)
     {

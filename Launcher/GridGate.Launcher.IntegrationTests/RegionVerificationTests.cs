@@ -151,4 +151,20 @@ public sealed class RegionVerificationTests(MoneyMariaDb maria) : IClassFixture<
         Assert.Equal(RegionStatus.NoGridGateMoney, await StatusOf(rig, There));
         Assert.Equal(0, await rig.Db.Scalar("SELECT COUNT(*) FROM `money`.`key_heard` WHERE key_id = 'p2'"));
     }
+
+    [Fact]
+    public async Task Each_keys_last_health_call_says_its_protocol_and_status()
+    {
+        var rig = await StartAsync();
+        await rig.Post("health", new { protocol = 2, regions = new[] { Here } });
+        await rig.Post("health", new { regions = new[] { There } }, Key2);
+
+        var keys = await rig.Verification.KeysAsync(Ct);
+        Assert.Equal((2, RegionStatus.Verified), (keys["p1"].Protocol, keys["p1"].Status));
+        Assert.Equal((1, RegionStatus.NeedsUpdate), (keys["p2"].Protocol, keys["p2"].Status));
+        Assert.Equal(DateTimeKind.Utc, keys["p1"].At.Kind);
+
+        rig.VerifyClock.Advance(TimeSpan.FromMinutes(11));
+        Assert.Equal(RegionStatus.NotHeardFrom, (await rig.Verification.KeysAsync(Ct))["p1"].Status);
+    }
 }

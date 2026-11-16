@@ -5,6 +5,7 @@ using GridGate.Launcher.Core.Money;
 using GridGate.Launcher.Core.OpenSim;
 using GridGate.Launcher.Core.Settings;
 using GridGate.Launcher.Guests;
+using GridGate.Launcher.Money;
 using GridGate.Launcher.Security;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
@@ -17,12 +18,16 @@ public sealed record CoinsLine(DateTimeOffset At, string What, string Who, long 
 
 /// <summary>
 /// My coins (<c>/guest/coins</c>; money design §9.5): the resident's balance, the newest 50 lines, and the "my scripts may
-/// pay out" switch, which is off until they turn it on. Not there while money is off.
+/// pay out" switch, which is off until they turn it on; and one line when money is paused for them (verified-regions
+/// design §8.12). Not there while money is off.
 /// </summary>
 [MoneyPagesOnly]
 public sealed class CoinsModel(IMoneyBooks books, Func<LauncherSettings> settings, IRobustClient robust, AuditLog audit,
-    IStringLocalizer<ResidentText> t) : PageModel
+    IStringLocalizer<ResidentText> t, IMoneyRegions regions) : PageModel
 {
+    /// <summary>Where they are when money is paused for them there (not verified), else null.</summary>
+    public LocationState? Paused { get; private set; }
+
     public const int HistoryLines = 50;
 
     // Lines that move coins in or out of Holding (a purchase on its way): the other side is never shown (plan 1 deferred finding).
@@ -92,6 +97,15 @@ public sealed class CoinsModel(IMoneyBooks books, Func<LauncherSettings> setting
             Unavailable = true;
             Balance = null;
             Lines = [];
+        }
+        try
+        {
+            // Their newest logged-in session (Ruling 3); nothing when they aren't in the world.
+            Paused = (await regions.WhereAgentAsync(principal, ct))?.State is { } state and not LocationState.Verified ? state : null;
+        }
+        catch (MoneyUnavailableException)
+        {
+            // Only this line depends on it: the rest of the page stands.
         }
     }
 

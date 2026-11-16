@@ -10,18 +10,49 @@ using GridGate.Launcher.Money;
 using GridGate.Launcher.Security;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using RegionState = GridGate.Launcher.Core.Money.RegionState;
+using RegionStatus = GridGate.Launcher.Core.Money.RegionStatus;
 
 namespace GridGate.Launcher.Pages.Money;
 
+/// <summary>One region program or Region Server in the Limits section: its key, its name, and its limits now (null when unreadable).</summary>
+public sealed record KeyLimitRow(string KeyId, string Name, LimitView? View);
+
 /// <summary>
-/// The Money page (<c>/money</c>; money design §9.1): the mode and settings, and while money is on the totals, the
-/// self-check, the grid-wide freeze, refunds, moving fees and finding a person. Every staff member may look; only admins
-/// and the owner may change anything (each POST checks), and every change is audited.
+/// One open alert as the Money page shows it (verified-regions design §8.8): what happened, the person affected (named,
+/// with their page when they're a resident), and the paired server a warning may offer to remove.
+/// </summary>
+public sealed record AlertRow(MoneyAlert Alert, string Text, string? Person, Guid? PersonPage, Guid? RemovableServer);
+
+/// <summary>
+/// The Money page (<c>/money</c>; money design §9.1): the mode and settings, visitor money and listed grids, and while money
+/// is on the totals, the self-check, the grid-wide freeze, refunds, moving fees, finding a person, and (verified-regions
+/// design §8.12) the regions and whether each is verified, each region program's and Region Server's own limits, and the
+/// open alerts. Every staff member may look; only admins and the owner may change anything, and only the owner may set a
+/// region program's or server's own limits or settle a moved region (each POST checks). Every change is audited.
 /// </summary>
 public sealed class IndexModel(IGridController grid, MoneyGate gate, IMoneyBooks books, MoneyStatus status, AuditLog audit, IRobustClient robust,
-    IPeopleDirectory people, IVisitorDirectory visitors, MoneyPairing pairing, RegionPins pins, TimeProvider time)
+    IPeopleDirectory people, IVisitorDirectory visitors, MoneyPairing pairing, RegionPins pins, TimeProvider time, IMoneyAlerts alerts,
+    IMoneyRegions regions)
     : PageModel
 {
+    /// <summary>The settings the page was drawn from: names of servers, programs and regions.</summary>
+    public LauncherSettings Current { get; private set; } = null!;
+
+    /// <summary>Only the owner sets a program's or server's own limits and settles a moved region.</summary>
+    public bool IsOwner { get; private set; }
+
+    /// <summary>Every region Robust lists, with whether money works there (verified-regions design §8.2).</summary>
+    public IReadOnlyList<RegionState> Regions { get; private set; } = [];
+    public bool RegionsDown { get; private set; }
+
+    /// <summary>Each key's last health call, for the Region Servers list.</summary>
+    public IReadOnlyDictionary<string, KeyHeard> KeysHeard { get; private set; } = new Dictionary<string, KeyHeard>();
+
+    public IReadOnlyList<KeyLimitRow> KeyLimits { get; private set; } = [];
+    public IReadOnlyList<AlertRow> Alerts { get; private set; } = [];
+    public bool AlertsDown { get; private set; }
+
     public IReadOnlyList<MoneyMode> Offered { get; private set; } = [];
 
     /// <summary>Gloebit's section: shown when the gate lets Gloebit run (money plan 4).</summary>
@@ -76,16 +107,18 @@ public sealed class IndexModel(IGridController grid, MoneyGate gate, IMoneyBooks
 
     public async Task<IActionResult> OnPostSettingsAsync(MoneyMode mode, string? currencySymbol, string? currencyName, long startingBalancePlay,
         long startingBalanceReal, long weeklyAllowance, long uploadFee, long classifiedFee, long dailyPayoutLimit, long maxPayment, bool scriptPayouts,
-        bool visitorWallets, CancellationToken ct)
+        long dailySpendLimit, long dailyKeySpendLimit, long dailyKeyPayoutLimit, CancellationToken ct)
     {
         if (!Admin) return StatusCode(StatusCodes.Status403Forbidden);
         var before = grid.CurrentSettings().Money;
+        // Visitor money has its own section (OnPostVisitorsAsync): this form leaves it as it is.
         var next = before with
         {
             Mode = mode, CurrencySymbol = currencySymbol?.Trim() ?? "", CurrencyName = currencyName?.Trim() ?? "",
             StartingBalancePlay = startingBalancePlay, StartingBalanceReal = startingBalanceReal, WeeklyAllowance = weeklyAllowance,
             UploadFee = uploadFee, ClassifiedFee = classifiedFee, DailyPayoutLimit = dailyPayoutLimit, MaxPayment = maxPayment,
-            ScriptPayouts = scriptPayouts, VisitorWallets = visitorWallets,
+            ScriptPayouts = scriptPayouts, DailySpendLimit = dailySpendLimit, DailyKeySpendLimit = dailyKeySpendLimit,
+            DailyKeyPayoutLimit = dailyKeyPayoutLimit,
         };
         // The form may only be posted with values the page itself would accept; anything else is refused whole.
         if (!ModelState.IsValid) Error = "Every number must be a whole number.";
@@ -106,7 +139,8 @@ public sealed class IndexModel(IGridController grid, MoneyGate gate, IMoneyBooks
                     Mode = next.Mode, CurrencySymbol = next.CurrencySymbol, CurrencyName = next.CurrencyName,
                     StartingBalancePlay = next.StartingBalancePlay, StartingBalanceReal = next.StartingBalanceReal, WeeklyAllowance = next.WeeklyAllowance,
                     UploadFee = next.UploadFee, ClassifiedFee = next.ClassifiedFee, DailyPayoutLimit = next.DailyPayoutLimit,
-                    MaxPayment = next.MaxPayment, ScriptPayouts = next.ScriptPayouts, VisitorWallets = next.VisitorWallets,
+                    MaxPayment = next.MaxPayment, ScriptPayouts = next.ScriptPayouts, DailySpendLimit = next.DailySpendLimit,
+                    DailyKeySpendLimit = next.DailyKeySpendLimit, DailyKeyPayoutLimit = next.DailyKeyPayoutLimit,
                 },
             }, writeConfig: true);
             audit.Write(User, Ip, "money-settings", "money", before.Mode == next.Mode ? "ok" : "mode " + next.Mode);
@@ -188,6 +222,201 @@ public sealed class IndexModel(IGridController grid, MoneyGate gate, IMoneyBooks
         await ShowAsync(ct);
         return Page();
     }
+
+    /// <summary>Which hypergrid visitors may pay and be paid (verified-regions design §8.6).</summary>
+    public async Task<IActionResult> OnPostVisitorsAsync(VisitorMoney visitors, CancellationToken ct)
+    {
+        if (!Admin) return StatusCode(StatusCodes.Status403Forbidden);
+        if (!ModelState.IsValid || !Enum.IsDefined(visitors))
+        {
+            Error = "Choose who may use money: no visitors, visitors from grids you list, or visitors from all grids.";
+        }
+        else
+        {
+            grid.UpdateSettings(s => s with { Money = s.Money with { Visitors = visitors } }, writeConfig: false);
+            audit.Write(User, Ip, "money-visitors", "money", visitors.ToString().ToLowerInvariant());
+            Notice = "Saved.";
+        }
+        await ShowAsync(ct);
+        return Page();
+    }
+
+    /// <summary>Lists a grid whose visitors may use money (§8.6), by its home address, stored as the ledger stores homes.</summary>
+    public async Task<IActionResult> OnPostAddGridAsync(string? address, CancellationToken ct)
+    {
+        if (!Admin) return StatusCode(StatusCodes.Status403Forbidden);
+        if (MoneyPageRules.GridAddress(address) is not { } home)
+        {
+            Error = "Give the grid's home address, like http://hg.friendgrid.net:8002.";
+        }
+        else if (grid.CurrentSettings().Money.GridListed(home))
+        {
+            Notice = "That grid is already listed.";
+        }
+        else
+        {
+            grid.UpdateSettings(s => s.Money.GridListed(home) ? s : s with { Money = s.Money with { ListedGrids = [.. s.Money.ListedGrids ?? [], home] } },
+                writeConfig: false);
+            audit.Write(User, Ip, "money-grid-add", LogText.Clean(home), "ok");
+            Notice = "Listed.";
+        }
+        await ShowAsync(ct);
+        return Page();
+    }
+
+    /// <summary>Takes a grid off the list (§8.6): its visitors' wallets stay, frozen in place, until it is listed again.</summary>
+    public async Task<IActionResult> OnPostRemoveGridAsync(string address, CancellationToken ct)
+    {
+        if (!Admin) return StatusCode(StatusCodes.Status403Forbidden);
+        var wanted = MoneyHomes.Normal(address);
+        if (string.IsNullOrEmpty(wanted) || !grid.CurrentSettings().Money.GridListed(wanted))
+        {
+            Error = "That grid isn't listed.";
+        }
+        else
+        {
+            grid.UpdateSettings(s => s with { Money = s.Money with { ListedGrids = (s.Money.ListedGrids ?? []).Where(g => MoneyHomes.Normal(g) != wanted).ToList() } },
+                writeConfig: false);
+            audit.Write(User, Ip, "money-grid-remove", LogText.Clean(wanted), "ok");
+            Notice = "Removed. Its visitors' coins are kept, frozen, and work again if you list the grid again.";
+        }
+        await ShowAsync(ct);
+        return Page();
+    }
+
+    /// <summary>
+    /// A region program's or Region Server's own daily limits (§8.7): any amount, or empty for the grid default (both empty
+    /// removes them). Owner only, with a reason; the audit line is the only record of a removal.
+    /// </summary>
+    public async Task<IActionResult> OnPostKeyLimitsAsync(string keyId, long? dailySpend, long? dailyPayout, CancellationToken ct)
+    {
+        if (!Owner) return StatusCode(StatusCodes.Status403Forbidden);
+        if (!await GuardOnAsync(ct)) return Page();
+        var s = grid.CurrentSettings();
+        if (!KeyIds(s).Contains(keyId))
+        {
+            Error = "That isn't a region program or Region Server here.";
+        }
+        else if (CleanReason() is not { } reason)
+        {
+            Error = "Say why.";
+        }
+        else if (!ModelState.IsValid)
+        {
+            Error = "Each limit must be a whole number, or empty for the grid default.";
+        }
+        else if (MoneyPageRules.LimitProblem(dailySpend, dailyPayout) is { } problem)
+        {
+            Error = problem;
+        }
+        else
+        {
+            var o = await books.SetLimitsAsync(LimitTarget.ForKey(keyId), dailySpend, dailyPayout, null, Staff(reason), ct);
+            audit.Write(User, Ip, "money-key-limits", LogText.Clean(MoneyVerifyText.KeyName(keyId, s)),
+                MoneyPageRules.Code(o) + " " + MoneyPageRules.LimitsText(dailySpend, dailyPayout));
+            if (o == MoneyOutcome.Ok) Notice = dailySpend is null && dailyPayout is null ? "Back to the grid defaults." : "Saved.";
+            else Error = MoneyPageRules.Words(o);
+        }
+        await ShowAsync(ct);
+        return Page();
+    }
+
+    /// <summary>
+    /// Approves a moved region (§8.3): it is pinned to the Region Server Robust now lists it at, and its move notice is
+    /// cleared. Owner only; audited.
+    /// </summary>
+    public async Task<IActionResult> OnPostApproveMoveAsync(Guid region, Guid server, CancellationToken ct)
+    {
+        if (!Owner) return StatusCode(StatusCodes.Status403Forbidden);
+        if (!await GuardServersAsync(ct)) return Page();
+        var s = grid.CurrentSettings();
+        try
+        {
+            var to = s.Money.PairedServers?.FirstOrDefault(p => p.Id == server);
+            var moved = to is null ? null : await MovedAsync(s, region, ct);
+            if (to is null || moved is null || moved.KeyId != MoneyVerifyText.KeyOf(to))
+            {
+                Error = "That region isn't waiting for a move to that Region Server any more.";
+            }
+            else
+            {
+                await regions.ApproveMoveAsync(region, server, ct);
+                await ClearMovedAsync(region, ct);
+                audit.Write(User, Ip, "money-region-move", LogText.Clean(moved.Name), "approved");
+                Notice = $"Approved: {moved.Name} now belongs to the {MoneyVerifyText.ServerName(to)}. Money works there once its module checks in.";
+            }
+        }
+        catch (MoneyUnavailableException)
+        {
+            Error = MoneyPageRules.Words(MoneyOutcome.Unavailable);
+        }
+        await ShowAsync(ct);
+        return Page();
+    }
+
+    /// <summary>
+    /// Keeps a moved region off (§8.3, Ruling 23): no pin changes, so money comes back if the server it belongs to registers
+    /// it again. Clears its move notice, which comes back at most once a day while the other server lists it. Owner only; audited.
+    /// </summary>
+    public async Task<IActionResult> OnPostKeepOffAsync(Guid region, CancellationToken ct)
+    {
+        if (!Owner) return StatusCode(StatusCodes.Status403Forbidden);
+        if (!await GuardServersAsync(ct)) return Page();
+        try
+        {
+            if (await MovedAsync(grid.CurrentSettings(), region, ct) is not { } moved)
+            {
+                Error = "That region isn't waiting for a move any more.";
+            }
+            else
+            {
+                await ClearMovedAsync(region, ct);
+                audit.Write(User, Ip, "money-region-move", LogText.Clean(moved.Name), "kept off");
+                Notice = $"Kept off: money stays off in {moved.Name}. It comes back if the server it belongs to registers it again.";
+            }
+        }
+        catch (MoneyUnavailableException)
+        {
+            Error = MoneyPageRules.Words(MoneyOutcome.Unavailable);
+        }
+        await ShowAsync(ct);
+        return Page();
+    }
+
+    /// <summary>Clears an alert once it has been dealt with (§8.8). The alert keeps who cleared it and when.</summary>
+    public async Task<IActionResult> OnPostClearAlertAsync(long id, CancellationToken ct)
+    {
+        if (!Admin) return StatusCode(StatusCodes.Status403Forbidden);
+        if (!await GuardOnAsync(ct)) return Page();
+        var target = id.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        try
+        {
+            await alerts.ClearAsync(id, StaffName, ct);
+            audit.Write(User, Ip, "money-alert-clear", target, "ok");
+            Notice = "Cleared.";
+        }
+        catch (MoneyUnavailableException)
+        {
+            audit.Write(User, Ip, "money-alert-clear", target, "unavailable");
+            Error = MoneyPageRules.Words(MoneyOutcome.Unavailable);
+        }
+        await ShowAsync(ct);
+        return Page();
+    }
+
+    /// <summary><paramref name="region"/>'s state when Robust lists it as moved, else null.</summary>
+    private async Task<RegionState?> MovedAsync(LauncherSettings s, Guid region, CancellationToken ct) =>
+        (await regions.AllAsync(s, ct)).FirstOrDefault(r => r.RegionId == region && r.Status == RegionStatus.Moved);
+
+    private async Task ClearMovedAsync(Guid region, CancellationToken ct)
+    {
+        foreach (var a in (await alerts.OpenAsync(ct)).Where(a => a.Kind == AlertKind.RegionMoved && a.RegionId == region))
+            await alerts.ClearAsync(a.Id, StaffName, ct);
+    }
+
+    /// <summary>Every key here: each region program's, then each paired Region Server's (§8.7: "per key" means every key).</summary>
+    private static List<string> KeyIds(LauncherSettings s) =>
+        [.. s.Programs.Select(p => p.Instance), .. (s.Money.PairedServers ?? []).Select(MoneyVerifyText.KeyOf)];
 
     private async Task<bool> GuardServersAsync(CancellationToken ct)
     {
@@ -293,9 +522,13 @@ public sealed class IndexModel(IGridController grid, MoneyGate gate, IMoneyBooks
 
     private bool Admin => StaffSignIn.RoleOf(User) >= StaffRole.Admin;
 
+    private bool Owner => StaffSignIn.RoleOf(User) == StaffRole.Owner;
+
     private string? Ip => HttpContext.Connection.RemoteIpAddress?.ToString();
 
-    private StaffAction Staff(string reason) => new(User.Identity?.Name ?? "staff", reason);
+    private string StaffName => User.Identity?.Name ?? "staff";
+
+    private StaffAction Staff(string reason) => new(StaffName, reason);
 
     private string? CleanReason() => string.IsNullOrWhiteSpace(Reason) ? null : LogText.Clean(Reason.Trim(), MoneyPageRules.MaxReason);
 
@@ -325,6 +558,8 @@ public sealed class IndexModel(IGridController grid, MoneyGate gate, IMoneyBooks
             || current.Plan == OwnerPlan.GridAsset && !Core.Config.HostAddress.IsPublic(current.Hostname));
         On = gate.ServiceHere;
         CanChange = Admin;
+        IsOwner = Owner;
+        Current = current;
         if (!On) return;
         LastCheck = status.LastCheck;
         ShowServers = grid.CurrentSettings().Plan == OwnerPlan.GridAsset;
@@ -345,10 +580,61 @@ public sealed class IndexModel(IGridController grid, MoneyGate gate, IMoneyBooks
         {
             Totals = await books.TotalsAsync(ct);
             Frozen = await books.FrozenAsync(ct);
+            KeyLimits = await KeyLimitRowsAsync(current, ct);
         }
         catch (MoneyUnavailableException)
         {
             DatabaseDown = true;
         }
+        try
+        {
+            Regions = await regions.AllAsync(current, ct);
+            if (ShowServers) KeysHeard = await regions.KeysAsync(ct);
+        }
+        catch (MoneyUnavailableException)
+        {
+            RegionsDown = true;
+        }
+        try
+        {
+            Alerts = await AlertRowsAsync(current, ct);
+        }
+        catch (MoneyUnavailableException)
+        {
+            AlertsDown = true;
+        }
+    }
+
+    private async Task<List<KeyLimitRow>> KeyLimitRowsAsync(LauncherSettings s, CancellationToken ct)
+    {
+        var rows = new List<KeyLimitRow>();
+        foreach (var key in KeyIds(s))
+            rows.Add(new KeyLimitRow(key, MoneyVerifyText.KeyName(key, s), await books.LimitsAsync(LimitTarget.ForKey(key), ct)));
+        return rows;
+    }
+
+    /// <summary>
+    /// The open alerts in words (§8.8): each names its region (from Robust's list, read first) or server, and the person
+    /// affected; only a warning about a server that is still paired offers to remove it.
+    /// </summary>
+    private async Task<List<AlertRow>> AlertRowsAsync(LauncherSettings s, CancellationToken ct)
+    {
+        var names = new Dictionary<Guid, string?>();
+        var rows = new List<AlertRow>();
+        foreach (var a in await alerts.OpenAsync(ct))
+        {
+            var region = a.RegionId is not { } id ? "a region"
+                : Regions.FirstOrDefault(r => r.RegionId == id)?.Name ?? s.Regions.FirstOrDefault(r => r.Uuid == id)?.Name ?? $"region {id}";
+            string? person = null;
+            if (a.AgentId is { } agent)
+            {
+                if (!names.TryGetValue(agent, out person))
+                    names[agent] = person = (await robust.FindAccountByIdAsync(agent, ct))?.FullName();
+            }
+            var server = a.Level == AlertLevel.Warning ? s.Money.PairedServers?.FirstOrDefault(p => MoneyVerifyText.KeyOf(p) == a.KeyId)?.Id : null;
+            rows.Add(new AlertRow(a, MoneyVerifyText.Alert(a, region, MoneyVerifyText.KeyName(a.KeyId, s)),
+                person ?? (a.AgentId is { } who ? $"someone not on this grid (avatar {who})" : null), person is null ? null : a.AgentId, server));
+        }
+        return rows;
     }
 }

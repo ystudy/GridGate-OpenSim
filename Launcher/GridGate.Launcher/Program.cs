@@ -435,6 +435,9 @@ builder.Services.AddSingleton(sp => new RegionVerification(MoneyConnections.Mone
 builder.Services.AddSingleton(sp => new MoneyLocations(MoneyConnections.Money(sp.GetRequiredService<Func<LauncherSettings>>()),
     MoneyConnections.Robust(sp.GetRequiredService<Func<LauncherSettings>>()), sp.GetRequiredService<RegionVerification>(),
     sp.GetRequiredService<PresenceCheck>(), sp.GetRequiredService<TimeProvider>()));
+// The money pages' view of regions and where people are (verified-regions design §8.12); tests swap it.
+builder.Services.AddSingleton<IMoneyRegions>(sp => new MoneyRegions(sp.GetRequiredService<RegionVerification>(), sp.GetRequiredService<RegionPins>(),
+    sp.GetRequiredService<MoneyLocations>()));
 builder.Services.AddSingleton<ISecureSessionCheck>(sp => sp.GetRequiredService<PresenceCheck>());
 builder.Services.AddSingleton(sp => new EconomyLimits(sp.GetRequiredService<TimeProvider>()));
 builder.Services.AddSingleton<EconomyHelper>();

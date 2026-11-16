@@ -102,6 +102,34 @@ public sealed class MoneyLocationsTests(MoneyMariaDb maria) : IClassFixture<Mone
         _db.Scalar($"SELECT COUNT(*) FROM `money`.`handoffs` WHERE session_id = '{SessionU}' AND kind IN ('Teleport', 'Crossing')");
 
     [Fact]
+    public async Task Where_an_agent_is_is_their_newest_logged_in_session()
+    {
+        await StartAsync();
+        await LoggedInAtR1();
+        Assert.Null(await _locations.WhereAgentAsync(V, Ct)); // logged in, but never placed
+
+        // A second viewer logs U in again later, at R4, which can't verify anyone.
+        _clock.Advance(TimeSpan.FromMinutes(1));
+        var session2 = Guid.Parse("5000000a-0000-0000-0000-0000000000b2");
+        await _db.AddPresence(U, R4, session2, Guid.NewGuid());
+        await _db.AddSessionStart(session2, U, R4, "login");
+        Assert.Equal(PlaceOutcome.PlacedUnverified, (await Arrive(P4, R4, session2)).Outcome);
+
+        var newest = await _locations.WhereAgentAsync(U, Ct);
+        Assert.Equal(session2, newest?.SessionId);
+        AssertAt(newest, R4, "p4", LocationState.Unverified);
+
+        // The newer session logs out: its row stays a while, but only a logged-in session says where U is.
+        await _db.Sql($"DELETE FROM `robust`.`Presence` WHERE SessionID = '{session2}'");
+        var older = await _locations.WhereAgentAsync(U, Ct);
+        Assert.Equal(SessionU, older?.SessionId);
+        AssertAt(older, R1, "p1", LocationState.Verified);
+
+        await _db.Sql($"DELETE FROM `robust`.`Presence` WHERE SessionID = '{SessionU}'");
+        Assert.Null(await _locations.WhereAgentAsync(U, Ct));
+    }
+
+    [Fact]
     public async Task Login_start_then_arrival_is_verified()
     {
         await StartAsync();
