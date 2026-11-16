@@ -662,7 +662,7 @@ public sealed class IndexModel(IGridController grid, MoneyGate gate, IMoneyBooks
         {
             return (await robust.FindAccountByIdAsync(agent, ct))?.FullName();
         }
-        catch (Exception e) when ((e is HttpRequestException or InvalidDataException or OperationCanceledException) && !ct.IsCancellationRequested)
+        catch (Exception e) when (RobustFailure.IsUnreachable(e, ct))
         {
             return null;
         }

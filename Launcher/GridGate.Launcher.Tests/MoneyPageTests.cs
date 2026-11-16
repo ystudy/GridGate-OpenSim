@@ -1593,6 +1593,23 @@ public sealed class MoneyPageTests
         Assert.Equal(1, f.Robust.Lookups - before); // one look per person, however many alerts name them
     }
 
+    /// <summary>Robust's connection breaks while the Money page names who an alert is about: named by id, and Freeze stays.</summary>
+    [Fact]
+    public async Task A_broken_Robust_connection_still_shows_the_money_page_with_freeze()
+    {
+        var alerts = new FakeAlerts();
+        var at = DateTime.UtcNow;
+        alerts.Open.Add(new MoneyAlert(7, AlertKind.UnhandedArrival, AlertLevel.Warning, KeyOf(Sam), NeonPier, Ann, 3, at, at));
+        await using var f = MakeGrid(alerts: alerts);
+        var c = await SignedInAsync(f);
+        f.Robust.OnFindAccountById = () => throw new IOException("The connection was reset.");
+
+        var doc = await PageAsync(c, "/money");
+
+        Assert.NotNull(doc.QuerySelector("form[action*='handler=Freeze']"));
+        Assert.Contains($"avatar {Ann}", doc.QuerySelector("#money-alert-7")!.TextContent);
+    }
+
     [Fact]
     public async Task Approved_move_is_audited_even_when_its_notice_cant_be_cleared()
     {
