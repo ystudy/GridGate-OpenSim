@@ -29,10 +29,10 @@ public sealed class OpenSimMoneyPathTests
 
     private const int UploadFee = 10;
 
-    private static (MoneyScene Region, AssetTransactionModule Uploads, RecordingClient Uploader) UploadRegion(long balance)
+    private static (MoneyScene Region, AssetTransactionModule Uploads, RecordingClient Uploader) UploadRegion(long balance, int fee = UploadFee)
     {
         var uploads = new AssetTransactionModule();
-        var region = Build(new EconomyInfo("C$", UploadFee, 0, true, true, 1_000_000), others: [uploads]);
+        var region = Build(new EconomyInfo("C$", fee, 0, true, true, 1_000_000), others: [uploads]);
         region.Service.Answer = _ => Balance(balance);
         return (region, uploads, region.Arrive(Buyer));
     }
@@ -146,23 +146,85 @@ public sealed class OpenSimMoneyPathTests
         Assert.Empty(uploader.Alerts);
     }
 
-    /// <summary>An item update takes the asset from the upload, so it is charged by what was uploaded, not the item's type.</summary>
+    private static InventoryItemBase AddItem(MoneyScene region, AssetType type, InventoryType invType, FolderType folder)
+    {
+        var item = new InventoryItemBase(UUID.Random(), Buyer)
+        {
+            Name = "An item", AssetType = (int)type, InvType = (int)invType,
+            Folder = region.Scene.InventoryService.GetFolderForType(Buyer, folder).ID,
+            BasePermissions = (uint)OpenSim.Framework.PermissionMask.All, CurrentPermissions = (uint)OpenSim.Framework.PermissionMask.All,
+        };
+        Assert.True(region.Scene.InventoryService.AddItem(item));
+        return item;
+    }
+
+    /// <summary>An item update takes the asset from the upload, so it is charged by what was uploaded.</summary>
     [Fact]
     public void An_item_update_through_a_udp_upload_is_charged_by_the_uploaded_type()
     {
         var (region, uploads, uploader) = UploadRegion(balance: 100);
-        var item = new InventoryItemBase(UUID.Random(), Buyer)
-        {
-            Name = "A notecard", AssetType = (int)AssetType.Notecard, InvType = (int)InventoryType.Notecard,
-            Folder = region.Scene.InventoryService.GetFolderForType(Buyer, FolderType.Notecard).ID,
-            BasePermissions = (uint)OpenSim.Framework.PermissionMask.All, CurrentPermissions = (uint)OpenSim.Framework.PermissionMask.All,
-        };
-        Assert.True(region.Scene.InventoryService.AddItem(item));
+        var item = AddItem(region, AssetType.Texture, InventoryType.Texture, FolderType.Texture);
 
         Send(uploader, (sbyte)AssetType.Texture, storeLocal: false, temporary: false);
         uploads.HandleItemUpdateFromTransaction(uploader, UploadTransaction, item);
 
         Assert.Single(region.Service.Of("charge"));
+    }
+
+    /// <summary>A free upload type can't be turned into a paid item by updating one with it.</summary>
+    [Fact]
+    public void A_notecard_upload_used_to_update_a_texture_item_is_refused_and_not_charged()
+    {
+        var (region, uploads, uploader) = UploadRegion(balance: 100);
+        var item = AddItem(region, AssetType.Texture, InventoryType.Texture, FolderType.Texture);
+
+        Send(uploader, (sbyte)AssetType.Notecard, storeLocal: false, temporary: false);
+        uploads.HandleItemUpdateFromTransaction(uploader, UploadTransaction, item);
+
+        uploader.WaitForAlert(AssetXferUploader.MismatchText);
+        Assert.Empty(region.Service.Of("charge"));
+        Assert.Null(region.Scene.AssetService.Get(UploadAssetId.ToString()));
+    }
+
+    [Fact]
+    public void A_notecard_upload_updating_a_notecard_item_still_works()
+    {
+        var (region, uploads, uploader) = UploadRegion(balance: 100);
+        var item = AddItem(region, AssetType.Notecard, InventoryType.Notecard, FolderType.Notecard);
+
+        Send(uploader, (sbyte)AssetType.Notecard, storeLocal: false, temporary: false);
+        uploads.HandleItemUpdateFromTransaction(uploader, UploadTransaction, item);
+
+        Assert.NotNull(region.Scene.AssetService.Get(UploadAssetId.ToString()));
+        Assert.Empty(region.Service.Of("charge"));
+        Assert.Empty(uploader.Alerts);
+    }
+
+    /// <summary>Viewers can send a texture as ImageJPEG or ImageTGA; it is the same upload fee as any texture.</summary>
+    [Fact]
+    public void A_udp_jpeg_texture_saved_as_a_texture_is_checked_and_charged_once()
+    {
+        var (region, uploads, uploader) = UploadRegion(balance: UploadFee - 1);
+        Upload(uploads, uploader, type: (sbyte)AssetType.ImageJPEG, createAs: (sbyte)AssetType.Texture);
+        uploader.WaitForAlert("Insufficient funds");
+        Assert.Empty(Textures(region));
+
+        var (region2, uploads2, uploader2) = UploadRegion(balance: 100);
+        Assert.True(Upload(uploads2, uploader2, type: (sbyte)AssetType.ImageJPEG, createAs: (sbyte)AssetType.Texture));
+        Assert.Single(Textures(region2));
+        Assert.Single(region2.Service.Of("charge"));
+    }
+
+    /// <summary>With no upload fee in force, OpenSim's own behaviour is unchanged: any item type may be made from an upload.</summary>
+    [Fact]
+    public void Without_an_upload_fee_a_texture_upload_saved_as_a_notecard_is_created_as_before()
+    {
+        var (region, uploads, uploader) = UploadRegion(balance: 100, fee: 0);
+
+        Upload(uploads, uploader, createAs: (sbyte)AssetType.Notecard);
+
+        Assert.DoesNotContain(AssetXferUploader.MismatchText, uploader.Alerts);
+        Assert.NotNull(region.Scene.AssetService.Get(UploadAssetId.ToString()));
     }
 
     /// <summary>The same upload stored twice (store-only, then its item) pays once.</summary>

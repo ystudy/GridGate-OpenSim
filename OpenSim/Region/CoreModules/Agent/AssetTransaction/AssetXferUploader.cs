@@ -430,6 +430,13 @@ namespace OpenSim.Region.CoreModules.Agent.AssetTransaction
 //                "[ASSET XFER UPLOADER]: Storing asset {0} for earlier item update for {1} for {2}",
 //                m_asset.FullID, item.Name, ourClient.Name);
 
+            // GridGate: an update takes its asset from the upload, so it is held to the uploaded type too.
+            if (RefuseTypeMismatch((sbyte)item.AssetType))
+            {
+                ourClient.SendBulkUpdateInventory(item); // invalid the change item on viewer cache
+                return false;
+            }
+
             uint perms = ValidateAssets();
             if(perms == 0)
             {
@@ -464,6 +471,10 @@ namespace OpenSim.Region.CoreModules.Agent.AssetTransaction
 //                "[ASSET XFER UPLOADER]: Storing asset {0} for earlier task item update for {1} for {2}",
 //                m_asset.FullID, taskItem.Name, ourClient.Name);
 
+            // GridGate: as for an inventory item update.
+            if (RefuseTypeMismatch((sbyte)taskItem.Type))
+                return false;
+
             if(ValidateAssets() == 0)
             {
                 m_transactions.RemoveXferUploader(m_transactionID);
@@ -480,13 +491,9 @@ namespace OpenSim.Region.CoreModules.Agent.AssetTransaction
 
         private bool CompleteCreateItem(uint callbackID)
         {
-            // GridGate: the fee was checked for the uploaded type, so the item can't be made as another type (texture variants count as one).
-            if (!AssetTransactionModule.UploadTypesMatch(m_uploadType, type))
-            {
-                m_transactions.RemoveXferUploader(m_transactionID);
-                ourClient.SendAlertMessage(MismatchText);
+            // GridGate: the fee was checked for the uploaded type, so the item can't be made as another type.
+            if (RefuseTypeMismatch(type))
                 return false;
-            }
 
             if(ValidateAssets() == 0)
             {
@@ -552,6 +559,22 @@ namespace OpenSim.Region.CoreModules.Agent.AssetTransaction
                 m_charged = true;
                 mm.ApplyUploadCharge(ourClient.AgentId, mm.UploadCharge, "Asset upload");
             }
+        }
+
+        /// <summary>
+        /// GridGate: when an upload fee is in force, an item can't take an asset of another type than the one the fee was
+        /// checked for (AssetTransactionModule.UploadTypesMatch). Removes the uploader and tells the viewer. With no money
+        /// module or no fee, OpenSim's own behaviour is unchanged.
+        /// </summary>
+        private bool RefuseTypeMismatch(sbyte itemType)
+        {
+            IMoneyModule mm = m_Scene.RequestModuleInterface<IMoneyModule>();
+            if (mm is null || mm.UploadCharge <= 0 || AssetTransactionModule.UploadTypesMatch(m_uploadType, itemType))
+                return false;
+
+            m_transactions.RemoveXferUploader(m_transactionID);
+            ourClient.SendAlertMessage(MismatchText);
+            return true;
         }
 
         private uint ValidateAssets()

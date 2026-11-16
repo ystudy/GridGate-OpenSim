@@ -221,8 +221,8 @@ namespace OpenSim.Region.CoreModules.Agent.AssetTransaction
         /// </summary>
         public static bool UploadFeeApplies(sbyte assetType, bool temporary)
         {
-            return !temporary &&
-                (AssetType)assetType is AssetType.Texture or AssetType.Sound or AssetType.TextureTGA or AssetType.Animation;
+            // The texture family is the one UploadTypesMatch accepts for a texture item, so no variant is a free texture.
+            return !temporary && (IsTextureFamily(assetType) || (AssetType)assetType is AssetType.Sound or AssetType.Animation);
         }
 
         /// <summary>
