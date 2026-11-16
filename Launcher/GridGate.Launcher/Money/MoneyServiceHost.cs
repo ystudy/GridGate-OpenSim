@@ -24,7 +24,8 @@ public sealed class MoneyServiceHost(
     MoneyPairing? pairing = null,
     Func<Func<LauncherSettings, LauncherSettings>, LauncherSettings>? update = null,
     RegionPins? pins = null,
-    RegionVerification? verification = null) : IHostedService
+    RegionVerification? verification = null,
+    MoneyLocations? locations = null) : IHostedService
 {
     /// <summary>A request body larger than this is refused before it is read.</summary>
     public const long MaxBodyBytes = 16 * 1024;
@@ -79,7 +80,7 @@ public sealed class MoneyServiceHost(
         builder.Services.AddRoutingCore();
         var app = builder.Build();
         app.UseRouting();
-        MoneyApi.Map(app, new MoneyApi.Context(ledger, presence, settings, failures, _log, pairing, update, pins, MoneyCertificate.Fingerprint(cert), effective, verification));
+        MoneyApi.Map(app, new MoneyApi.Context(ledger, presence, settings, failures, _log, pairing, update, pins, MoneyCertificate.Fingerprint(cert), effective, verification, locations));
         return app;
     }
 

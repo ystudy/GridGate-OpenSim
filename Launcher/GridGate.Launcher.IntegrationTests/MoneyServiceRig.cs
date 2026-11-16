@@ -16,7 +16,9 @@ namespace GridGate.Launcher.IntegrationTests;
 /// <summary>
 /// The money service over HTTPS on a fresh database, as a Grid Asset Server runs it (so <c>/pair</c> is open), for the tests
 /// the money review of 2026-11-15 found missing (L-5, L-8). Program p1 holds region Here and p2 region There; residents A
-/// (in Here) and B (in There) are logged in, and visitor V from <see cref="VisitorHome"/> is logged in at Here.
+/// and B and visitor V from <see cref="VisitorHome"/> are logged in. Unless asked not to, both programs' modules have
+/// checked in (so Here and There are verified) and the service has placed A and V at Here and B at There, as a start and
+/// an arrival do (money design §8.4): Robust's Presence no longer says where anyone is.
 /// </summary>
 internal sealed class MoneyServiceRig : IAsyncDisposable
 {
@@ -51,14 +53,29 @@ internal sealed class MoneyServiceRig : IAsyncDisposable
     /// <summary>The clock the verification reads: a test steps it to age a key's last health call.</summary>
     public FakeTimeProvider VerifyClock { get; } = new(DateTimeOffset.UtcNow);
     public RegionVerification Verification { get; private set; } = null!;
+    /// <summary>The clock the location record reads: an arrival nothing vouches for is held until a test moves it on.</summary>
+    public FakeTimeProvider LocationClock { get; } = new(DateTimeOffset.UtcNow);
+    public MoneyLocations Locations { get; private set; } = null!;
+    /// <summary>The money mode the service sees; a test switches coins off while it runs.</summary>
+    public MoneyMode Mode { get; set; } = MoneyMode.Play;
+    public int Port { get; private set; }
     public IEnumerable<string> Logs => _logs;
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    public static async Task<MoneyServiceRig> StartAsync(MoneyMariaDb maria)
+    /// <summary>A started service; with <paramref name="place"/> false no module has checked in and nobody is placed.</summary>
+    public static async Task<MoneyServiceRig> StartAsync(MoneyMariaDb maria, bool place = true)
     {
         var rig = new MoneyServiceRig();
         await rig.InitAsync(maria);
+        if (place)
+        {
+            await rig.Health(Key);
+            await rig.Health(Key2);
+            await rig.Place(SessionA, Here);
+            await rig.Place(SessionB, There);
+            await rig.Place(SessionV, Here, "gatekeeper");
+        }
         return rig;
     }
 
@@ -74,7 +91,7 @@ internal sealed class MoneyServiceRig : IAsyncDisposable
         await Db.AddVisitor(V, VisitorHome + "/");
         await Db.AddRegion(Here, "127.0.0.1", 8004);
         await Db.AddRegion(There, "127.0.0.1", 8005);
-        var port = MoneyMariaDb.FreePort();
+        var port = Port = MoneyMariaDb.FreePort();
         Settings = Db.Settings with
         {
             Plan = OwnerPlan.GridAsset,
@@ -96,9 +113,10 @@ internal sealed class MoneyServiceRig : IAsyncDisposable
         Pairing = new MoneyPairing(time);
         var pins = new RegionPins(MoneyConnections.Money(() => dbSettings), new RegionHosts(MoneyConnections.Robust(() => dbSettings)), TimeProvider.System);
         Verification = new RegionVerification(MoneyConnections.Money(() => dbSettings), MoneyConnections.Robust(() => dbSettings), pins, VerifyClock);
-        _host = new MoneyServiceHost(Ledger, presence, () => Settings, () => MoneyMode.Play, () => cert,
+        Locations = new MoneyLocations(MoneyConnections.Money(() => dbSettings), MoneyConnections.Robust(() => dbSettings), Verification, presence, LocationClock);
+        _host = new MoneyServiceHost(Ledger, presence, () => Settings, () => Mode, () => cert,
             new MoneyAuthFailures(FailureClock, loggers.CreateLogger<MoneyAuthFailures>()), loggers, new MoneyStatus(), Pairing,
-            change => Settings = change(Settings), pins, verification: Verification);
+            change => Settings = change(Settings), pins, Verification, Locations);
         await _host.StartAsync(Ct);
         _http = new HttpClient(new SocketsHttpHandler
         {
@@ -134,6 +152,61 @@ internal sealed class MoneyServiceRig : IAsyncDisposable
             catch (JsonException) { }
         return (resp.StatusCode, json, raw);
     }
+
+    /// <summary>A module's health call for <paramref name="key"/>'s program at the handoff protocol, listing its region: that region is verified.</summary>
+    public async Task Health(string key)
+    {
+        var answer = await Post("health", new { protocol = RegionVerification.HandoffProtocol, regions = new[] { RegionOf(key) } }, key);
+        Assert.Equal(HttpStatusCode.OK, answer.Status);
+    }
+
+    /// <summary>
+    /// Places <paramref name="session"/> at <paramref name="region"/> as the service learns it (money design §8.4): Robust
+    /// writes a start, and the region's module reports the arrival with its key. Verified once that module has checked in.
+    /// </summary>
+    public async Task<string> Place(Guid session, Guid region, string source = "login")
+    {
+        var agent = AgentOf(session);
+        await Db.AddSessionStart(session, agent, region, source);
+        var code = CodeOf(await Arrived(KeyOf(region), session, agent, region));
+        Assert.True(code is "ok" or "unverified_avatar", $"placing at {region}: {code}");
+        return code;
+    }
+
+    /// <summary>
+    /// A module's arrival report. One nothing vouches for is held (money design §8.4): the location clock moves on while it
+    /// waits, so it gets its answer.
+    /// </summary>
+    public async Task<(HttpStatusCode Status, JsonNode? Body, string Raw)> Arrived(string key, Guid session, Guid agent, Guid region)
+    {
+        var call = Post("arrived", new { id = Guid.NewGuid(), sessionId = session, agentId = agent, regionId = region }, key);
+        var deadline = DateTime.UtcNow.AddSeconds(30);
+        while (!call.IsCompleted)
+        {
+            Assert.True(DateTime.UtcNow < deadline, "the arrival never answered");
+            await Task.WhenAny(call, Task.Delay(20, Ct));
+            if (!call.IsCompleted) LocationClock.Advance(MoneyLocations.ArrivalRetry);
+        }
+        return await call;
+    }
+
+    /// <summary>A module's handoff: <paramref name="session"/> leaves <paramref name="from"/> for <paramref name="to"/>.</summary>
+    public async Task<string> Handoff(string key, Guid session, Guid from, Guid to, string kind = "teleport") =>
+        CodeOf(await Post("handoff", new { id = Guid.NewGuid(), sessionId = session, fromRegion = from, toRegion = to, kind }, key));
+
+    /// <summary>A teleport from Here to There: p1 hands <paramref name="session"/> off and p2 reports the arrival.</summary>
+    public async Task MoveToThere(Guid session)
+    {
+        Assert.Equal("ok", await Handoff(Key, session, Here, There));
+        Assert.Equal("ok", CodeOf(await Arrived(Key2, session, AgentOf(session), There)));
+    }
+
+    public static Guid AgentOf(Guid session) =>
+        session == SessionA ? A : session == SessionB ? B : session == SessionV ? V : throw new ArgumentException("not a rig session", nameof(session));
+
+    public static string KeyOf(Guid region) => region == Here ? Key : region == There ? Key2 : throw new ArgumentException("not a rig region", nameof(region));
+
+    public static Guid RegionOf(string key) => key == Key ? Here : key == Key2 ? There : throw new ArgumentException("not a rig key", nameof(key));
 
     /// <summary>The answer's code, or "" when there is none.</summary>
     public static string CodeOf((HttpStatusCode Status, JsonNode? Body, string Raw) answer) => (string?)answer.Body?["code"] ?? "";

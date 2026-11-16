@@ -22,7 +22,8 @@ public sealed class RegionVerificationTests(MoneyMariaDb maria) : IClassFixture<
         if (_rig is not null) await _rig.DisposeAsync();
     }
 
-    private async Task<MoneyServiceRig> StartAsync() => _rig = await MoneyServiceRig.StartAsync(maria);
+    // No module has checked in yet: each test says which have.
+    private async Task<MoneyServiceRig> StartAsync() => _rig = await MoneyServiceRig.StartAsync(maria, place: false);
 
     private static async Task<RegionStatus> StatusOf(MoneyServiceRig rig, Guid region) =>
         (await rig.Verification.AllAsync(rig.Settings, Ct)).Single(r => r.RegionId == region).Status;

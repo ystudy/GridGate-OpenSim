@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
@@ -30,9 +31,13 @@ internal static class MoneyApi
     internal sealed record Who(Guid? AgentId, string? Home, Guid? SessionId, Guid? SecureSessionId);
     internal sealed record TransferBody(Guid? TxnId, string? Type, Who? From, Who? To, long? Amount, Guid? RegionId, Guid? ObjectId, string? ObjectName);
     internal sealed record PayoutBody(Guid? TxnId, Guid? OwnerId, Who? To, long? Amount, Guid? RegionId, Guid? ObjectId, string? ObjectName);
-    internal sealed record ChargeBody(Guid? TxnId, string? Type, Who? Payer, long? Amount, Guid? PayTo);
+    internal sealed record ChargeBody(Guid? TxnId, string? Type, Who? Payer, long? Amount, Guid? PayTo, Guid? RegionId);
     internal sealed record HoldBody(Guid? TxnId, string? Kind, Who? Buyer, Who? Seller, long? Amount, Guid? RegionId, Guid? ObjectId, string? ObjectName);
     internal sealed record SettleBody(Guid? TxnId, long? HoldId);
+    /// <summary>A module's handoff (money design §8.4); <c>Kind</c> is <c>teleport</c>, <c>crossing</c> or <c>other_grid</c>.</summary>
+    internal sealed record HandoffBody(Guid? Id, Guid? SessionId, Guid? FromRegion, Guid? ToRegion, string? Kind);
+    internal sealed record CancelBody(Guid? SessionId, Guid? FromRegion);
+    internal sealed record ArrivedBody(Guid? Id, Guid? SessionId, Guid? AgentId, Guid? RegionId);
 
     // Answers.
     internal sealed record Answer(string Code, long? Balance = null, long? ToBalance = null, long? EntryId = null, long? HoldId = null);
@@ -47,11 +52,23 @@ internal static class MoneyApi
     /// <summary>
     /// What the endpoints need. <see cref="Pairing"/>, <see cref="Update"/> and <see cref="Pins"/> are for Region Servers
     /// (money plan 3): without them nobody can pair and a server key gets <c>unavailable</c>. <see cref="Fingerprint"/> is
-    /// the certificate this listener serves.
+    /// the certificate this listener serves. Without <see cref="Verification"/> and <see cref="Locations"/> nobody can pay
+    /// (money design §8.5): every payment, balance, handoff and arrival is <c>unavailable</c>.
     /// </summary>
     internal sealed record Context(MoneyLedger Ledger, PresenceCheck Presence, Func<LauncherSettings> Settings, MoneyAuthFailures Failures, ILogger Log,
         MoneyPairing? Pairing = null, Func<Func<LauncherSettings, LauncherSettings>, LauncherSettings>? Update = null, RegionPins? Pins = null,
-        string Fingerprint = "", Func<MoneyMode>? Mode = null, RegionVerification? Verification = null);
+        string Fingerprint = "", Func<MoneyMode>? Mode = null, RegionVerification? Verification = null, MoneyLocations? Locations = null)
+    {
+        /// <summary>How many <c>/arrived</c> calls each key (by key id) has open now; see <see cref="MaxOpenArrivals"/>.</summary>
+        public ConcurrentDictionary<string, int> OpenArrivals { get; } = new(StringComparer.Ordinal);
+    }
+
+    /// <summary>
+    /// An arrival nothing vouches for yet is held up to <see cref="MoneyLocations.ArrivalWait"/> (money design §8.4), looking
+    /// again every <see cref="MoneyLocations.ArrivalRetry"/>. A key may have this many open at once; past that it is refused
+    /// before anything is looked up, so a key spamming arrivals can't take the database's connections.
+    /// </summary>
+    internal const int MaxOpenArrivals = 20;
 
     public static void Map(IEndpointRouteBuilder app, Context c)
     {
@@ -74,47 +91,80 @@ internal static class MoneyApi
             var m = c.Settings().Money;
             return Task.FromResult<object>(new EconomyAnswer("ok", m.CurrencySymbol, m.UploadFee, m.ClassifiedFee, m.EffectiveVisitors != VisitorMoney.Off, m.ScriptPayouts, m.MaxPayment));
         });
+        // Reading a balance moves nothing: the avatar must be logged in and placed in one of the key's regions, verified or
+        // not, so a region can show someone their balance while money is paused for them.
         Post(app, "/money/v1/balance", c, async (http, grant, ct) =>
         {
             var w = await Read<Who>(http, ct);
-            return await WithSession(c, w, grant, ct) ?? Of(await c.Ledger.BalanceAsync(Account(w), ct));
+            return await WithViewer(c, w, grant, ct) is { } refusal ? Code(refusal) : Of(await c.Ledger.BalanceAsync(Account(w), ct));
         });
+        // Every payment checks its payer (money design §8.5). Receivers get no location check: they lose nothing by it and are
+        // often offline; the ledger's visitor rule still applies to them.
         Post(app, "/money/v1/transfer", c, async (http, grant, ct) =>
         {
             var b = await Read<TransferBody>(http, ct);
             var type = Need(b.Type);
             if (!PaymentTypes.Contains(type)) throw new BadRequest();
-            var from = Need(b.From);
-            var region = Need(b.RegionId);
-            if (!grant.Regions.Contains(region)) return Code("wrong_region");
-            return await WithSession(c, from, grant, ct) ?? Of(await c.Ledger.TransferAsync(
-                new TransferRequest(Scoped(grant, b.TxnId), type, Account(from), Account(Need(b.To)), Need(b.Amount), region, b.ObjectId, b.ObjectName), ct));
+            var (from, region) = (Need(b.From), Need(b.RegionId));
+            var request = new TransferRequest(Scoped(grant, b.TxnId), type, Account(from), Account(Need(b.To)), Need(b.Amount), region, b.ObjectId, b.ObjectName);
+            return await WithPayer(c, from, grant, region, ct) is { } refusal ? Code(refusal) : Of(await c.Ledger.TransferAsync(request, ct));
         });
+        // A script payout has no payer in the region (the object's owner is usually offline): it needs a verified region.
         Post(app, "/money/v1/payout", c, async (http, grant, ct) =>
         {
             var b = await Read<PayoutBody>(http, ct);
             var region = Need(b.RegionId);
             var request = new PayoutRequest(Scoped(grant, b.TxnId), Need(b.OwnerId), Account(Need(b.To)), Need(b.Amount), region, Need(b.ObjectId), Need(b.ObjectName));
             if (!grant.Regions.Contains(region)) return Code("wrong_region");
+            if (!await Verification(c).IsVerifiedAsync(grant, region, ct)) return Code("unverified_region");
             return Of(await c.Ledger.PayoutAsync(request, ct));
         });
         Post(app, "/money/v1/charge", c, async (http, grant, ct) =>
         {
             var b = await Read<ChargeBody>(http, ct);
-            var payer = Need(b.Payer);
+            var (payer, region) = (Need(b.Payer), Need(b.RegionId));
             var request = new ChargeRequest(Scoped(grant, b.TxnId), Need(b.Type), Account(payer), Need(b.Amount), b.PayTo);
-            return await WithSession(c, payer, grant, ct) ?? Of(await c.Ledger.ChargeAsync(request, ct));
+            return await WithPayer(c, payer, grant, region, ct) is { } refusal ? Code(refusal) : Of(await c.Ledger.ChargeAsync(request, ct));
         });
         Post(app, "/money/v1/hold", c, async (http, grant, ct) =>
         {
             var b = await Read<HoldBody>(http, ct);
-            var buyer = Need(b.Buyer);
-            var region = Need(b.RegionId);
+            var (buyer, region) = (Need(b.Buyer), Need(b.RegionId));
             var request = new HoldRequest(Scoped(grant, b.TxnId), Need(b.Kind), Account(buyer), Account(Need(b.Seller)), Need(b.Amount), region, b.ObjectId, b.ObjectName);
-            if (!grant.Regions.Contains(region)) return Code("wrong_region");
             // Holding's balance (ToBalance) is nobody's balance: it never leaves the service (plan 1 deferred finding).
-            return await WithSession(c, buyer, grant, ct) ?? Of(await c.Ledger.HoldAsync(request, ct)) with { ToBalance = null };
+            return await WithPayer(c, buyer, grant, region, ct) is { } refusal ? Code(refusal) : Of(await c.Ledger.HoldAsync(request, ct)) with { ToBalance = null };
         });
+        // Where avatars are (money design §8.4). These keep working while coins are off, so the record still follows everyone
+        // when they come back on.
+        Post(app, "/money/v1/handoff", c, async (http, grant, ct) =>
+        {
+            var b = await Read<HandoffBody>(http, ct);
+            var kind = Need(b.Kind) switch
+            {
+                "teleport" => HandoffKind.Teleport,
+                "crossing" => HandoffKind.Crossing,
+                "other_grid" => HandoffKind.OtherGrid,
+                _ => throw new BadRequest(),
+            };
+            return Code(PlaceCode(await Locations(c).HandoffAsync(grant, Need(b.Id), Need(b.SessionId), Need(b.FromRegion), Need(b.ToRegion), kind, ct)));
+        }, whileOff: true);
+        Post(app, "/money/v1/handoff/cancel", c, async (http, grant, ct) =>
+        {
+            var b = await Read<CancelBody>(http, ct);
+            await Locations(c).CancelHandoffAsync(grant, Need(b.SessionId), Need(b.FromRegion), ct);
+            return Code("ok");
+        }, whileOff: true);
+        Post(app, "/money/v1/arrived", c, async (http, grant, ct) =>
+        {
+            var b = await Read<ArrivedBody>(http, ct);
+            _ = Need(b.Id); // the module's id for this report: required on the wire, not used by the service yet
+            var result = await Locations(c).ArrivedAsync(grant, Need(b.SessionId), Need(b.AgentId), Need(b.RegionId), ct);
+            if (result.Outcome is PlaceOutcome.Refused or PlaceOutcome.Conflict)
+            {
+                // Task 10: raise the alert (Conflict and a refusal with VerifiedElsewhere are warnings)
+            }
+            return Code(PlaceCode(result.Outcome));
+        }, whileOff: true, arrival: true);
         // A purchase already paid into Holding still finishes after coins are switched off: the buyer gets the item or the
         // coins back.
         Post(app, "/money/v1/hold/complete", c, (http, grant, ct) => Settle(http, c, grant, complete: true, ct), whileOff: true);
@@ -214,8 +264,9 @@ internal static class MoneyApi
     /// <summary>One endpoint's work, given its authenticated key's grant; returns the answer to write.</summary>
     private delegate Task<object> Endpoint(HttpContext http, RegionKeyGrant grant, CancellationToken ct);
 
-    private static void Post(IEndpointRouteBuilder app, string path, Context c, Endpoint endpoint, bool whileOff = false) =>
-        app.MapPost(path, (RequestDelegate)(http => Handle(http, c, endpoint, whileOff)));
+    /// <summary>Maps <paramref name="endpoint"/>; an <paramref name="arrival"/> counts against its key's <see cref="MaxOpenArrivals"/>.</summary>
+    private static void Post(IEndpointRouteBuilder app, string path, Context c, Endpoint endpoint, bool whileOff = false, bool arrival = false) =>
+        app.MapPost(path, (RequestDelegate)(http => Handle(http, c, endpoint, whileOff, arrival)));
 
     /// <summary>
     /// Whether coins are on now. The service starts only in Play or Real, but the owner may switch to Off or Gloebit while it
@@ -238,7 +289,7 @@ internal static class MoneyApi
     /// <summary>
     /// Authenticates, runs the endpoint and writes its answer. Nothing here logs what was sent: no key, no session id, no body.
     /// </summary>
-    private static async Task Handle(HttpContext http, Context c, Endpoint endpoint, bool whileOff)
+    private static async Task Handle(HttpContext http, Context c, Endpoint endpoint, bool whileOff, bool arrival)
     {
         var ct = http.RequestAborted;
         var header = http.Request.Headers.Authorization.ToString();
@@ -252,13 +303,37 @@ internal static class MoneyApi
             return;
         }
 
-        object answer;
         if (!whileOff && !CoinsOn(c))
         {
-            http.Response.ContentType = "application/json";
-            await JsonSerializer.SerializeAsync(http.Response.Body, Code("unavailable"), Json, ct);
+            await WriteAsync(http, Code("unavailable"), ct);
             return;
         }
+        if (!arrival)
+        {
+            await RunAsync(http, c, grant, endpoint, ct);
+            return;
+        }
+        // Counted before anything is read or looked up, a paired key's regions included.
+        if (c.OpenArrivals.AddOrUpdate(grant.KeyId, 1, (_, open) => open + 1) > MaxOpenArrivals)
+        {
+            c.OpenArrivals.AddOrUpdate(grant.KeyId, 0, (_, open) => open - 1);
+            await WriteAsync(http, Code("refused"), ct);
+            return;
+        }
+        try
+        {
+            await RunAsync(http, c, grant, endpoint, ct);
+        }
+        finally
+        {
+            c.OpenArrivals.AddOrUpdate(grant.KeyId, 0, (_, open) => open - 1);
+        }
+    }
+
+    /// <summary>Runs an authenticated request's endpoint and writes its answer.</summary>
+    private static async Task RunAsync(HttpContext http, Context c, RegionKeyGrant grant, Endpoint endpoint, CancellationToken ct)
+    {
+        object answer;
         try
         {
             // A paired Region Server's key covers the regions Robust lists at its address that are pinned to it (money design
@@ -297,6 +372,11 @@ internal static class MoneyApi
             http.Response.StatusCode = StatusCodes.Status500InternalServerError;
             return;
         }
+        await WriteAsync(http, answer, ct);
+    }
+
+    private static async Task WriteAsync(HttpContext http, object answer, CancellationToken ct)
+    {
         http.Response.ContentType = "application/json";
         await JsonSerializer.SerializeAsync(http.Response.Body, answer, answer.GetType(), Json, ct);
     }
@@ -304,15 +384,59 @@ internal static class MoneyApi
     private static async Task<T> Read<T>(HttpContext http, CancellationToken ct) where T : class =>
         await JsonSerializer.DeserializeAsync<T>(http.Request.Body, Json, ct) ?? throw new BadRequest();
 
-    /// <summary>Null when <paramref name="w"/>'s session is live in one of the key's regions; otherwise the refusal.</summary>
-    private static async Task<Answer?> WithSession(Context c, Who w, RegionKeyGrant grant, CancellationToken ct) =>
-        await c.Presence.CheckAsync(Need(w.AgentId), Need(w.SessionId), Need(w.SecureSessionId), grant.Regions, ct) switch
+    /// <summary>
+    /// Null when coins may leave <paramref name="w"/> in <paramref name="regionId"/> (money design §8.5); otherwise the
+    /// refusal's code. In order: logged in with both session ids (Presence, which only Robust writes); verified somewhere
+    /// by the service's own record, never Presence's region; that place is one of the key's regions and the one the request
+    /// names; and that region is verified.
+    /// </summary>
+    private static async Task<string?> WithPayer(Context c, Who w, RegionKeyGrant grant, Guid regionId, CancellationToken ct)
+    {
+        var (locations, verification) = (Locations(c), Verification(c));
+        if (await LoggedIn(c, w, ct) is { } refusal) return refusal;
+        if (await locations.WhereAsync(Need(w.SessionId), ct) is not { State: LocationState.Verified, RegionId: { } at }) return "unverified_avatar";
+        if (!grant.Regions.Contains(at) || at != regionId) return "wrong_region";
+        return await verification.IsVerifiedAsync(grant, regionId, ct) ? null : "unverified_region";
+    }
+
+    /// <summary>
+    /// Null when <paramref name="w"/> may read their balance through this key: logged in, and placed in one of the key's
+    /// regions in any state; otherwise the refusal's code.
+    /// </summary>
+    private static async Task<string?> WithViewer(Context c, Who w, RegionKeyGrant grant, CancellationToken ct)
+    {
+        var locations = Locations(c);
+        if (await LoggedIn(c, w, ct) is { } refusal) return refusal;
+        return await locations.WhereAsync(Need(w.SessionId), ct) is { RegionId: { } at } && grant.Regions.Contains(at) ? null : "wrong_region";
+    }
+
+    /// <summary>Null when <paramref name="w"/> is logged in with both session ids (a missing one is a 400); otherwise the refusal's code.</summary>
+    private static async Task<string?> LoggedIn(Context c, Who w, CancellationToken ct) =>
+        await c.Presence.LoggedInAsync(Need(w.AgentId), Need(w.SessionId), Need(w.SecureSessionId), ct) switch
         {
             PresenceOutcome.Ok => null,
-            PresenceOutcome.WrongRegion => Code("wrong_region"),
-            PresenceOutcome.Unavailable => Code("unavailable"),
-            _ => Code("no_session"),
+            PresenceOutcome.Unavailable => "unavailable",
+            _ => "no_session",
         };
+
+    /// <summary>The answer to a handoff or an arrival. Conflict is an unverified place, as the arriving region sees it.</summary>
+    private static string PlaceCode(PlaceOutcome outcome) => outcome switch
+    {
+        PlaceOutcome.Ok => "ok",
+        PlaceOutcome.PlacedUnverified or PlaceOutcome.Conflict => "unverified_avatar",
+        PlaceOutcome.Refused => "refused",
+        PlaceOutcome.NoSession => "no_session",
+        PlaceOutcome.NotCovered => "wrong_region",
+        PlaceOutcome.NotHeld => "not_held",
+        PlaceOutcome.Unavailable => "unavailable",
+        _ => throw new ArgumentOutOfRangeException(nameof(outcome)),
+    };
+
+    private static MoneyLocations Locations(Context c) =>
+        c.Locations ?? throw new MoneyUnavailableException(new InvalidOperationException("no location record"));
+
+    private static RegionVerification Verification(Context c) =>
+        c.Verification ?? throw new MoneyUnavailableException(new InvalidOperationException("no region verification"));
 
     /// <summary>
     /// The region's transaction id, made unique to its key: two programs that happen to use the same id never see each

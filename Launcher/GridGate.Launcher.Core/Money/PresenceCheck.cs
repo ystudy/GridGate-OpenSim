@@ -2,8 +2,8 @@ using MySqlConnector;
 
 namespace GridGate.Launcher.Core.Money;
 
-/// <summary>What Robust's Presence table says about a session.</summary>
-public enum PresenceOutcome { Ok, NoSession, WrongRegion, Unavailable }
+/// <summary>What Robust's Presence table says about a session. Where it is isn't Presence's to say (money design §8.4).</summary>
+public enum PresenceOutcome { Ok, NoSession, Unavailable }
 
 /// <summary>The economy helper's check of a viewer's secure session (money design §8.5); a seam so tests can fake it.</summary>
 public interface ISecureSessionCheck
@@ -17,34 +17,6 @@ public interface ISecureSessionCheck
 /// </summary>
 public sealed class PresenceCheck(Func<CancellationToken, Task<MySqlConnection>> openRobust) : ISecureSessionCheck
 {
-    /// <summary>
-    /// Ok when <paramref name="agentId"/> is logged in with both session ids and is now in one of <paramref name="regions"/>.
-    /// </summary>
-    public async Task<PresenceOutcome> CheckAsync(Guid agentId, Guid sessionId, Guid secureSessionId, IReadOnlySet<Guid> regions, CancellationToken ct)
-    {
-        if (agentId == Guid.Empty || sessionId == Guid.Empty || secureSessionId == Guid.Empty)
-            return PresenceOutcome.NoSession;
-        try
-        {
-            await using var conn = await openRobust(ct);
-            await using var cmd = new MySqlCommand(
-                "SELECT RegionID FROM Presence WHERE UserID = @u AND SessionID = @s AND SecureSessionID = @ss", conn);
-            cmd.Parameters.AddWithValue("@u", agentId.ToString());
-            cmd.Parameters.AddWithValue("@s", sessionId.ToString());
-            cmd.Parameters.AddWithValue("@ss", secureSessionId.ToString());
-            return await cmd.ExecuteScalarAsync(ct) switch
-            {
-                Guid region => regions.Contains(region) ? PresenceOutcome.Ok : PresenceOutcome.WrongRegion,
-                string text when Guid.TryParse(text, out var region) => regions.Contains(region) ? PresenceOutcome.Ok : PresenceOutcome.WrongRegion,
-                _ => PresenceOutcome.NoSession,
-            };
-        }
-        catch (MySqlException)
-        {
-            return PresenceOutcome.Unavailable;
-        }
-    }
-
     /// <summary>
     /// Ok when <paramref name="agentId"/> is logged in with both session ids, in any region. Only Robust's login and the
     /// Gatekeeper write a Presence row, so this part is trustworthy; <c>Presence.RegionID</c> isn't, since any region can

@@ -275,7 +275,7 @@ internal sealed class MoneyActions(IMoneyService service, Guid regionId, Func<Ec
     public void Charge(Payer p, string type, int amount, Guid? payTo)
     {
         if (amount <= 0) return;
-        var answer = Wait(service.ChargeAsync(Guid.NewGuid(), type, p.Who, amount, payTo, CancellationToken.None));
+        var answer = Wait(service.ChargeAsync(Guid.NewGuid(), type, p.Who, amount, payTo, regionId, CancellationToken.None));
         if (!answer.Ok)
         {
             view.Warn($"Uncollected {type} of {amount} from {p.AgentId}: {answer.Code}");

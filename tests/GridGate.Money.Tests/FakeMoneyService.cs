@@ -49,8 +49,8 @@ internal sealed class FakeMoneyService : IMoneyService
     public Task<MoneyAnswer> PayoutAsync(Guid txn, Guid ownerId, MoneyWho to, long amount, Guid regionId, Guid objectId, string objectName, CancellationToken ct) =>
         Record("payout", txn, ct, ownerId, to, amount, regionId, objectId, objectName);
 
-    public Task<MoneyAnswer> ChargeAsync(Guid txn, string type, MoneyWho payer, long amount, Guid? payTo, CancellationToken ct) =>
-        Record("charge", txn, ct, type, payer, amount, payTo);
+    public Task<MoneyAnswer> ChargeAsync(Guid txn, string type, MoneyWho payer, long amount, Guid? payTo, Guid regionId, CancellationToken ct) =>
+        Record("charge", txn, ct, type, payer, amount, payTo, regionId);
 
     public Task<MoneyAnswer> HoldAsync(Guid txn, string kind, MoneyWho buyer, MoneyWho seller, long amount, Guid regionId, Guid? objectId, string? objectName,
         CancellationToken ct) => Record("hold", txn, ct, kind, buyer, seller, amount, regionId, objectId, objectName);

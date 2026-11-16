@@ -455,7 +455,7 @@ builder.Services.AddSingleton(sp =>
         () => MoneyCertificate.LoadOrCreate(Path.Combine(paths.Security, MoneyCertificate.FileName), time),
         sp.GetRequiredService<MoneyAuthFailures>(), sp.GetRequiredService<ILoggerFactory>(), sp.GetRequiredService<MoneyStatus>(),
         sp.GetRequiredService<MoneyPairing>(), change => sp.GetRequiredService<IGridController>().UpdateSettings(change, writeConfig: false),
-        sp.GetRequiredService<RegionPins>(), sp.GetRequiredService<RegionVerification>());
+        sp.GetRequiredService<RegionPins>(), sp.GetRequiredService<RegionVerification>(), sp.GetRequiredService<MoneyLocations>());
 });
 builder.Services.AddHostedService(sp => sp.GetRequiredService<MoneyServiceHost>());
 builder.Services.AddHostedService(sp => new MoneyMaintenance(sp.GetRequiredService<MoneyLedger>(), sp.GetRequiredService<MoneyGate>().ServiceMode,

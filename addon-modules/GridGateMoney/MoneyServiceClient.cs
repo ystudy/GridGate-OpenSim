@@ -44,7 +44,7 @@ public interface IMoneyService
 
     Task<MoneyAnswer> PayoutAsync(Guid txn, Guid ownerId, MoneyWho to, long amount, Guid regionId, Guid objectId, string objectName, CancellationToken ct);
 
-    Task<MoneyAnswer> ChargeAsync(Guid txn, string type, MoneyWho payer, long amount, Guid? payTo, CancellationToken ct);
+    Task<MoneyAnswer> ChargeAsync(Guid txn, string type, MoneyWho payer, long amount, Guid? payTo, Guid regionId, CancellationToken ct);
 
     Task<MoneyAnswer> HoldAsync(Guid txn, string kind, MoneyWho buyer, MoneyWho seller, long amount, Guid regionId, Guid? objectId, string? objectName,
         CancellationToken ct);
@@ -111,8 +111,8 @@ public sealed class MoneyServiceClient : IMoneyService, IDisposable
         CancellationToken ct) =>
         Post("payout", new PayoutBody(txn, ownerId, Payee(to), amount, regionId, objectId, objectName), ct);
 
-    public Task<MoneyAnswer> ChargeAsync(Guid txn, string type, MoneyWho payer, long amount, Guid? payTo, CancellationToken ct) =>
-        Post("charge", new ChargeBody(txn, type, payer, amount, payTo), ct);
+    public Task<MoneyAnswer> ChargeAsync(Guid txn, string type, MoneyWho payer, long amount, Guid? payTo, Guid regionId, CancellationToken ct) =>
+        Post("charge", new ChargeBody(txn, type, payer, amount, payTo, regionId), ct);
 
     public Task<MoneyAnswer> HoldAsync(Guid txn, string kind, MoneyWho buyer, MoneyWho seller, long amount, Guid regionId, Guid? objectId,
         string? objectName, CancellationToken ct) =>
@@ -174,7 +174,7 @@ public sealed class MoneyServiceClient : IMoneyService, IDisposable
 
     private sealed record PayoutBody(Guid TxnId, Guid OwnerId, MoneyWho To, long Amount, Guid RegionId, Guid ObjectId, string ObjectName);
 
-    private sealed record ChargeBody(Guid TxnId, string Type, MoneyWho Payer, long Amount, Guid? PayTo);
+    private sealed record ChargeBody(Guid TxnId, string Type, MoneyWho Payer, long Amount, Guid? PayTo, Guid RegionId);
 
     private sealed record HoldBody(Guid TxnId, string Kind, MoneyWho Buyer, MoneyWho Seller, long Amount, Guid RegionId, Guid? ObjectId, string? ObjectName);
 

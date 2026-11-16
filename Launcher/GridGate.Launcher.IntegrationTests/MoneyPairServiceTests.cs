@@ -27,6 +27,7 @@ public sealed class MoneyPairServiceTests(MoneyMariaDb maria) : IClassFixture<Mo
     private static readonly Guid Session = Guid.Parse("5000000a-0000-0000-0000-000000000005");
     private static readonly Guid Secure = Guid.Parse("6000000a-0000-0000-0000-000000000006");
     private const string ServerHost = "192.168.1.20";
+    private const string OwnKey = "own-program-key-000000000000000000000000000000"; // program p1's, for the Grid Asset Server's own region
 
     private readonly string _dir = Path.Combine(Path.GetTempPath(), "gg-money-pair-" + Guid.NewGuid().ToString("N"));
     private readonly ConcurrentQueue<string> _logs = new();
@@ -63,7 +64,7 @@ public sealed class MoneyPairServiceTests(MoneyMariaDb maria) : IClassFixture<Mo
             MoneyPort = port,
             Programs = [new ProgramSettings("p1", 8004, 8011)],
             Regions = [new RegionSettings("p1", "Own", Own, UdpPort: 8004)],
-            Money = new MoneySettings(Mode: MoneyMode.Play, ProgramKeys: new() { ["p1"] = "own-program-key-000000000000000000000000000000" }),
+            Money = new MoneySettings(Mode: MoneyMode.Play, ProgramKeys: new() { ["p1"] = OwnKey }),
         };
         var dbSettings = _settings;
         var time = TimeProvider.System;
@@ -75,10 +76,13 @@ public sealed class MoneyPairServiceTests(MoneyMariaDb maria) : IClassFixture<Mo
         var cert = MoneyCertificate.LoadOrCreate(Path.Combine(_dir, MoneyCertificate.FileName), time);
         _fingerprint = MoneyCertificate.Fingerprint(cert);
         _pairing = new MoneyPairing(time);
+        var pins = new RegionPins(MoneyConnections.Money(() => _moneyDown ? dbSettings with { MariaDbPort = MoneyMariaDb.FreePort() } : dbSettings),
+            new RegionHosts(MoneyConnections.Robust(() => dbSettings)), TimeProvider.System);
+        var verification = new RegionVerification(MoneyConnections.Money(() => dbSettings), MoneyConnections.Robust(() => dbSettings), pins, time);
         _host = new MoneyServiceHost(ledger, presence, () => _settings, () => _mode, () => cert,
             new MoneyAuthFailures(time, loggers.CreateLogger<MoneyAuthFailures>()), loggers, new MoneyStatus(), _pairing,
-            change => _saveFails ? throw new IOException("disk full") : _settings = change(_settings),
-            new RegionPins(MoneyConnections.Money(() => _moneyDown ? dbSettings with { MariaDbPort = MoneyMariaDb.FreePort() } : dbSettings), new RegionHosts(MoneyConnections.Robust(() => dbSettings)), TimeProvider.System));
+            change => _saveFails ? throw new IOException("disk full") : _settings = change(_settings), pins, verification,
+            new MoneyLocations(MoneyConnections.Money(() => dbSettings), MoneyConnections.Robust(() => dbSettings), verification, presence, time));
         await _host.StartAsync(Ct);
         _http = new HttpClient(new SocketsHttpHandler
         {
@@ -112,6 +116,18 @@ public sealed class MoneyPairServiceTests(MoneyMariaDb maria) : IClassFixture<Mo
     }
 
     private static object Who(Guid agent) => new { agentId = agent, home = "", sessionId = Session, secureSessionId = Secure };
+
+    /// <summary>
+    /// Logs <paramref name="agent"/> in at <paramref name="region"/> as the service learns it (money design §8.4): the
+    /// module behind <paramref name="key"/> checks in, Robust writes a start and the module reports the arrival.
+    /// </summary>
+    private async Task Place(MoneyTestDatabase db, string key, Guid agent, Guid region, Guid? session = null, Guid? secure = null)
+    {
+        await db.AddPresence(agent, region, session ?? Session, secure ?? Secure);
+        Assert.Equal(HttpStatusCode.OK, (await Post("health", new { protocol = RegionVerification.HandoffProtocol, regions = new[] { region } }, key)).Status);
+        await db.AddSessionStart(session ?? Session, agent, region, "login");
+        Assert.Equal("ok", (string?)(await Post("arrived", new { id = Guid.NewGuid(), sessionId = session ?? Session, agentId = agent, regionId = region }, key)).Body!["code"]);
+    }
 
     [Fact]
     public async Task Right_proof_pairs_and_stores_only_a_hash()
@@ -180,8 +196,8 @@ public sealed class MoneyPairServiceTests(MoneyMariaDb maria) : IClassFixture<Mo
     public async Task Paired_key_acts_for_its_own_regions()
     {
         var db = await StartAsync();
-        await db.AddPresence(A, Theirs, Session, Secure);
         var key = await PairAsync();
+        await Place(db, key, A, Theirs);
 
         var (_, body, _) = await Post("balance", Who(A), key);
 
@@ -193,7 +209,7 @@ public sealed class MoneyPairServiceTests(MoneyMariaDb maria) : IClassFixture<Mo
     public async Task Server_key_never_covers_the_grids_own_regions()
     {
         var db = await StartAsync();
-        await db.AddPresence(A, Own, Session, Secure);
+        await Place(db, OwnKey, A, Own);
         await db.Sql($"UPDATE `robust`.`regions` SET serverIP = '{ServerHost}' WHERE uuid = '{Own}'"); // Robust says it's theirs
         var key = await PairAsync();
 
@@ -209,6 +225,8 @@ public sealed class MoneyPairServiceTests(MoneyMariaDb maria) : IClassFixture<Mo
         await db.AddPresence(A, Other, Session, Secure);
         var key = await PairAsync();
 
+        Assert.Equal(1, (await Post("health", new { }, key)).Body!["regions"]!.GetValue<int>()); // Theirs, not Other
+        Assert.Equal("wrong_region", (string?)(await Post("arrived", new { id = Guid.NewGuid(), sessionId = Session, agentId = A, regionId = Other }, key)).Body!["code"]);
         Assert.Equal("wrong_region", (string?)(await Post("balance", Who(A), key)).Body!["code"]);
     }
 
@@ -290,12 +308,12 @@ public sealed class MoneyPairServiceTests(MoneyMariaDb maria) : IClassFixture<Mo
         var (sessionB, secureB) = (Guid.NewGuid(), Guid.NewGuid());
         await db.AddUser(b);
         await db.AddRegion(upper, ServerHost, port: 9100);
-        await db.AddPresence(A, Theirs, Session, Secure);       // Theirs is at port 9000
-        await db.AddPresence(b, upper, sessionB, secureB);
         var whoB = new { agentId = b, home = "", sessionId = sessionB, secureSessionId = secureB };
 
         var lower = await PairAsync(firstPort: 9000);
         var higher = await PairAsync(firstPort: 9100);
+        await Place(db, lower, A, Theirs); // Theirs is at port 9000
+        await Place(db, higher, b, upper, sessionB, secureB);
 
         Assert.Equal(2, _settings.Money.PairedServers!.Count);
         Assert.Equal("ok", (string?)(await Post("balance", Who(A), lower)).Body!["code"]);
@@ -350,10 +368,10 @@ public sealed class MoneyPairServiceTests(MoneyMariaDb maria) : IClassFixture<Mo
         // L-4: server A's program registers B's region id at A's address. B's region stays B's; A's key gets nothing there.
         var db = await StartAsync();
         const string hostA = "192.168.1.40";
-        await db.AddPresence(A, Theirs, Session, Secure);
         var keyB = await PairAsync(ServerHost);
         var keyA = await PairAsync(hostA);
         Assert.Equal(1, (await Post("health", new { }, keyB)).Body!["regions"]!.GetValue<int>()); // first sight pins Theirs to B
+        await Place(db, keyB, A, Theirs);
         await db.Sql($"UPDATE `robust`.`regions` SET serverIP = '{hostA}' WHERE uuid = '{Theirs}'");
         var transfer = new { txnId = Guid.NewGuid(), type = "pay_avatar", from = Who(A), to = new { agentId = Guid.NewGuid(), home = "" }, amount = 1, regionId = Theirs };
 
@@ -411,9 +429,9 @@ public sealed class MoneyPairServiceTests(MoneyMariaDb maria) : IClassFixture<Mo
     public async Task Re_pairing_keeps_pins_only_for_the_same_machine()
     {
         var db = await StartAsync();
-        await db.AddPresence(A, Theirs, Session, Secure);
         var first = await PairAsync(machineId: "rs-1");
         Assert.Equal(1, (await Post("health", new { }, first)).Body!["regions"]!.GetValue<int>());
+        await Place(db, first, A, Theirs);
 
         var same = await PairAsync(machineId: "rs-1");
         Assert.Equal(1, (await Post("health", new { }, same)).Body!["regions"]!.GetValue<int>());

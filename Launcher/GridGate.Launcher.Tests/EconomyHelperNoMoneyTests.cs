@@ -204,7 +204,7 @@ public sealed class EconomyHelperNoMoneyTests
         }
 
         Assert.Contains("Too many requests", last);
-        Assert.True(answers >= 5 * 2 * 5 * 4, $"{answers} answers");
+        Assert.True(answers >= 5 * 2 * 5 * Enum.GetValues<PresenceOutcome>().Length, $"{answers} answers");
         lock (books.Calls) Assert.Empty(books.Calls);
     }
 }
