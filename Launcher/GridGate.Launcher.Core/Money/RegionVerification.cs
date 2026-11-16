@@ -6,8 +6,8 @@ namespace GridGate.Launcher.Core.Money;
 /// <summary>Why money does or doesn't work in a region (money design §8.2); the website shows each in words.</summary>
 public enum RegionStatus { Verified, NotPaired, Moved, NoGridGateMoney, NeedsUpdate, NotHeardFrom }
 
-/// <summary>One region Robust lists, with whether money works there and, if not, why. <paramref name="KeyId"/> is the key that covers it, if any.</summary>
-public sealed record RegionState(Guid RegionId, string Name, string ServerIp, int Port, string? KeyId, RegionStatus Status);
+/// <summary>One region Robust lists, with whether money works there and, if not, why. <paramref name="KeyId"/> is the key that covers it, if any; for a moved region <paramref name="PinnedKeyId"/> is the key of the server it is pinned to.</summary>
+public sealed record RegionState(Guid RegionId, string Name, string ServerIp, int Port, string? KeyId, RegionStatus Status, string? PinnedKeyId = null);
 
 /// <summary>
 /// Which regions the money service treats as verified (money design §8.2): covered by a key (pinned, for a Region Server),
@@ -51,7 +51,7 @@ public sealed class RegionVerification(Func<CancellationToken, Task<MySqlConnect
     /// its last health call speaks <see cref="HandoffProtocol"/>, came within <see cref="HeardWithin"/> and listed the region.
     /// </summary>
     public async Task<bool> IsVerifiedAsync(RegionKeyGrant grant, Guid regionId, CancellationToken ct) =>
-        grant.Regions.Contains(regionId) && StatusOf((await HeardByKeyAsync(ct)).GetValueOrDefault(grant.KeyId), regionId) == RegionStatus.Verified;
+        grant.Regions.Contains(regionId) && StatusOf((await HeardByKeyAsync(grant.KeyId, ct)).GetValueOrDefault(grant.KeyId), regionId) == RegionStatus.Verified;
 
     /// <summary>One state per region Robust lists, with the first reason it isn't verified (Moved, Not paired, No GridGate money, Needs an update, Not heard from).</summary>
     public async Task<IReadOnlyList<RegionState>> AllAsync(LauncherSettings settings, CancellationToken ct)
@@ -59,8 +59,8 @@ public sealed class RegionVerification(Func<CancellationToken, Task<MySqlConnect
         var rows = await RobustRegionsAsync(ct);
         var servers = (settings.Money.PairedServers ?? []).ToList();
         var own = settings.Regions.Select(r => r.Uuid).ToHashSet();
-        var heard = await HeardByKeyAsync(ct);
-        var moved = (await pins.MovesAsync(servers, ct)).Select(m => m.RegionId).ToHashSet();
+        var heard = await HeardByKeyAsync(null, ct);
+        var moved = (await pins.MovesAsync(servers, ct)).ToDictionary(m => m.RegionId, m => m.PinnedTo);
         var covered = new Dictionary<Guid, IReadOnlySet<Guid>>();
         foreach (var server in servers)
             covered[server.Id] = await pins.CoveredAsync(server, server.FirstPort, RegionKeyRing.NextFirstPort(servers, server), own, ct);
@@ -70,17 +70,24 @@ public sealed class RegionVerification(Func<CancellationToken, Task<MySqlConnect
         {
             string? key = null;
             RegionStatus? status = null;
+            string? pinnedKey = null;
             if (settings.Regions.FirstOrDefault(r => r.Uuid == id) is { } local)
                 key = local.Instance;
             else if (servers.FirstOrDefault(s => string.Equals(s.Host, ip, StringComparison.OrdinalIgnoreCase)
                 && port >= s.FirstPort && port < RegionKeyRing.NextFirstPort(servers, s)) is { } server)
             {
                 key = "server:" + server.Id.ToString("N");
-                if (moved.Contains(id) || !covered[server.Id].Contains(id)) status = RegionStatus.Moved;
+                if (moved.TryGetValue(id, out var pinnedTo))
+                {
+                    status = RegionStatus.Moved;
+                    pinnedKey = "server:" + pinnedTo.ToString("N");
+                }
+                else if (!covered[server.Id].Contains(id))
+                    status = RegionStatus.Moved;
             }
             else
                 status = RegionStatus.NotPaired;
-            states.Add(new RegionState(id, name, ip, port, key, status ?? StatusOf(heard.GetValueOrDefault(key!), id)));
+            states.Add(new RegionState(id, name, ip, port, key, status ?? StatusOf(heard.GetValueOrDefault(key!), id), pinnedKey));
         }
         return states;
     }
@@ -94,13 +101,14 @@ public sealed class RegionVerification(Func<CancellationToken, Task<MySqlConnect
         return time.GetUtcNow() - at > HeardWithin || !heard.Regions.Contains(regionId) ? RegionStatus.NotHeardFrom : RegionStatus.Verified;
     }
 
-    private async Task<Dictionary<string, Heard>> HeardByKeyAsync(CancellationToken ct)
+    private async Task<Dictionary<string, Heard>> HeardByKeyAsync(string? keyId, CancellationToken ct)
     {
         var found = new Dictionary<string, Heard>();
         try
         {
             await using var conn = await openMoney(ct);
-            await using var cmd = new MySqlCommand("SELECT key_id, protocol, regions, at FROM key_heard", conn);
+            await using var cmd = new MySqlCommand("SELECT key_id, protocol, regions, at FROM key_heard" + (keyId is null ? "" : " WHERE key_id = @k"), conn);
+            if (keyId is not null) cmd.Parameters.AddWithValue("@k", keyId);
             await using var r = await cmd.ExecuteReaderAsync(ct);
             while (await r.ReadAsync(ct))
             {

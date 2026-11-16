@@ -58,14 +58,15 @@ internal static class MoneyApi
         app.MapPost("/money/v1/pair", (RequestDelegate)(http => PairAsync(http, c)));
         // How many regions the key covers now: a Region Server's page says when the grid sees none of its regions. The call
         // also records which money protocol the program speaks and which of its covered regions it runs (money design §8.2);
-        // {} is protocol 1 with none, which is what a Region Server launcher's pairing check sends.
+        // A body without regions is a Region Server launcher's pairing check (it shares the server's key): answered, not
+        // recorded, so it never overwrites what a module reported. Regions without a protocol are protocol 1.
         Post(app, "/money/v1/health", c, async (http, grant, ct) =>
         {
             var b = await Read<HealthBody>(http, ct);
             var protocol = b.Protocol ?? 1;
             if (protocol < 1) throw new BadRequest();
-            if (c.Verification is { } verification)
-                await verification.HeardAsync(grant.KeyId, protocol, (b.Regions ?? []).Where(grant.Regions.Contains).ToList(), ct);
+            if (c.Verification is { } verification && b.Regions is not null)
+                await verification.HeardAsync(grant.KeyId, protocol, b.Regions.Where(grant.Regions.Contains).ToList(), ct);
             return new HealthAnswer(true, grant.Regions.Count);
         });
         Post(app, "/money/v1/economy", c, (_, _, _) =>

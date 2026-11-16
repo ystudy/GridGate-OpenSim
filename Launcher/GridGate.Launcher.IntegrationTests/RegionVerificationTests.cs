@@ -104,7 +104,11 @@ public sealed class RegionVerificationTests(MoneyMariaDb maria) : IClassFixture<
 
         await rig.Db.Sql($"UPDATE `robust`.`regions` SET serverIP = '{HostB}' WHERE uuid = '{region}'");
 
-        Assert.Equal(RegionStatus.Moved, await StatusOf(rig, region));
+        var state = (await rig.Verification.AllAsync(rig.Settings, Ct)).Single(r => r.RegionId == region);
+        Assert.Equal(RegionStatus.Moved, state.Status);
+        Assert.Equal("server:" + a.Id.ToString("N"), state.PinnedKeyId);
+        Assert.Equal("server:" + b.Id.ToString("N"), state.KeyId);
+        Assert.Null((await rig.Verification.AllAsync(rig.Settings, Ct)).Single(r => r.RegionId == Here).PinnedKeyId);
     }
 
     [Fact]
@@ -128,6 +132,22 @@ public sealed class RegionVerificationTests(MoneyMariaDb maria) : IClassFixture<
         Assert.Equal(HttpStatusCode.OK, answer.Status);
         Assert.True((bool)answer.Body!["ok"]!);
         Assert.Equal(1, answer.Body["regions"]!.GetValue<int>());
-        Assert.Equal(RegionStatus.NeedsUpdate, await StatusOf(rig, Here)); // protocol 1, nothing listed
+    }
+
+    [Fact]
+    public async Task Pairing_check_does_not_overwrite_a_modules_record()
+    {
+        var rig = await StartAsync();
+        await rig.Post("health", new { protocol = 2, regions = new[] { Here } });
+
+        await rig.Post("health", new { });
+
+        Assert.True(await rig.Verification.IsVerifiedAsync(GrantOf(rig, "p1"), Here, Ct));
+        Assert.Equal(RegionStatus.Verified, await StatusOf(rig, Here));
+        // A server whose only call is the pairing check has no module: stock OpenSim.
+        Assert.Equal(RegionStatus.NoGridGateMoney, await StatusOf(rig, There)); // p2 never called
+        await rig.Post("health", new { }, Key2);
+        Assert.Equal(RegionStatus.NoGridGateMoney, await StatusOf(rig, There));
+        Assert.Equal(0, await rig.Db.Scalar("SELECT COUNT(*) FROM `money`.`key_heard` WHERE key_id = 'p2'"));
     }
 }
