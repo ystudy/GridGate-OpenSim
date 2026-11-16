@@ -29,7 +29,7 @@ public sealed record AlertRow(MoneyAlert Alert, string Text, string? Person, Gui
 /// is on the totals, the self-check, the grid-wide freeze, refunds, moving fees, finding a person, and the regions and
 /// whether each is verified, each region program's and Region Server's own limits, and the
 /// open alerts. Every staff member may look; only admins and the owner may change anything, and only the owner may set a
-/// region program's or server's own limits or settle a moved region (each POST checks). Every change is audited.
+/// region program's or server's own limits, settle a moved region, or switch to or from Gloebit and set its app (each POST checks). Every change is audited.
 /// </summary>
 public sealed class IndexModel(IGridController grid, MoneyGate gate, IMoneyBooks books, MoneyStatus status, AuditLog audit, IRobustClient robust,
     IPeopleDirectory people, IVisitorDirectory visitors, MoneyPairing pairing, RegionPins pins, TimeProvider time, IMoneyAlerts alerts,
@@ -39,8 +39,14 @@ public sealed class IndexModel(IGridController grid, MoneyGate gate, IMoneyBooks
     /// <summary>The settings the page was drawn from: names of servers, programs and regions.</summary>
     public LauncherSettings Current { get; private set; } = null!;
 
-    /// <summary>Only the owner sets a program's or server's own limits and settles a moved region.</summary>
+    /// <summary>
+    /// Only the owner sets a program's or server's own limits, settles a moved region, turns Gloebit on and sets
+    /// its app.
+    /// </summary>
     public bool IsOwner { get; private set; }
+
+    /// <summary>A mode this person can't pick from the saved one: turning Gloebit on, for anyone but the owner.</summary>
+    public bool ModeLocked(MoneyMode mode) => !IsOwner && MoneyPageRules.OwnerOnlySwitch(Saved.Mode, mode);
 
     /// <summary>Every region Robust lists, with whether money works there.</summary>
     public IReadOnlyList<RegionState> Regions { get; private set; } = [];
@@ -126,6 +132,14 @@ public sealed class IndexModel(IGridController grid, MoneyGate gate, IMoneyBooks
         // would stop every payment, so the whole form is refused instead.
         else if (dailySpendLimit is null || dailyKeySpendLimit is null || dailyKeyPayoutLimit is null)
             Error = "The daily limits are missing from the form. Reload the page and save again.";
+        // Gloebit is real dollars: only the owner turns it on (design §9.1). Checked before the other rules, whose advice (enter
+        // the app first) an admin couldn't follow. The form shows the saved mode again, since an admin can't pick that one.
+        else if (!Owner && MoneyPageRules.OwnerOnlySwitch(before.Mode, next.Mode))
+        {
+            Error = MoneyPageRules.OwnerOnlyText(next.Mode);
+            audit.Write(User, Ip, "money-settings", "money", "refused: mode " + next.Mode + " is the owner's");
+            next = next with { Mode = before.Mode };
+        }
         else Error = MoneyPageRules.Problem(next, MoneyPageRules.Offered(gate));
         // Coins and Gloebit are separate books (design §10): the owner confirms that before switching.
         // A money database is made the first time coins run (money design §7.1).
@@ -154,11 +168,18 @@ public sealed class IndexModel(IGridController grid, MoneyGate gate, IMoneyBooks
         return Page();
     }
 
-    /// <summary>This computer's Gloebit app. An empty secret keeps the stored one; nothing posted is ever echoed or audited.</summary>
+    /// <summary>
+    /// This computer's Gloebit app. Owner only: residents' dollars go through it (design §9.1). An empty secret keeps the
+    /// stored one; nothing posted is ever echoed or audited.
+    /// </summary>
     public async Task<IActionResult> OnPostGloebitAsync(string? environment, string? key, string? secret, string? ownerName, string? ownerEmail,
         CancellationToken ct)
     {
-        if (!Admin) return StatusCode(StatusCodes.Status403Forbidden);
+        if (!Owner)
+        {
+            if (Admin) audit.Write(User, Ip, "money-gloebit", "money", "refused: the owner's");
+            return StatusCode(StatusCodes.Status403Forbidden);
+        }
         if (!gate.Approved(MoneyMode.Gloebit))
         {
             Error = "Gloebit becomes available once the money safety review is approved.";

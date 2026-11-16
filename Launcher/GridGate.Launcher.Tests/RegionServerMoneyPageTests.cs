@@ -435,6 +435,39 @@ public sealed class RegionServerMoneyPageTests
     }
 
     [Fact]
+    public async Task Admin_cannot_save_this_servers_gloebit_app()
+    {
+        // Gloebit is real dollars: only this computer's owner sets its app (money design §9.1).
+        await using var f = GloebitGrid(regions: ThreeRegions());
+        var c = await SignedInAsync(f, "admin");
+        var page = await PageAsync(c, "/advanced/money");
+        var token = page.QuerySelector("input[name=__RequestVerificationToken]")!.GetAttribute("value")!;
+
+        using var r = await c.PostAsync("/advanced/money?handler=Gloebit", new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["Environment"] = "sandbox", ["Key"] = GApp.Key, ["Secret"] = GApp.Secret, ["OwnerName"] = "RS Owner", ["OwnerEmail"] = "",
+            ["__RequestVerificationToken"] = token,
+        }), Ct);
+
+        Assert.Equal(HttpStatusCode.Forbidden, r.StatusCode);
+        Assert.Null(f.Grid.CurrentSettings().Money.Gloebit);
+        Assert.Empty(await RestartsAsync(f, 0));
+        var line = Assert.Single(Audit(f), a => a.GetProperty("action").GetString() == "money-gloebit");
+        Assert.Equal("refused: the owner's", line.GetProperty("result").GetString());
+    }
+
+    [Fact]
+    public async Task Admin_sees_no_gloebit_form()
+    {
+        await using var f = GloebitGrid();
+
+        var doc = await PageAsync(await SignedInAsync(f, "admin"), "/advanced/money");
+
+        Assert.Null(doc.QuerySelector("form[action*='handler=Gloebit']"));
+        Assert.Contains("Only this computer's owner can save its Gloebit app.", MainText(doc));
+    }
+
+    [Fact]
     public async Task Coins_grid_has_no_gloebit_form()
     {
         await using var f = Make(new FakePairClient());

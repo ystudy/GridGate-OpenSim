@@ -597,6 +597,12 @@ Added 2026-11-16 (verified regions; each status and setting has a help tip and l
 Settings, visitor money and listed grids need an admin, as before. Approving a moved region and setting a person's, a
 program's or a server's own limits need the owner. Supervisors can see all of it.
 
+Added 2026-11-16: Gloebit is real dollars, so it follows the real-coins rule (§9.2). Only the owner turns Gloebit (or real
+coins) on, from any other mode, and only a computer's owner saves its Gloebit app (the Grid Asset Server's and each Region
+Server's own). Leaving Gloebit puts no dollars at risk, so an admin may: turn money Off as an emergency stop, or switch
+back to play coins with the usual tick (§10). An admin can still change the other settings while Gloebit runs. A refused
+attempt is written to the audit log.
+
 ### 9.2 Turning on real coins (owner only)
 
 Real coins can't be picked until the owner has:

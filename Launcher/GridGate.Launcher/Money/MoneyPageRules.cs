@@ -33,6 +33,19 @@ public static class MoneyPageRules
         return false;
     }
 
+    /// <summary>
+    /// Whether only the owner may switch from <paramref name="from"/> to <paramref name="to"/> (design §9.1): Gloebit, and
+    /// real coins once they exist, are real dollars, so turning one on is the owner's call, as real coins are (§9.2).
+    /// Leaving one puts no dollars at risk, and turning money off is an admin's emergency stop, so admins may do both.
+    /// </summary>
+    public static bool OwnerOnlySwitch(MoneyMode from, MoneyMode to) => from != to && to is MoneyMode.Gloebit or MoneyMode.Real;
+
+    /// <summary>Why an admin's switch to <paramref name="to"/> was refused.</summary>
+    public static string OwnerOnlyText(MoneyMode to) =>
+        $"Only the owner can turn on {(to == MoneyMode.Gloebit ? "Gloebit" : "real coins")}.";
+
+    public const string OwnerOnlyNote = "Only the owner can turn on Gloebit or change its Gloebit app.";
+
     public const string SwitchWarning =
         "GridGate coin balances don't move to Gloebit. They are kept, not shown, and come back if you switch back. Gloebit balances belong to Gloebit.";
 

@@ -824,6 +824,160 @@ public sealed class MoneyPageTests
         Assert.Null(f.Grid.CurrentSettings().Money.Gloebit);
     }
 
+    // Gloebit is real dollars: only the owner turns it on or sets its app, as with real coins (§9.1, §9.2).
+
+    [Theory]
+    // from, to, owner only
+    [InlineData(MoneyMode.Off, MoneyMode.Off, false)]
+    [InlineData(MoneyMode.Off, MoneyMode.Play, false)]
+    [InlineData(MoneyMode.Off, MoneyMode.Real, true)]
+    [InlineData(MoneyMode.Off, MoneyMode.Gloebit, true)]
+    [InlineData(MoneyMode.Play, MoneyMode.Off, false)]
+    [InlineData(MoneyMode.Play, MoneyMode.Play, false)]
+    [InlineData(MoneyMode.Play, MoneyMode.Real, true)]
+    [InlineData(MoneyMode.Play, MoneyMode.Gloebit, true)]
+    [InlineData(MoneyMode.Real, MoneyMode.Off, false)]
+    [InlineData(MoneyMode.Real, MoneyMode.Play, false)]
+    [InlineData(MoneyMode.Real, MoneyMode.Real, false)]
+    [InlineData(MoneyMode.Real, MoneyMode.Gloebit, true)]
+    [InlineData(MoneyMode.Gloebit, MoneyMode.Off, false)]
+    [InlineData(MoneyMode.Gloebit, MoneyMode.Play, false)]
+    [InlineData(MoneyMode.Gloebit, MoneyMode.Real, true)]
+    [InlineData(MoneyMode.Gloebit, MoneyMode.Gloebit, false)]
+    public void Only_the_owner_turns_on_real_dollars(MoneyMode from, MoneyMode to, bool ownerOnly) =>
+        Assert.Equal(ownerOnly, MoneyPageRules.OwnerOnlySwitch(from, to));
+
+    [Fact]
+    public async Task Admin_cannot_save_a_gloebit_app()
+    {
+        await using var f = Make(new FakeBooks());
+
+        using var r = await PostAsync(await SignedInAsync(f, "admin"), "/money", "Gloebit", GloebitForm());
+
+        Assert.Equal(HttpStatusCode.Forbidden, r.StatusCode);
+        Assert.Null(f.Grid.CurrentSettings().Money.Gloebit);
+        var line = Assert.Single(Audit(f), a => a.GetProperty("action").GetString() == "money-gloebit");
+        Assert.Equal("refused: the owner's", line.GetProperty("result").GetString());
+    }
+
+    [Theory]
+    [InlineData(MoneyMode.Play)]
+    [InlineData(MoneyMode.Off)]
+    public async Task Admin_cannot_turn_on_gloebit(MoneyMode from)
+    {
+        await using var f = Make(new FakeBooks(), money: m => m with { Mode = from, Gloebit = GApp });
+        var form = Settings(mode: "Gloebit");
+        form["ConfirmSwitch"] = "true";
+
+        using var r = await PostAsync(await SignedInAsync(f, "admin"), "/money", "Settings", form);
+
+        Assert.Equal(from, f.Grid.CurrentSettings().Money.Mode);
+        var doc = await ParseAsync(r);
+        Assert.Contains("Only the owner can turn on Gloebit.", doc.QuerySelector(".alert-danger")!.TextContent);
+        // The form comes back on the saved mode, which the admin can pick, not on the refused one.
+        Assert.Equal(from.ToString(), doc.QuerySelector("#money-mode option[selected]")?.GetAttribute("value"));
+        var line = Assert.Single(Audit(f), a => a.GetProperty("action").GetString() == "money-settings");
+        Assert.Equal("refused: mode Gloebit is the owner's", line.GetProperty("result").GetString());
+    }
+
+    [Fact]
+    public async Task Admin_without_an_app_is_told_it_is_the_owners_not_to_enter_one()
+    {
+        await using var f = Make(new FakeBooks());
+
+        using var r = await PostAsync(await SignedInAsync(f, "admin"), "/money", "Settings", Settings(mode: "Gloebit"));
+
+        Assert.Equal("Only the owner can turn on Gloebit.", (await ParseAsync(r)).QuerySelector(".alert-danger")!.TextContent.Trim());
+    }
+
+    [Fact]
+    public async Task Admin_can_leave_gloebit_for_coins_with_the_tick()
+    {
+        // Leaving Gloebit puts no dollars at risk; the tick still says coin balances come back.
+        await using var f = Make(new FakeBooks(), money: m => m with { Mode = MoneyMode.Gloebit, Gloebit = GApp });
+        var form = Settings(mode: "Play");
+        form["ConfirmSwitch"] = "true";
+
+        using var r = await PostAsync(await SignedInAsync(f, "admin"), "/money", "Settings", form);
+
+        Assert.Equal(MoneyMode.Play, f.Grid.CurrentSettings().Money.Mode);
+    }
+
+    [Fact]
+    public async Task Admin_can_turn_coins_back_on_after_an_emergency_off()
+    {
+        await using var f = Make(new FakeBooks(), money: m => m with { Mode = MoneyMode.Off, Gloebit = GApp });
+        var c = await SignedInAsync(f, "admin");
+
+        // A Gloebit app was saved once, so the switch asks for the tick, and the admin has the box to tick.
+        Assert.NotNull((await PageAsync(c, "/money")).QuerySelector("#money-confirm-switch"));
+        var form = Settings(mode: "Play");
+        form["ConfirmSwitch"] = "true";
+        using var r = await PostAsync(c, "/money", "Settings", form);
+
+        Assert.Equal(MoneyMode.Play, f.Grid.CurrentSettings().Money.Mode);
+    }
+
+    [Fact]
+    public async Task Admin_can_turn_gloebit_off()
+    {
+        // Turning money off stops payments: any admin may, as an emergency step.
+        await using var f = Make(new FakeBooks(), money: m => m with { Mode = MoneyMode.Gloebit, Gloebit = GApp });
+
+        using var r = await PostAsync(await SignedInAsync(f, "admin"), "/money", "Settings", Settings(mode: "Off"));
+
+        Assert.Equal(MoneyMode.Off, f.Grid.CurrentSettings().Money.Mode);
+    }
+
+    [Fact]
+    public async Task Admin_can_change_other_settings_while_gloebit_runs()
+    {
+        await using var f = Make(new FakeBooks(), money: m => m with { Mode = MoneyMode.Gloebit, Gloebit = GApp });
+        var form = Settings(mode: "Gloebit");
+        form["UploadFee"] = "15";
+
+        using var r = await PostAsync(await SignedInAsync(f, "admin"), "/money", "Settings", form);
+
+        Assert.Null((await ParseAsync(r)).QuerySelector(".alert-danger"));
+        Assert.Equal(15L, f.Grid.CurrentSettings().Money.UploadFee);
+        Assert.Equal(MoneyMode.Gloebit, f.Grid.CurrentSettings().Money.Mode);
+    }
+
+    [Fact]
+    public async Task Admin_sees_gloebit_locked_and_no_app_form()
+    {
+        await using var f = Make(new FakeBooks(), money: m => m with { Gloebit = GApp });
+
+        var doc = await PageAsync(await SignedInAsync(f, "admin"), "/money");
+
+        Assert.True(doc.QuerySelector("#money-mode option[value=Gloebit]")!.HasAttribute("disabled"));
+        Assert.False(doc.QuerySelector("#money-mode option[value=Play]")!.HasAttribute("disabled"));
+        Assert.Null(doc.QuerySelector("form[action*='handler=Gloebit']"));
+        Assert.Contains("Only the owner can turn on Gloebit or change its Gloebit app.", MainText(doc));
+    }
+
+    [Fact]
+    public async Task Admin_in_gloebit_mode_may_pick_any_mode()
+    {
+        await using var f = Make(new FakeBooks(), money: m => m with { Mode = MoneyMode.Gloebit, Gloebit = GApp });
+
+        var doc = await PageAsync(await SignedInAsync(f, "admin"), "/money");
+
+        Assert.All(doc.QuerySelectorAll("#money-mode option"), o => Assert.False(o.HasAttribute("disabled")));
+    }
+
+    [Fact]
+    public async Task Owner_sees_gloebit_open()
+    {
+        await using var f = Make(new FakeBooks(), money: m => m with { Gloebit = GApp });
+
+        var doc = await PageAsync(await SignedInAsync(f), "/money");
+
+        Assert.False(doc.QuerySelector("#money-mode option[value=Gloebit]")!.HasAttribute("disabled"));
+        Assert.NotNull(doc.QuerySelector("form[action*='handler=Gloebit']"));
+        Assert.NotNull(doc.QuerySelector("#money-confirm-switch"));
+    }
+
     [Fact]
     public async Task Secret_is_never_shown_back()
     {
