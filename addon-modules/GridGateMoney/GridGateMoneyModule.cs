@@ -607,7 +607,7 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
 
         public void ObjectPaid(Guid partId, Guid payer, int amount) => module.OnObjectPaid?.Invoke(new UUID(partId), new UUID(payer), amount);
 
-        public Task Delay(TimeSpan t) => Task.Delay(t);
+        public Task Delay(TimeSpan t, CancellationToken ct) => Task.Delay(t, ct);
 
         public void Warn(string text) => Log.Warn("[GRIDGATE MONEY]: " + text);
 

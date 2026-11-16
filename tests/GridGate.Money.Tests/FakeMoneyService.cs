@@ -115,10 +115,13 @@ internal sealed class FakeView : IMoneyView
         lock (this) { Paid.Add((partId, payer, amount)); Order.Add("paid"); }
     }
 
-    public Task Delay(TimeSpan t)
+    /// <summary>When set, <see cref="Delay"/> really waits (and can be cancelled) instead of returning at once.</summary>
+    public bool Waits { get; set; }
+
+    public Task Delay(TimeSpan t, CancellationToken ct)
     {
         lock (this) Delays.Add(t);
-        return Task.CompletedTask;
+        return Waits ? Task.Delay(t, ct) : Task.CompletedTask;
     }
 
     public void Warn(string text)

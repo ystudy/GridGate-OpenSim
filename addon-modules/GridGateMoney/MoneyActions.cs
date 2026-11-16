@@ -32,7 +32,7 @@ internal interface IMoneyView
     /// <summary>Raises <c>OnObjectPaid</c>, which runs the prim's <c>money()</c> event.</summary>
     void ObjectPaid(Guid partId, Guid payer, int amount);
 
-    Task Delay(TimeSpan t);
+    Task Delay(TimeSpan t, CancellationToken ct = default);
 
     void Warn(string text);
 
@@ -51,8 +51,14 @@ internal sealed class MoneyActions(IMoneyService service, Guid regionId, Func<Ec
     public static readonly Type TransactionTypes = typeof(MoneyTransactionType);
 
     // Payments, completes and returns are sent again this long apart while the service is unavailable.
-    private static readonly TimeSpan[] Retries =[TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(9)];
+    private static readonly TimeSpan[] Retries = [TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(9)];
     private static readonly TimeSpan EntryRetry = TimeSpan.FromSeconds(2);
+
+    /// <summary>
+    /// How long a synchronous payment (a parcel pass, a script payout) may take in all, its attempts and the waits between
+    /// them together: one service call's timeout, so OpenSim's thread is held no longer than by a single call.
+    /// </summary>
+    public TimeSpan SyncBudget { get; init; } = MoneyServiceClient.Timeout;
 
     public async Task PayAvatarAsync(Payer p, Guid source, MoneyWho to, int amount)
     {
@@ -62,7 +68,7 @@ internal sealed class MoneyActions(IMoneyService service, Guid regionId, Func<Ec
             return;
         }
         var txn = Guid.NewGuid();
-        var answer = await RetriedAsync(() => service.TransferAsync(txn, "pay_avatar", p.Who, to, amount, regionId, null, null, CancellationToken.None));
+        var answer = await RetriedAsync(ct => service.TransferAsync(txn, "pay_avatar", p.Who, to, amount, regionId, null, null, ct));
         if (!answer.Ok)
         {
             Refused(p, answer, "pay_avatar", txn, to.AgentId, amount);
@@ -80,8 +86,7 @@ internal sealed class MoneyActions(IMoneyService service, Guid regionId, Func<Ec
             return;
         }
         var txn = Guid.NewGuid();
-        var answer = await RetriedAsync(() => service.TransferAsync(txn, "pay_object", p.Who, owner, amount, regionId, part.PartId, root.Name,
-            CancellationToken.None));
+        var answer = await RetriedAsync(ct => service.TransferAsync(txn, "pay_object", p.Who, owner, amount, regionId, part.PartId, root.Name, ct));
         if (!answer.Ok)
         {
             Refused(p, answer, "pay_object", txn, owner.AgentId, amount);
@@ -224,7 +229,7 @@ internal sealed class MoneyActions(IMoneyService service, Guid regionId, Func<Ec
         }
         if (amount == 0) return true;
         var txn = Guid.NewGuid();
-        var answer = Wait(RetriedAsync(() => service.TransferAsync(txn, "parcel_pass", p.Who, parcelOwner, amount, regionId, null, null, CancellationToken.None)));
+        var answer = Wait(RetriedAsync(ct => service.TransferAsync(txn, "parcel_pass", p.Who, parcelOwner, amount, regionId, null, null, ct), SyncBudget));
         if (!answer.Ok)
         {
             Refused(p, answer, "parcel_pass", txn, parcelOwner.AgentId, amount);
@@ -252,7 +257,7 @@ internal sealed class MoneyActions(IMoneyService service, Guid regionId, Func<Ec
             return false;
         }
         if (txn == Guid.Empty) txn = Guid.NewGuid();
-        var answer = Wait(RetriedAsync(() => service.PayoutAsync(txn, ownerId, to, amount, regionId, objectId, objectName, CancellationToken.None)));
+        var answer = Wait(RetriedAsync(ct => service.PayoutAsync(txn, ownerId, to, amount, regionId, objectId, objectName, ct), SyncBudget));
         if (!answer.Ok)
         {
             if (answer.Lost) Unknown("payout", txn, ownerId, to.AgentId, amount);
@@ -339,9 +344,9 @@ internal sealed class MoneyActions(IMoneyService service, Guid regionId, Func<Ec
     private async Task<MoneyAnswer> SettleAsync(long holdId, bool complete)
     {
         var txn = Guid.NewGuid();
-        var answer = await RetriedAsync(() => complete
-            ? service.CompleteAsync(txn, holdId, CancellationToken.None)
-            : service.ReturnAsync(txn, holdId, CancellationToken.None));
+        var answer = await RetriedAsync(ct => complete
+            ? service.CompleteAsync(txn, holdId, ct)
+            : service.ReturnAsync(txn, holdId, ct));
         var verb = complete ? "complete" : "return";
         if (answer.Code == MoneyAnswer.UnavailableCode)
             view.Error($"Couldn't {verb} hold {holdId}; the money service returns it to the buyer when it expires.");
@@ -352,20 +357,38 @@ internal sealed class MoneyActions(IMoneyService service, Guid regionId, Func<Ec
     }
 
     /// <summary>
-    /// Calls <paramref name="send"/>, which reuses one transaction id, until the answer isn't "unavailable" or
-    /// <see cref="Retries"/> run out. A final "unavailable" is <see cref="MoneyAnswer.Lost"/> when any attempt got no
-    /// answer: that attempt may have gone through.
+    /// Calls <paramref name="send"/>, which reuses one transaction id, until the answer isn't "unavailable", the call was
+    /// turned away (<see cref="MoneyAnswer.Final"/>), <see cref="Retries"/> run out, or <paramref name="budget"/> (the
+    /// attempts and the waits between them together) is spent; an attempt the budget cuts short got no answer. A final
+    /// "unavailable" is <see cref="MoneyAnswer.Lost"/> when any attempt got no answer: that attempt may have gone through.
     /// </summary>
-    private async Task<MoneyAnswer> RetriedAsync(Func<Task<MoneyAnswer>> send)
+    private async Task<MoneyAnswer> RetriedAsync(Func<CancellationToken, Task<MoneyAnswer>> send, TimeSpan? budget = null)
     {
+        using var limit = budget is { } b ? new CancellationTokenSource(b) : null;
+        var ct = limit?.Token ?? CancellationToken.None;
         var lost = false;
         for (var attempt = 0; ; attempt++)
         {
-            var answer = await send().ConfigureAwait(false);
+            MoneyAnswer answer;
+            try
+            {
+                answer = await send(ct).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                answer = MoneyAnswer.NoAnswer;
+            }
             if (answer.Code != MoneyAnswer.UnavailableCode) return answer;
             lost |= answer.Lost;
-            if (attempt == Retries.Length) return answer with { Lost = lost };
-            await view.Delay(Retries[attempt]).ConfigureAwait(false);
+            if (answer.Final || attempt == Retries.Length || ct.IsCancellationRequested) return answer with { Lost = lost };
+            try
+            {
+                await view.Delay(Retries[attempt], ct).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                return answer with { Lost = lost };
+            }
         }
     }
 
@@ -401,7 +424,7 @@ internal sealed class MoneyActions(IMoneyService service, Guid regionId, Func<Ec
 
     /// <summary>
     /// For OpenSim's synchronous money calls. The client never captures a context, so blocking here can't deadlock; it
-    /// waits at most <see cref="MoneyServiceClient.Timeout"/> per attempt, plus the waits between a payment's retries.
+    /// waits at most <see cref="MoneyServiceClient.Timeout"/>, or <see cref="SyncBudget"/> for a retried payment.
     /// </summary>
     private static T Wait<T>(Task<T> task) => task.GetAwaiter().GetResult();
 }

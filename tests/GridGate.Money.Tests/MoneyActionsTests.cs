@@ -516,6 +516,81 @@ public sealed class MoneyActionsTests
     }
 
     [Fact]
+    public async Task A_turned_away_payment_is_not_retried_or_logged_as_unknown()
+    {
+        _service.Queue("transfer", MoneyAnswer.Rejected); // an HTTP 4xx: nothing happened
+
+        await _actions.PayAvatarAsync(P, Me, ThemWho, 10);
+
+        Assert.Single(_service.Of("transfer"));
+        Assert.Empty(_view.Delays);
+        Assert.Empty(_view.Errors);
+        Assert.Equal("Money is unavailable right now. Please try again later.", Assert.Single(_view.Told).Text);
+    }
+
+    /// <summary>The actions with a short budget for synchronous payments, so a test of it is fast.</summary>
+    private MoneyActions Budgeted(TimeSpan budget) => new(_service, Region, () => _economy, _view) { SyncBudget = budget };
+
+    [Fact]
+    public void A_sync_budget_is_one_service_timeout()
+    {
+        Assert.Equal(MoneyServiceClient.Timeout, _actions.SyncBudget);
+    }
+
+    [Fact]
+    public void A_pass_whose_service_never_answers_gives_up_within_its_budget()
+    {
+        _service.Gate = _ => new TaskCompletionSource().Task; // the service never answers
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+
+        Assert.False(Budgeted(TimeSpan.FromMilliseconds(200)).MovePass(P, ThemWho, 5));
+
+        Assert.True(clock.Elapsed < TimeSpan.FromSeconds(5), $"{clock.Elapsed}");
+        Assert.Contains(Assert.Single(_service.Of("transfer")).Txn.ToString(), Assert.Single(_view.Errors));
+        Assert.Equal(MoneyRules.CheckingText, Assert.Single(_view.Told).Text);
+    }
+
+    [Fact]
+    public void A_payout_whose_service_never_answers_gives_up_within_its_budget()
+    {
+        _service.Gate = _ => new TaskCompletionSource().Task;
+        var txn = Guid.NewGuid();
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+
+        Assert.False(Budgeted(TimeSpan.FromMilliseconds(200)).Payout(Me, ThemWho, 5, PartId, "slot", txn, out var reason));
+
+        Assert.True(clock.Elapsed < TimeSpan.FromSeconds(5), $"{clock.Elapsed}");
+        Assert.Equal("SERVICE_ERROR", reason);
+        Assert.Contains(txn.ToString(), Assert.Single(_view.Errors));
+    }
+
+    [Fact]
+    public void The_waits_between_a_sync_payments_attempts_count_against_its_budget()
+    {
+        _service.Answer = _ => MoneyAnswer.NoAnswer; // every attempt fails at once
+        _view.Waits = true; // the 1 s, 3 s and 9 s waits really wait
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+
+        Assert.False(Budgeted(TimeSpan.FromMilliseconds(300)).MovePass(P, ThemWho, 5));
+
+        Assert.True(clock.Elapsed < TimeSpan.FromSeconds(2), $"{clock.Elapsed}");
+        Assert.Single(_service.Of("transfer")); // the budget ran out during the first wait
+        Assert.Single(_view.Errors);
+        Assert.Equal(MoneyRules.CheckingText, Assert.Single(_view.Told).Text);
+    }
+
+    [Fact]
+    public async Task An_async_payment_keeps_the_whole_retry_schedule()
+    {
+        _service.Answer = _ => MoneyAnswer.NoAnswer;
+
+        await Budgeted(TimeSpan.FromMilliseconds(1)).PayAvatarAsync(P, Me, ThemWho, 10);
+
+        Assert.Equal(4, _service.Of("transfer").Count());
+        Assert.Equal([TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(9)], _view.Delays);
+    }
+
+    [Fact]
     public void Actions_type_lives_in_the_module()
     {
         Assert.Equal("GridGateMoney", typeof(MoneyActions).Assembly.GetName().Name);

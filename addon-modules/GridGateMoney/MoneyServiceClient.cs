@@ -20,7 +20,7 @@ public sealed record MoneyWho(Guid AgentId, string Home, Guid? SessionId = null,
 
 /// <summary>
 /// The service's answer. <see cref="Code"/> is "ok" or a refusal code; every failure to reach the service reads as
-/// "unavailable", and is <see cref="Lost"/> as well when no answer arrived.
+/// "unavailable", and is <see cref="Lost"/> or <see cref="Final"/> as well when the service's own answer didn't arrive.
 /// </summary>
 public sealed record MoneyAnswer(string Code, long? Balance = null, long? ToBalance = null, long? EntryId = null, long? HoldId = null)
 {
@@ -29,14 +29,24 @@ public sealed record MoneyAnswer(string Code, long? Balance = null, long? ToBala
     [JsonIgnore]
     public bool Ok => Code == "ok";
 
-    /// <summary>No answer arrived: the call may have happened. A service that answers "unavailable" itself changed nothing.</summary>
+    /// <summary>
+    /// No answer arrived (no response at all, or an HTTP 5xx): the call may have happened. A service that answers
+    /// "unavailable" itself changed nothing.
+    /// </summary>
     [JsonIgnore]
     public bool Lost { get; init; }
 
+    /// <summary>The call was turned away (an HTTP 4xx or another status without an answer): nothing happened, and sending it again won't help.</summary>
+    [JsonIgnore]
+    public bool Final { get; init; }
+
     public static MoneyAnswer Unavailable { get; } = new(UnavailableCode);
 
-    /// <summary>What a call that got no readable answer returns.</summary>
+    /// <summary>What a call that may have happened, but got no answer, returns.</summary>
     public static MoneyAnswer NoAnswer { get; } = new(UnavailableCode) { Lost = true };
+
+    /// <summary>What a call that was turned away returns.</summary>
+    public static MoneyAnswer Rejected { get; } = new(UnavailableCode) { Final = true };
 }
 
 /// <summary>The grid's money settings, as the service gives them to regions.</summary>
@@ -153,7 +163,7 @@ public sealed class MoneyServiceClient : IMoneyService, IDisposable
 
     public async Task<EconomyInfo?> EconomyAsync(CancellationToken ct)
     {
-        var wire = await Send<EconomyWire>("economy", new { }, Timeout, ct).ConfigureAwait(false);
+        var (wire, _) = await Send<EconomyWire>("economy", new { }, Timeout, ct).ConfigureAwait(false);
         return wire is { Code: "ok", CurrencySymbol: { } symbol }
             ? new EconomyInfo(symbol, wire.UploadFee, wire.ClassifiedFee, wire.VisitorWallets, wire.ScriptPayouts, wire.MaxPayment)
             : null;
@@ -161,7 +171,7 @@ public sealed class MoneyServiceClient : IMoneyService, IDisposable
 
     /// <summary>The service answers health with how many regions the key covers, not a code: "ok" when it says ok.</summary>
     public async Task<MoneyAnswer> HealthAsync(int protocol, IReadOnlyList<Guid> regions, CancellationToken ct) =>
-        await Send<HealthWire>("health", new HealthBody(protocol, regions), Timeout, ct).ConfigureAwait(false) is { Ok: true }
+        (await Send<HealthWire>("health", new HealthBody(protocol, regions), Timeout, ct).ConfigureAwait(false)).Body is { Ok: true }
             ? new MoneyAnswer("ok")
             : MoneyAnswer.Unavailable;
 
@@ -182,11 +192,19 @@ public sealed class MoneyServiceClient : IMoneyService, IDisposable
 
     private Task<MoneyAnswer> Post(string path, object body, CancellationToken ct) => Post(path, body, Timeout, ct);
 
-    private async Task<MoneyAnswer> Post(string path, object body, TimeSpan timeout, CancellationToken ct) =>
-        await Send<MoneyAnswer>(path, body, timeout, ct).ConfigureAwait(false) is { Code: { Length: > 0 } } answer ? answer : MoneyAnswer.NoAnswer;
+    /// <summary>The service's answer; <see cref="MoneyAnswer.NoAnswer"/> when the call may have happened, <see cref="MoneyAnswer.Rejected"/> when it was turned away.</summary>
+    private async Task<MoneyAnswer> Post(string path, object body, TimeSpan timeout, CancellationToken ct)
+    {
+        var (answer, lost) = await Send<MoneyAnswer>(path, body, timeout, ct).ConfigureAwait(false);
+        return answer is { Code: { Length: > 0 } } ? answer : lost ? MoneyAnswer.NoAnswer : MoneyAnswer.Rejected;
+    }
 
-    /// <summary>Null for anything but a 200 with a readable JSON body within <paramref name="timeout"/>. Only the caller's own cancellation throws.</summary>
-    private async Task<T?> Send<T>(string path, object body, TimeSpan timeout, CancellationToken ct) where T : class
+    /// <summary>
+    /// The body: null for anything but a 200 with a readable JSON body within <paramref name="timeout"/>. Without one,
+    /// <c>Lost</c> says whether the call may still have happened: no response, an HTTP 5xx, or a 200 whose body couldn't be
+    /// read. Any other status (a 4xx) turned it away before anything happened. Only the caller's own cancellation throws.
+    /// </summary>
+    private async Task<(T? Body, bool Lost)> Send<T>(string path, object body, TimeSpan timeout, CancellationToken ct) where T : class
     {
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         cts.CancelAfter(timeout);
@@ -201,10 +219,10 @@ public sealed class MoneyServiceClient : IMoneyService, IDisposable
             if (response.StatusCode != HttpStatusCode.OK)
             {
                 _failed?.Invoke($"{path}: HTTP {(int)response.StatusCode}");
-                return null;
+                return (null, (int)response.StatusCode >= 500);
             }
             await using var stream = await response.Content.ReadAsStreamAsync(cts.Token).ConfigureAwait(false);
-            return await JsonSerializer.DeserializeAsync<T>(stream, Json, cts.Token).ConfigureAwait(false);
+            return (await JsonSerializer.DeserializeAsync<T>(stream, Json, cts.Token).ConfigureAwait(false), true);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -213,7 +231,7 @@ public sealed class MoneyServiceClient : IMoneyService, IDisposable
         catch (Exception e) when (e is HttpRequestException or OperationCanceledException or JsonException or IOException or NotSupportedException)
         {
             _failed?.Invoke($"{path}: {e.GetType().Name}{(e.InnerException is { } inner ? " (" + inner.GetType().Name + ")" : "")}");
-            return null;
+            return (null, true);
         }
     }
 
