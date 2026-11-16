@@ -227,22 +227,170 @@ public sealed class MoneyAlertsTests(MoneyMariaDb maria) : IClassFixture<MoneyMa
         Assert.Contains(Bob.ToString(), lines[2].GetProperty("target").GetString());
     }
 
+    private static PairedServer Server(string host, string machine) =>
+        new(Guid.NewGuid(), host, new string('a', 64), DateTimeOffset.UtcNow, 9000, machine);
+
+    private static string KeyOf(PairedServer s) => "server:" + s.Id.ToString("N");
+
+    /// <summary>R1 first seen at <paramref name="a"/>'s address (pinned there), then Robust lists it at <paramref name="b"/>'s.</summary>
+    private static async Task MoveR1(MoneyTestDatabase db, RegionPins pins, PairedServer a, PairedServer b)
+    {
+        await db.AddRegion(R1, a.Host);
+        Assert.Contains(R1, await pins.CoveredAsync(a, 9000, 65536, new HashSet<Guid>(), Ct, raiseMoves: true));
+        await db.Sql($"UPDATE `robust`.`regions` SET serverIP = '{b.Host}' WHERE uuid = '{R1}'");
+    }
+
     [Fact]
     public async Task A_region_listed_at_another_server_raises_a_move()
     {
         var (db, alerts) = await StartAsync();
         var pins = new RegionPins(db.OpenMoney, new RegionHosts(db.OpenRobust), TimeProvider.System, alerts);
-        var (a, b) = (new PairedServer(Guid.NewGuid(), "192.168.1.20", new string('a', 64), DateTimeOffset.UtcNow, 9000, "m-a"),
-            new PairedServer(Guid.NewGuid(), "192.168.1.30", new string('b', 64), DateTimeOffset.UtcNow, 9000, "m-b"));
-        await db.AddRegion(R1, a.Host);
-        Assert.Contains(R1, await pins.CoveredAsync(a, 9000, 65536, new HashSet<Guid>(), Ct));
+        var (a, b) = (Server("192.168.1.20", "m-a"), Server("192.168.1.30", "m-b"));
+        await MoveR1(db, pins, a, b);
         Assert.Empty(await alerts.OpenAsync(Ct)); // first sight is a pin, not a move
 
-        await db.Sql($"UPDATE `robust`.`regions` SET serverIP = '{b.Host}' WHERE uuid = '{R1}'");
-        Assert.Empty(await pins.CoveredAsync(b, 9000, 65536, new HashSet<Guid>(), Ct));
+        Assert.Empty(await pins.CoveredAsync(b, 9000, 65536, new HashSet<Guid>(), Ct, raiseMoves: true));
 
         var moved = await Single(alerts);
-        Assert.Equal((AlertKind.RegionMoved, AlertLevel.Notice, R1, "server:" + b.Id.ToString("N")), (moved.Kind, moved.Level, moved.RegionId, moved.KeyId));
+        Assert.Equal((AlertKind.RegionMoved, AlertLevel.Notice, R1, KeyOf(b), 1), (moved.Kind, moved.Level, moved.RegionId, moved.KeyId, moved.Count));
+    }
+
+    [Fact]
+    public async Task Many_requests_listing_a_moved_region_give_one_row_and_one_audit_line()
+    {
+        var (db, alerts) = await StartAsync();
+        var pins = new RegionPins(db.OpenMoney, new RegionHosts(db.OpenRobust), TimeProvider.System, alerts);
+        var (a, b, c) = (Server("192.168.1.20", "m-a"), Server("192.168.1.30", "m-b"), Server("192.168.1.40", "m-c"));
+        await MoveR1(db, pins, a, b);
+
+        for (var i = 0; i < 20; i++)
+            await pins.CoveredAsync(b, 9000, 65536, new HashSet<Guid>(), Ct, raiseMoves: true);
+        // A restart forgets what it raised; the open row still says this move was seen.
+        var restarted = new MoneyAlerts(db.OpenMoney, _clock, audit: _audit);
+        await new RegionPins(db.OpenMoney, new RegionHosts(db.OpenRobust), TimeProvider.System, restarted)
+            .CoveredAsync(b, 9000, 65536, new HashSet<Guid>(), Ct, raiseMoves: true);
+
+        var moved = await Single(alerts);
+        Assert.Equal((KeyOf(b), 1), (moved.KeyId, moved.Count));
+        Assert.Single(AuditLines());
+
+        // Listed at a third server: another move seen, on the same open row.
+        await db.Sql($"UPDATE `robust`.`regions` SET serverIP = '{c.Host}' WHERE uuid = '{R1}'");
+        await pins.CoveredAsync(c, 9000, 65536, new HashSet<Guid>(), Ct, raiseMoves: true);
+        await pins.CoveredAsync(c, 9000, 65536, new HashSet<Guid>(), Ct, raiseMoves: true);
+        moved = await Single(alerts);
+        Assert.Equal((KeyOf(c), 2), (moved.KeyId, moved.Count));
+        Assert.Single(AuditLines());
+    }
+
+    [Fact]
+    public async Task The_website_status_read_raises_no_alert()
+    {
+        var (db, alerts) = await StartAsync();
+        var pins = new RegionPins(db.OpenMoney, new RegionHosts(db.OpenRobust), TimeProvider.System, alerts);
+        var (a, b) = (Server("192.168.1.20", "m-a"), Server("192.168.1.30", "m-b"));
+        await MoveR1(db, pins, a, b);
+        var verification = new RegionVerification(db.OpenMoney, db.OpenRobust, pins, _clock);
+
+        var states = await verification.AllAsync(db.Settings with { Money = db.Settings.Money with { PairedServers = [a, b] } }, Ct);
+
+        Assert.Contains(states, s => s.RegionId == R1);
+        Assert.Empty(await alerts.OpenAsync(Ct));
+        Assert.Empty(await pins.CoveredAsync(b, 9000, 65536, new HashSet<Guid>(), Ct)); // nor does a read that doesn't ask to
+        Assert.Empty(await alerts.OpenAsync(Ct));
+    }
+
+    [Fact]
+    public async Task Third_within_a_rolling_day_is_a_warning_even_across_rows()
+    {
+        var (_, alerts) = await StartAsync();
+
+        await alerts.UnhandedArrivalAsync("p1", R1, Ann, null, Ct);
+        _clock.Advance(TimeSpan.FromHours(23));
+        await alerts.UnhandedArrivalAsync("p1", R1, Ann, null, Ct); // the row's last one, 23 h after its first
+        _clock.Advance(TimeSpan.FromHours(2));
+        await alerts.UnhandedArrivalAsync("p1", R1, Ann, null, Ct); // past the first row's window: a new row
+
+        var open = await alerts.OpenAsync(Ct);
+        Assert.Equal(2, open.Count);
+        Assert.Equal(AlertLevel.Warning, open.Single(a => a.Count == 1).Level); // two within the day before it
+    }
+
+    [Fact]
+    public async Task A_cancelled_raise_never_throws()
+    {
+        var (_, alerts) = await StartAsync();
+
+        await alerts.KeyLimitReachedAsync("p1", new CancellationToken(canceled: true));
+        await alerts.RegionMovedAsync(R1, "server:aaaa", new CancellationToken(canceled: true));
+
+        Assert.Empty(await alerts.OpenAsync(Ct));
+        // Not written, so not remembered either: the next one is.
+        await alerts.RegionMovedAsync(R1, "server:aaaa", Ct);
+        Assert.Single(await alerts.OpenAsync(Ct));
+    }
+
+    [Fact]
+    public async Task Warnings_read_isnt_crowded_out_by_notices()
+    {
+        var (db, alerts) = await StartAsync();
+        await alerts.KeyLimitReachedAsync("p1", Ct);
+        _clock.Advance(TimeSpan.FromMinutes(1));
+        await db.Sql("INSERT INTO `money`.`alerts` (kind, level, key_id, region_id, count, first_at, last_at) " +
+            $"SELECT 'RegionMoved', 'Notice', 'server:x', UUID(), 1, '{_clock.GetUtcNow():yyyy-MM-dd HH:mm:ss}', '{_clock.GetUtcNow():yyyy-MM-dd HH:mm:ss}' FROM `money`.seq_1_to_600");
+
+        Assert.DoesNotContain(await alerts.OpenAsync(Ct), a => a.Level == AlertLevel.Warning); // 500 newer notices
+        var warning = Assert.Single(await alerts.WarningsAsync(Ct));
+        Assert.Equal(AlertKind.KeyLimitReached, warning.Kind);
+    }
+
+    [Fact]
+    public async Task The_open_arrivals_cap_raises_no_alert()
+    {
+        var rig = _rig = await MoneyServiceRig.StartAsync(maria);
+        // 25 people, each verified at There under p2, each claimed by p1's Here with no handoff. The location clock stands
+        // still, so 20 are held and 5 are refused by the cap before anything is looked up.
+        var people = Enumerable.Range(0, 25).Select(_ => (Agent: Guid.NewGuid(), Session: Guid.NewGuid())).ToList();
+        foreach (var (agent, session) in people)
+        {
+            await rig.Db.AddPresence(agent, There, session, Guid.NewGuid());
+            await rig.Db.AddSessionStart(session, agent, There, "login");
+            Assert.Equal("ok", CodeOf(await rig.Arrived(Key2, session, agent, There)));
+        }
+        var calls = people.Select(p => rig.Post("arrived", new { id = Guid.NewGuid(), sessionId = p.Session, agentId = p.Agent, regionId = Here })).ToList();
+        var deadline = DateTime.UtcNow.AddSeconds(30);
+        while (calls.Count(c => c.IsCompleted) < 5)
+        {
+            Assert.True(DateTime.UtcNow < deadline, "the arrivals past 20 were never refused");
+            await Task.WhenAny(Task.WhenAll(calls), Task.Delay(20, Ct));
+        }
+        foreach (var refused in calls.Where(c => c.IsCompleted)) Assert.Equal("refused", CodeOf(await refused));
+
+        Assert.Empty(await rig.Alerts.OpenAsync(Ct));
+
+        // The held ones answer once their wait runs out: each a claim against another key's place, so each is an alert.
+        while (calls.Any(c => !c.IsCompleted))
+        {
+            Assert.True(DateTime.UtcNow < deadline.AddSeconds(30), "the held arrivals never answered");
+            await Task.WhenAny(Task.WhenAll(calls), Task.Delay(20, Ct));
+            rig.LocationClock.Advance(MoneyLocations.ArrivalRetry);
+        }
+        Assert.Equal(20, Assert.Single(await rig.Alerts.OpenAsync(Ct)).Count);
+    }
+
+    [Fact]
+    public async Task Payout_over_the_owners_daily_limit_raises_no_person_alert()
+    {
+        var rig = _rig = await MoneyServiceRig.StartAsync(maria);
+        Assert.Equal(MoneyOutcome.Ok, (await rig.Ledger.SetPayoutsAllowedAsync(A, true, Ct)).Outcome);
+        rig.Settings = rig.Settings with { Money = rig.Settings.Money with { DailyPayoutLimit = 1 } };
+
+        for (var i = 0; i < 3; i++)
+            Assert.Equal("over_daily_limit", CodeOf(await rig.Post("payout",
+                new { txnId = Guid.NewGuid(), ownerId = A, to = new { agentId = B, home = "" }, amount = 5, regionId = Here, objectId = Guid.NewGuid(), objectName = "slot" })));
+
+        Assert.Empty(await rig.Alerts.OpenAsync(Ct));
+        Assert.Equal(0, await rig.Db.Scalar("SELECT COUNT(*) FROM `money`.`alerts`"));
     }
 
     [Fact]

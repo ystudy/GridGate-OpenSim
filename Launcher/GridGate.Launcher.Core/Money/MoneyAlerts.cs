@@ -23,17 +23,25 @@ public interface IMoneyAlerts
     /// <summary>The open alerts, notices and warnings, newest first. A database failure is <see cref="MoneyUnavailableException"/>.</summary>
     Task<IReadOnlyList<MoneyAlert>> OpenAsync(CancellationToken ct);
 
+    /// <summary>
+    /// The open warnings only, newest first, so no backlog of notices can push one out of the read. A database failure is
+    /// <see cref="MoneyUnavailableException"/>.
+    /// </summary>
+    Task<IReadOnlyList<MoneyAlert>> WarningsAsync(CancellationToken ct);
+
     /// <summary>Closes alert <paramref name="id"/>, recording when and by whom; the row stays. A database failure is <see cref="MoneyUnavailableException"/>.</summary>
     Task ClearAsync(long id, string staff, CancellationToken ct);
 }
 
 /// <summary>
 /// The owner's money alerts (money design §8.8), in the money database's <c>alerts</c> table. Each kind is grouped, per
-/// rolling <see cref="Window"/>, into one row that counts up: an unhanded arrival per key and region, a key's limit per key,
-/// a moved region per region, a person's limit per person. A row's level only rises, from notice to warning. The audit log
-/// gets a line when a row opens (for a person's limit, when it appears) and when it becomes a warning, not on every count.
-/// <para>Raising an alert never fails the answer that raised it: a database failure is logged by its type and the alert is
-/// lost. Refused claims are only counted here; they never slow down or block the key.</para>
+/// <see cref="Window"/> from a row's first time, into one row that counts up: an unhanded arrival per key and region, a
+/// key's limit per key, a person's limit per person. A moved region has one open row per region until it is cleared,
+/// counting moves seen (another server listing it), not requests. A row's level only rises, from notice to warning. The
+/// audit log gets a line when a row opens (for a person's limit, when it appears) and when it becomes a warning, not on
+/// every count.
+/// <para>Raising an alert never fails the answer that raised it: any failure is logged by its type and the alert is lost.
+/// Refused claims are only counted here; they never slow down or block the key.</para>
 /// </summary>
 public sealed class MoneyAlerts(Func<CancellationToken, Task<MySqlConnection>> openMoney, TimeProvider time, ILogger? log = null, AuditLog? audit = null) : IMoneyAlerts
 {
@@ -49,10 +57,17 @@ public sealed class MoneyAlerts(Func<CancellationToken, Task<MySqlConnection>> o
     /// <summary>At most this many open alerts are read.</summary>
     public const int MaxOpen = 500;
 
+    /// <summary>Past this many remembered moves, the ones older than <see cref="Window"/> are dropped.</summary>
+    private const int MaxMovesSeen = 4096;
+
     private const string Columns = "id, kind, level, key_id, region_id, agent_id, count, first_at, last_at";
 
     // The money service is the only writer: one alert at a time, so two at once never open two rows for one group.
     private readonly SemaphoreSlim _one = new(1, 1);
+
+    // Moves raised lately, by region and the key listing it. A move is found on every request from that server, and a
+    // repeat must cost no database work and never wait for _one.
+    private readonly Dictionary<(Guid Region, string Key), DateTime> _movesSeen = [];
 
     private DateTime Now => time.GetUtcNow().UtcDateTime;
 
@@ -66,8 +81,9 @@ public sealed class MoneyAlerts(Func<CancellationToken, Task<MySqlConnection>> o
         RaiseAsync(AlertKind.UnhandedArrival, keyId, regionId, agentId, async (conn, tx) =>
         {
             if (verifiedKeyElsewhere is not null && verifiedKeyElsewhere != keyId) return AlertLevel.Warning;
-            // Across the key's regions, cleared rows too: clearing a notice doesn't reset the day's count.
-            var before = await ScalarAsync(conn, tx, "SELECT COALESCE(SUM(count), 0) FROM alerts WHERE kind = @kind AND key_id = @key AND first_at > @since", ct,
+            // Across the key's regions, cleared rows too: clearing a notice doesn't reset the day's count. A row seen within
+            // the window counts whole, so the count rolls; it may reach a little past a day, which fails safe.
+            var before = await ScalarAsync(conn, tx, "SELECT COALESCE(SUM(count), 0) FROM alerts WHERE kind = @kind AND key_id = @key AND last_at > @since", ct,
                 ("@kind", nameof(AlertKind.UnhandedArrival)), ("@key", keyId), ("@since", Now - Window));
             return before + 1 >= WarningAt ? AlertLevel.Warning : AlertLevel.Notice;
         }, ct);
@@ -76,9 +92,26 @@ public sealed class MoneyAlerts(Func<CancellationToken, Task<MySqlConnection>> o
     public Task KeyLimitReachedAsync(string keyId, CancellationToken ct) =>
         RaiseAsync(AlertKind.KeyLimitReached, keyId, null, null, (_, _) => Task.FromResult(AlertLevel.Warning), ct);
 
-    /// <summary>Region <paramref name="regionId"/> is listed at the server of <paramref name="toKeyId"/> but pinned to another (§8.3): a notice.</summary>
-    public Task RegionMovedAsync(Guid regionId, string toKeyId, CancellationToken ct) =>
-        RaiseAsync(AlertKind.RegionMoved, toKeyId, regionId, null, (_, _) => Task.FromResult(AlertLevel.Notice), ct);
+    /// <summary>
+    /// Region <paramref name="regionId"/> is listed at the server of <paramref name="toKeyId"/> but pinned to another (§8.3):
+    /// a notice. Raised at most once per region and listing key per <see cref="Window"/>; a repeat within it does nothing at
+    /// all. An open row for the region counts up only when another key lists it now, so its count is moves seen.
+    /// </summary>
+    public Task RegionMovedAsync(Guid regionId, string toKeyId, CancellationToken ct)
+    {
+        var now = Now;
+        lock (_movesSeen)
+        {
+            if (_movesSeen.TryGetValue((regionId, toKeyId), out var seen) && now - seen < Window) return Task.CompletedTask;
+            if (_movesSeen.Count >= MaxMovesSeen)
+                foreach (var old in _movesSeen.Where(m => now - m.Value >= Window).Select(m => m.Key).ToList())
+                    _movesSeen.Remove(old);
+            _movesSeen[(regionId, toKeyId)] = now;
+        }
+        // Not written: the next request tries again.
+        return RaiseAsync(AlertKind.RegionMoved, toKeyId, regionId, null, (_, _) => Task.FromResult(AlertLevel.Notice), ct,
+            failed: () => { lock (_movesSeen) _movesSeen.Remove((regionId, toKeyId)); });
+    }
 
     /// <summary>
     /// <paramref name="agentId"/> hit their daily spending limit in <paramref name="keyId"/>'s region. Counted; it appears as a
@@ -87,14 +120,19 @@ public sealed class MoneyAlerts(Func<CancellationToken, Task<MySqlConnection>> o
     public Task PersonLimitHitAsync(Guid agentId, string keyId, CancellationToken ct) =>
         RaiseAsync(AlertKind.PersonLimitRepeated, keyId, null, agentId, (_, _) => Task.FromResult(AlertLevel.Notice), ct);
 
-    public async Task<IReadOnlyList<MoneyAlert>> OpenAsync(CancellationToken ct)
+    public Task<IReadOnlyList<MoneyAlert>> OpenAsync(CancellationToken ct) => ReadOpenAsync(null, ct);
+
+    public Task<IReadOnlyList<MoneyAlert>> WarningsAsync(CancellationToken ct) => ReadOpenAsync(AlertLevel.Warning, ct);
+
+    private async Task<IReadOnlyList<MoneyAlert>> ReadOpenAsync(AlertLevel? only, CancellationToken ct)
     {
         try
         {
             await using var conn = await openMoney(ct);
             await using var cmd = Command(conn, null,
-                $"SELECT {Columns} FROM alerts WHERE cleared IS NULL AND NOT (kind = @person AND count < @at) ORDER BY last_at DESC, id DESC LIMIT {MaxOpen}",
-                ("@person", nameof(AlertKind.PersonLimitRepeated)), ("@at", PersonLimitAt));
+                "SELECT " + Columns + " FROM alerts WHERE cleared IS NULL AND NOT (kind = @person AND count < @at)" + (only is null ? "" : " AND level = @level") +
+                " ORDER BY last_at DESC, id DESC LIMIT " + MaxOpen,
+                ("@person", nameof(AlertKind.PersonLimitRepeated)), ("@at", PersonLimitAt), ("@level", only?.ToString()));
             await using var r = await cmd.ExecuteReaderAsync(ct);
             var open = new List<MoneyAlert>();
             while (await r.ReadAsync(ct))
@@ -125,15 +163,18 @@ public sealed class MoneyAlerts(Func<CancellationToken, Task<MySqlConnection>> o
     }
 
     /// <summary>
-    /// Counts one more <paramref name="kind"/> on its group's open row from the last <see cref="Window"/>, or opens one.
-    /// <paramref name="levelOf"/> is the level this one calls for; the row keeps the higher of that and its own.
+    /// Counts one more <paramref name="kind"/> on its group's open row, or opens one. <paramref name="levelOf"/> is the level
+    /// this one calls for; the row keeps the higher of that and its own. Never throws: a failure is logged by its type, and
+    /// <paramref name="failed"/> runs.
     /// </summary>
     private async Task RaiseAsync(AlertKind kind, string keyId, Guid? regionId, Guid? agentId,
-        Func<MySqlConnection, MySqlTransaction, Task<AlertLevel>> levelOf, CancellationToken ct)
+        Func<MySqlConnection, MySqlTransaction, Task<AlertLevel>> levelOf, CancellationToken ct, Action? failed = null)
     {
-        await _one.WaitAsync(ct);
+        var held = false;
         try
         {
+            await _one.WaitAsync(ct);
+            held = true;
             var now = Now;
             (bool Opened, bool Rose, int Count, AlertLevel Level) change;
             await using (var conn = await openMoney(ct))
@@ -145,22 +186,29 @@ public sealed class MoneyAlerts(Func<CancellationToken, Task<MySqlConnection>> o
                     ("@kind", kind.ToString()), ("@key", keyId), ("@region", regionId?.ToString()), ("@agent", agentId?.ToString()), ("@since", now - Window),
                 };
                 long? id = null;
-                var (oldLevel, count) = (AlertLevel.Notice, 0);
+                var (oldLevel, count, oldKey) = (AlertLevel.Notice, 0, "");
+                // A moved region has one open row until it is cleared, whatever its age; the rest count within the window.
+                var within = kind == AlertKind.RegionMoved ? "" : "first_at > @since AND ";
                 await using (var cmd = Command(conn, tx,
-                    $"SELECT id, level, count FROM alerts WHERE kind = @kind AND cleared IS NULL AND first_at > @since AND {GroupOf(kind)} ORDER BY id DESC LIMIT 1", args))
+                    $"SELECT id, level, count, key_id FROM alerts WHERE kind = @kind AND cleared IS NULL AND {within}{GroupOf(kind)} ORDER BY id DESC LIMIT 1", args))
                 await using (var r = await cmd.ExecuteReaderAsync(ct))
                     if (await r.ReadAsync(ct))
-                        (id, oldLevel, count) = (r.GetInt64(0), Enum.TryParse<AlertLevel>(r.GetString(1), out var l) ? l : AlertLevel.Notice, r.GetInt32(2));
+                        (id, oldLevel, count, oldKey) = (r.GetInt64(0), Enum.TryParse<AlertLevel>(r.GetString(1), out var l) ? l : AlertLevel.Notice, r.GetInt32(2), r.GetString(3));
 
-                if (id is { } existing)
+                // The same move seen again (after a restart, say) isn't another move.
+                if (id is not null && kind == AlertKind.RegionMoved && oldKey == keyId)
                 {
-                    var next = level > oldLevel ? level : oldLevel;
-                    await ExecAsync(conn, tx, """
-                        UPDATE alerts SET count = count + 1, level = @level, last_at = @now, key_id = @key,
-                          region_id = COALESCE(@region, region_id), agent_id = COALESCE(@agent, agent_id) WHERE id = @id
-                        """, ct, [.. args, ("@level", next.ToString()), ("@now", now), ("@id", existing)]);
-                    change = (false, next > oldLevel, count + 1, next);
+                    await tx.RollbackAsync(ct);
+                    return;
                 }
+                var next = level > oldLevel ? level : oldLevel;
+                // ClearAsync doesn't wait for _one: a row cleared since it was read isn't counted, and this one opens a new row.
+                var counted = id is { } existing && await ExecAsync(conn, tx, """
+                    UPDATE alerts SET count = count + 1, level = @level, last_at = @now, key_id = @key,
+                      region_id = COALESCE(@region, region_id), agent_id = COALESCE(@agent, agent_id) WHERE id = @id AND cleared IS NULL
+                    """, ct, [.. args, ("@level", next.ToString()), ("@now", now), ("@id", existing)]) == 1;
+                if (counted)
+                    change = (false, next > oldLevel, count + 1, next);
                 else
                 {
                     await ExecAsync(conn, tx, """
@@ -178,13 +226,15 @@ public sealed class MoneyAlerts(Func<CancellationToken, Task<MySqlConnection>> o
                     $"{kind} key {keyId}" + (regionId is { } r1 ? $" region {r1}" : "") + (agentId is { } a1 ? $" person {a1}" : ""),
                     change.Level == AlertLevel.Warning ? "warning" : "notice"));
         }
-        catch (Exception e) when (IsDatabaseFailure(e))
+        catch (Exception e)
         {
+            // Whatever went wrong (the database, a cancelled wait), the answer that raised this alert stands.
+            failed?.Invoke();
             log?.LogError("A money alert ({Kind}) couldn't be written ({Error}); the answer it came with stands.", kind, e.GetType().Name);
         }
         finally
         {
-            _one.Release();
+            if (held) _one.Release();
         }
     }
 
@@ -198,9 +248,6 @@ public sealed class MoneyAlerts(Func<CancellationToken, Task<MySqlConnection>> o
         _ => throw new ArgumentOutOfRangeException(nameof(kind)),
     };
 
-    private static bool IsDatabaseFailure(Exception e) =>
-        e is MySqlException or MoneyUnavailableException or TimeoutException or InvalidOperationException { Source: "MySqlConnector" };
-
     private static DateTime Utc(DateTime t) => DateTime.SpecifyKind(t, DateTimeKind.Utc);
 
     /// <summary>CHAR(36) columns read as <see cref="Guid"/> with MySqlConnector's default settings, as text otherwise.</summary>
@@ -212,10 +259,10 @@ public sealed class MoneyAlerts(Func<CancellationToken, Task<MySqlConnection>> o
         return Convert.ToInt64(await cmd.ExecuteScalarAsync(ct), System.Globalization.CultureInfo.InvariantCulture);
     }
 
-    private static async Task ExecAsync(MySqlConnection conn, MySqlTransaction tx, string sql, CancellationToken ct, params (string Name, object? Value)[] args)
+    private static async Task<int> ExecAsync(MySqlConnection conn, MySqlTransaction tx, string sql, CancellationToken ct, params (string Name, object? Value)[] args)
     {
         await using var cmd = Command(conn, tx, sql, args);
-        await cmd.ExecuteNonQueryAsync(ct);
+        return await cmd.ExecuteNonQueryAsync(ct);
     }
 
     private static MySqlCommand Command(MySqlConnection conn, MySqlTransaction? tx, string sql, params (string Name, object? Value)[] args)

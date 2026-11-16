@@ -350,7 +350,7 @@ internal static class MoneyApi
                 var server = c.Settings().Money.PairedServers?.FirstOrDefault(p => "server:" + p.Id.ToString("N") == grant.KeyId);
                 grant = grant with
                 {
-                    Regions = server is null ? new HashSet<Guid>() : await c.Pins.CoveredAsync(server, grant.FromPort, grant.ToPort, own, ct),
+                    Regions = server is null ? new HashSet<Guid>() : await c.Pins.CoveredAsync(server, grant.FromPort, grant.ToPort, own, ct, raiseMoves: true),
                 };
             }
             answer = await endpoint(http, grant, ct);

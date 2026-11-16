@@ -33,7 +33,7 @@ public sealed class MoneyNotices(MoneyGate gate, IMoneyBooks books, MoneyStatus 
         {
             var (frozen, reason) = await books.FrozenAsync(ct);
             if (frozen) notices.Add(new("money-frozen", $"All payments are frozen: {reason}. Open Money to unfreeze.", MoneyLink: true));
-            var warnings = (await alerts.OpenAsync(ct)).Where(a => a.Level == AlertLevel.Warning).ToList();
+            var warnings = await alerts.WarningsAsync(ct);
             var s = settings();
             notices.AddRange(warnings.Take(MaxWarnings).Select(a => new MoneyNotice($"money-alert-{a.Id}", Describe(a, s), MoneyLink: true)));
             if (warnings.Count > MaxWarnings)
@@ -53,6 +53,10 @@ public sealed class MoneyNotices(MoneyGate gate, IMoneyBooks books, MoneyStatus 
         var times = a.Count == 1 ? "once" : $"{a.Count} times";
         return a.Kind switch
         {
+            // A warning can come from the key's count across its regions, or from one claim against another key's place, so
+            // this row's own count would understate it.
+            AlertKind.UnhandedArrival when a.Level == AlertLevel.Warning =>
+                $"{level}: {KeyName(a.KeyId, s)} claimed avatars arrived in {RegionName(a.RegionId, s)} that it wasn't handed. Open Money to check it.",
             AlertKind.UnhandedArrival =>
                 $"{level}: {KeyName(a.KeyId, s)} claimed avatars arrived in {RegionName(a.RegionId, s)} that it wasn't handed, {times} in a day. Open Money to check it.",
             AlertKind.KeyLimitReached =>

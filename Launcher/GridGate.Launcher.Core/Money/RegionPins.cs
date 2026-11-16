@@ -9,16 +9,18 @@ public sealed record RegionMove(Guid RegionId, Guid PinnedTo, Guid ListedAt);
 /// Which paired Region Server a region id belongs to (money design §8.3, review finding L-4). The first time a region id is
 /// listed in Robust at a paired server's address and ports it is pinned to that server in the money database; after that
 /// only that server's key covers it, however Robust's list changes. A region listed at another server stays uncovered
-/// until the owner approves the move, and each request that finds it raises a <see cref="AlertKind.RegionMoved"/> alert when
+/// until the owner approves the move; a request that finds it raises a <see cref="AlertKind.RegionMoved"/> alert when
 /// <paramref name="alerts"/> is given. A database failure is <see cref="MoneyUnavailableException"/>.
 /// </summary>
 public sealed class RegionPins(Func<CancellationToken, Task<MySqlConnection>> openMoney, RegionHosts hosts, TimeProvider time, MoneyAlerts? alerts = null)
 {
     /// <summary>
     /// The regions Robust lists at <paramref name="server"/>'s address and port range, minus <paramref name="ownRegions"/>,
-    /// that are pinned to it. Listed regions nobody has pinned yet are pinned to it first.
+    /// that are pinned to it. Listed regions nobody has pinned yet are pinned to it first. Only the request path passes
+    /// <paramref name="raiseMoves"/>: a status read (the website's region list) raises no alerts.
     /// </summary>
-    public async Task<IReadOnlySet<Guid>> CoveredAsync(PairedServer server, int fromPort, int toPort, IReadOnlySet<Guid> ownRegions, CancellationToken ct)
+    public async Task<IReadOnlySet<Guid>> CoveredAsync(PairedServer server, int fromPort, int toPort, IReadOnlySet<Guid> ownRegions, CancellationToken ct,
+        bool raiseMoves = false)
     {
         var listed = (await hosts.RegionsAtAsync(server.Host, fromPort, toPort, ct)).Where(r => !ownRegions.Contains(r)).ToList();
         if (listed.Count == 0) return new HashSet<Guid>();
@@ -44,11 +46,11 @@ public sealed class RegionPins(Func<CancellationToken, Task<MySqlConnection>> op
         {
             throw new MoneyUnavailableException(e);
         }
-        // §8.8: a region listed here but pinned to another server has moved; the owner hears of it (counted per region).
-        // Raising it never fails this answer.
-        if (alerts is not null)
+        // §8.8: a region listed here but pinned to another server has moved; the owner hears of it, once a day at most.
+        // Raising it never fails this answer, nor does the caller hanging up (no token).
+        if (raiseMoves && alerts is not null)
             foreach (var moved in listed.Where(r => pins.TryGetValue(r, out var to) && to != server.Id))
-                await alerts.RegionMovedAsync(moved, "server:" + server.Id.ToString("N"), ct);
+                await alerts.RegionMovedAsync(moved, "server:" + server.Id.ToString("N"), CancellationToken.None);
         return listed.Where(r => pins.TryGetValue(r, out var to) && to == server.Id).ToHashSet();
     }
 

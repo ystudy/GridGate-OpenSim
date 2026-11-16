@@ -126,6 +126,12 @@ internal sealed class FakeAlerts : IMoneyAlerts
         return Task.FromResult<IReadOnlyList<MoneyAlert>>(Open.ToList());
     }
 
+    public Task<IReadOnlyList<MoneyAlert>> WarningsAsync(CancellationToken ct)
+    {
+        lock (Calls) Calls.Add("warnings");
+        return Task.FromResult<IReadOnlyList<MoneyAlert>>(Open.Where(a => a.Level == AlertLevel.Warning).ToList());
+    }
+
     public Task ClearAsync(long id, string staff, CancellationToken ct)
     {
         lock (Calls) Calls.Add($"clear {id} {staff}");
@@ -976,7 +982,8 @@ public sealed class MoneyPageTests
         var region = Guid.Parse("e0000000-0000-0000-0000-0000000000e1");
         var alerts = new FakeAlerts();
         var at = new DateTime(2026, 11, 15, 12, 0, 0, DateTimeKind.Utc);
-        alerts.Open.Add(new MoneyAlert(7, AlertKind.UnhandedArrival, AlertLevel.Warning, "p1", region, Ann, 3, at, at));
+        // A warning from the key's count across its regions: this row has seen one claim only.
+        alerts.Open.Add(new MoneyAlert(7, AlertKind.UnhandedArrival, AlertLevel.Warning, "p1", region, Ann, 1, at, at));
         alerts.Open.Add(new MoneyAlert(8, AlertKind.KeyLimitReached, AlertLevel.Warning, "p1", null, null, 1, at, at));
         alerts.Open.Add(new MoneyAlert(9, AlertKind.RegionMoved, AlertLevel.Notice, "p1", region, null, 1, at, at));
         await using var f = Make(new FakeBooks(), alerts: alerts);
@@ -988,7 +995,7 @@ public sealed class MoneyPageTests
         Assert.NotNull(arrival);
         Assert.Contains("alert-danger", arrival.ClassName);
         Assert.Contains("wasn't handed", arrival.TextContent);
-        Assert.Contains("3 times", arrival.TextContent);
+        Assert.DoesNotContain("once", arrival.TextContent); // a warning's row count would understate it
         Assert.NotNull(arrival.QuerySelector("a[href='/money']"));
         var limit = doc.QuerySelector("#money-alert-8");
         Assert.NotNull(limit);
