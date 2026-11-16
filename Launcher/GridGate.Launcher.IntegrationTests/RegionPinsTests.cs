@@ -84,6 +84,31 @@ public sealed class RegionPinsTests(MoneyMariaDb maria) : IClassFixture<MoneyMar
     }
 
     [Fact]
+    public async Task Approving_a_move_leaves_nobody_verified_in_the_region()
+    {
+        // People B placed in the region stay B's to charge only if nothing changes: the server that now runs it, A, never
+        // vouched for them, so money pauses for them until their next login. Elsewhere nobody is touched.
+        var (db, pins) = await StartAsync(maria);
+        var (a, b, region, other) = (Server(HostA), Server(HostB), Guid.NewGuid(), Guid.NewGuid());
+        await db.AddRegion(region, HostB);
+        await Covered(pins, b);
+        var (here, handed, elsewhere) = (Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid());
+        await db.Sql($"""
+            INSERT INTO `money`.`session_locations` (session_id, agent_id, region_id, key_id, state, last_start_id, updated) VALUES
+              ('{here}', '{Guid.NewGuid()}', '{region}', 'server:{b.Id:N}', 'Verified', 1, UTC_TIMESTAMP(6)),
+              ('{handed}', '{Guid.NewGuid()}', '{region}', 'p1', 'Handed', 1, UTC_TIMESTAMP(6)),
+              ('{elsewhere}', '{Guid.NewGuid()}', '{other}', 'server:{b.Id:N}', 'Verified', 1, UTC_TIMESTAMP(6))
+            """);
+        await db.Sql($"UPDATE `robust`.`regions` SET serverIP = '{HostA}' WHERE uuid = '{region}'");
+
+        await pins.ApproveMoveAsync(region, a.Id, Ct);
+
+        Assert.Equal("Unverified", await db.Text($"SELECT state FROM `money`.`session_locations` WHERE session_id = '{here}'"));
+        Assert.Equal("Unverified", await db.Text($"SELECT state FROM `money`.`session_locations` WHERE session_id = '{handed}'"));
+        Assert.Equal("Verified", await db.Text($"SELECT state FROM `money`.`session_locations` WHERE session_id = '{elsewhere}'"));
+    }
+
+    [Fact]
     public async Task Keeping_off_leaves_it_with_B_and_B_gets_it_back_when_it_registers_again()
     {
         var (db, pins) = await StartAsync(maria);
@@ -159,6 +184,28 @@ public sealed class RegionPinsTests(MoneyMariaDb maria) : IClassFixture<MoneyMar
         Assert.Equal(1, await db.Scalar($"SELECT COUNT(*) FROM `money`.`limit_overrides` WHERE kind = 'key' AND target = 'server:{replacement.Id:N}' AND daily_spend = 500"));
         Assert.Equal(0, await db.Scalar($"SELECT COUNT(*) FROM `money`.`limit_overrides` WHERE target = 'server:{old.Id:N}'"));
         Assert.Empty(await pins.MovesAsync([replacement], Ct));
+    }
+
+    [Fact]
+    public async Task Same_machine_repairing_carries_who_it_placed_and_handed()
+    {
+        // The people the server had verified, and the handoffs it sent, are the new key's: its regions keep their money.
+        var (db, pins) = await StartAsync(maria);
+        var (old, region, session) = (Server(HostA, "machine-1"), Guid.NewGuid(), Guid.NewGuid());
+        var replacement = Server(HostA, "machine-1");
+        await db.AddRegion(region, HostA);
+        await Covered(pins, old);
+        await db.Sql($"""
+            INSERT INTO `money`.`session_locations` (session_id, agent_id, region_id, key_id, state, last_start_id, updated) VALUES
+              ('{session}', '{Guid.NewGuid()}', '{region}', 'server:{old.Id:N}', 'Verified', 1, UTC_TIMESTAMP(6));
+            INSERT INTO `money`.`handoffs` (id, session_id, from_key, from_region, to_region, kind, created) VALUES
+              ('{Guid.NewGuid()}', '{Guid.NewGuid()}', 'server:{old.Id:N}', '{region}', '{Guid.NewGuid()}', 'Teleport', UTC_TIMESTAMP(6));
+            """);
+
+        await pins.CarryOverAsync(old, replacement, Ct);
+
+        Assert.Equal($"server:{replacement.Id:N}", await db.Text($"SELECT key_id FROM `money`.`session_locations` WHERE session_id = '{session}'"));
+        Assert.Equal($"server:{replacement.Id:N}", await db.Text("SELECT from_key FROM `money`.`handoffs`"));
     }
 
     [Fact]

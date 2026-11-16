@@ -78,10 +78,29 @@ public sealed class RegionPins(Func<CancellationToken, Task<MySqlConnection>> op
         return moves;
     }
 
-    /// <summary>Pins <paramref name="regionId"/> to <paramref name="toServerId"/>. The caller audits it.</summary>
-    public Task ApproveMoveAsync(Guid regionId, Guid toServerId, CancellationToken ct) =>
-        RunAsync("UPDATE region_pins SET server_id = @s, machine_id = NULL, pinned = @t WHERE region_id = @r", ct,
-            ("@s", toServerId.ToString("N")), ("@t", time.GetUtcNow().UtcDateTime), ("@r", regionId.ToString()));
+    /// <summary>
+    /// Pins <paramref name="regionId"/> to <paramref name="toServerId"/>. Everyone placed in the region was placed under the
+    /// server it was pinned to before, which the new server never vouched for: their money pauses until their next login.
+    /// The caller audits it.
+    /// </summary>
+    public async Task ApproveMoveAsync(Guid regionId, Guid toServerId, CancellationToken ct)
+    {
+        var now = time.GetUtcNow().UtcDateTime;
+        try
+        {
+            await using var conn = await openMoney(ct);
+            await using var tx = await conn.BeginTransactionAsync(ct);
+            await Exec(conn, tx, "UPDATE region_pins SET server_id = @s, machine_id = NULL, pinned = @t WHERE region_id = @r", ct,
+                ("@s", toServerId.ToString("N")), ("@t", now), ("@r", regionId.ToString()));
+            await Exec(conn, tx, "UPDATE session_locations SET state = 'Unverified', updated = @t WHERE region_id = @r AND state IN ('Verified', 'Handed')", ct,
+                ("@t", now), ("@r", regionId.ToString()));
+            await tx.CommitAsync(ct);
+        }
+        catch (MySqlException e)
+        {
+            throw new MoneyUnavailableException(e);
+        }
+    }
 
     /// <summary>Drops the server's pins, which ends its coverage at once.</summary>
     public Task RemoveServerAsync(Guid serverId, CancellationToken ct) =>
@@ -89,7 +108,7 @@ public sealed class RegionPins(Func<CancellationToken, Task<MySqlConnection>> op
 
     /// <summary>
     /// Pairing again: when <paramref name="old"/> and <paramref name="replacement"/> are the same machine (both ids known
-    /// and equal) its pins and its key's limit override follow it. A different machine gets none: the old pins stay with
+    /// and equal) its pins, its key's limit override, the people it placed and the handoffs it sent follow it. A different machine gets none: the old pins stay with
     /// the old server id, so those regions show as moves until the owner approves them.
     /// </summary>
     public async Task CarryOverAsync(PairedServer old, PairedServer replacement, CancellationToken ct)
@@ -101,8 +120,10 @@ public sealed class RegionPins(Func<CancellationToken, Task<MySqlConnection>> op
             await using var tx = await conn.BeginTransactionAsync(ct);
             await Exec(conn, tx, "UPDATE region_pins SET server_id = @new, machine_id = @m WHERE server_id = @old", ct,
                 ("@new", replacement.Id.ToString("N")), ("@m", replacement.MachineId!), ("@old", old.Id.ToString("N")));
-            await Exec(conn, tx, "UPDATE limit_overrides SET target = @new WHERE kind = 'key' AND target = @old", ct,
-                ("@new", "server:" + replacement.Id.ToString("N")), ("@old", "server:" + old.Id.ToString("N")));
+            var (oldKey, newKey) = ("server:" + old.Id.ToString("N"), "server:" + replacement.Id.ToString("N"));
+            await Exec(conn, tx, "UPDATE limit_overrides SET target = @new WHERE kind = 'key' AND target = @old", ct, ("@new", newKey), ("@old", oldKey));
+            await Exec(conn, tx, "UPDATE session_locations SET key_id = @new WHERE key_id = @old", ct, ("@new", newKey), ("@old", oldKey));
+            await Exec(conn, tx, "UPDATE handoffs SET from_key = @new WHERE from_key = @old", ct, ("@new", newKey), ("@old", oldKey));
             await tx.CommitAsync(ct);
         }
         catch (MySqlException e)
