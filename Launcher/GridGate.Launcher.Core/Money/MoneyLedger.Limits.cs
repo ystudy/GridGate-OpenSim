@@ -179,13 +179,14 @@ public sealed partial class MoneyLedger
 
     /// <summary>
     /// Region spending over the last 24 hours from entries matching <paramref name="who"/>. A hold counts when made and stops
-    /// counting once it is returned, however late in the window the return comes.
+    /// counting once it is returned, however late in the window the return comes. Whether it was returned is read from the
+    /// hold's own row, by its primary key; the return's entry is written in the same transaction as that state.
     /// </summary>
     private Task<long> SpentAsync(MySqlConnection conn, MySqlTransaction? tx, string who, object id, CancellationToken ct) =>
         ScalarAsync(conn, tx, $"""
             SELECT COALESCE(SUM(e.amount), 0) FROM entries e
             WHERE {who} AND e.type IN ({SpendTypeList}) AND e.at > @since
-              AND NOT (e.type = '{EntryType.Hold}' AND EXISTS (SELECT 1 FROM entries r WHERE r.hold_id = e.hold_id AND r.type = '{EntryType.HoldReturned}'))
+              AND NOT (e.type = '{EntryType.Hold}' AND EXISTS (SELECT 1 FROM holds h WHERE h.id = e.hold_id AND h.state = 'returned'))
             """, ct, ("@id", id), ("@since", Now - LimitWindow));
 
     private Task<long> PersonSpentAsync(MySqlConnection conn, MySqlTransaction? tx, long accountId, CancellationToken ct) =>
