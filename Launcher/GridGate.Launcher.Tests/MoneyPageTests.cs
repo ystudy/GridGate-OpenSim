@@ -1054,6 +1054,27 @@ public sealed class MoneyPageTests
         Assert.Null(doc.QuerySelector("#money-alert-9")); // notices are for the Money page
     }
 
+    /// <summary>
+    /// Robust's connection breaks while the dashboard names who a disagreement is about: the person is named by id, as for
+    /// any other Robust failure, and the dashboard still shows.
+    /// </summary>
+    [Fact]
+    public async Task A_broken_Robust_connection_names_the_person_by_id_on_the_dashboard()
+    {
+        var region = Guid.Parse("e0000000-0000-0000-0000-0000000000e1");
+        var alerts = new FakeAlerts();
+        var at = new DateTime(2026, 11, 15, 12, 0, 0, DateTimeKind.Utc);
+        alerts.Open.Add(new MoneyAlert(10, AlertKind.UnhandedArrival, AlertLevel.Warning, "p2", region, Ann, 1, at, at, OtherKeyId: "p1"));
+        await using var f = Make(new FakeBooks(), alerts: alerts);
+        f.Services.GetRequiredService<MoneyStatus>().ServiceRunning = true;
+        var c = await SignedInAsync(f);
+        f.Robust.OnFindAccountById = () => throw new IOException("The connection was reset.");
+
+        var doc = await PageAsync(c, "/dashboard");
+
+        Assert.Contains($"disagree about where avatar {Ann} is", doc.QuerySelector("#money-alert-10")!.TextContent);
+    }
+
     [Fact]
     public async Task Dashboard_shows_service_failure()
     {

@@ -59,7 +59,7 @@ public sealed class MoneyNotices(MoneyGate gate, IMoneyBooks books, MoneyStatus 
         {
             if ((await robust.FindAccountByIdAsync(id, ct))?.FullName() is { } name) return name;
         }
-        catch (Exception e) when ((e is HttpRequestException or InvalidDataException or OperationCanceledException) && !ct.IsCancellationRequested)
+        catch (Exception e) when (RobustFailure.IsUnreachable(e, ct))
         {
             // Named by id instead.
         }
