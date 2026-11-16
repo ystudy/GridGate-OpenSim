@@ -138,17 +138,44 @@ public sealed class MoneyAlertsTests(MoneyMariaDb maria) : IClassFixture<MoneyMa
     }
 
     [Fact]
-    public async Task A_conflict_then_repeated_claims_keeps_both_servers_and_counts_as_repeated()
+    public async Task Three_disagreements_in_a_day_are_never_repeated_claims()
+    {
+        // Each one is a warning naming both servers, but either server may be the honest one: none counts as the claimer's
+        // own repeated claims, so none offers to remove its server.
+        var (_, alerts) = await StartAsync();
+
+        await alerts.UnhandedArrivalAsync("p2", R2, Ann, "p1", Ct);
+        _clock.Advance(TimeSpan.FromHours(1));
+        await alerts.UnhandedArrivalAsync("p2", R2, Bob, "p1", Ct);
+        await alerts.UnhandedArrivalAsync("p2", R1, Ann, "p1", Ct);
+
+        var open = await alerts.OpenAsync(Ct);
+        Assert.All(open, a => Assert.Equal((AlertLevel.Warning, "p1", false), (a.Level, a.OtherKeyId, a.Repeated)));
+        Assert.Equal(3, open.Sum(a => a.Count));
+    }
+
+    [Fact]
+    public async Task Two_disagreements_and_two_claims_in_a_day_are_not_repeated_claims()
     {
         var (_, alerts) = await StartAsync();
 
         await alerts.UnhandedArrivalAsync("p2", R2, Ann, "p1", Ct);
         await alerts.UnhandedArrivalAsync("p2", R2, Bob, null, Ct);
-        Assert.False((await Single(alerts)).Repeated);
-        await alerts.UnhandedArrivalAsync("p2", R2, Bob, "p2", Ct); // the same key elsewhere: no other server
+        await alerts.UnhandedArrivalAsync("p2", R2, Bob, "p1", Ct);
+        await alerts.UnhandedArrivalAsync("p2", R2, Ann, "p2", Ct); // the same key elsewhere: no other server, a plain claim
 
-        var a = await Single(alerts);
-        Assert.Equal((AlertLevel.Warning, 3, "p1", true), (a.Level, a.Count, a.OtherKeyId, a.Repeated));
+        var open = await alerts.OpenAsync(Ct);
+        Assert.DoesNotContain(open, a => a.Repeated);
+        // The disagreements keep a row of their own, a warning naming both servers; the plain claims stay a notice.
+        var disagreement = open.Single(a => a.OtherKeyId is not null);
+        Assert.Equal((AlertLevel.Warning, 2, "p1"), (disagreement.Level, disagreement.Count, disagreement.OtherKeyId));
+        var claims = open.Single(a => a.OtherKeyId is null);
+        Assert.Equal((AlertLevel.Notice, 2), (claims.Level, claims.Count));
+
+        // A third plain claim within the day is repeated, whatever disagreements came between.
+        await alerts.UnhandedArrivalAsync("p2", R2, Bob, null, Ct);
+        var third = (await alerts.OpenAsync(Ct)).Single(a => a.OtherKeyId is null);
+        Assert.Equal((AlertLevel.Warning, 3, true), (third.Level, third.Count, third.Repeated));
     }
 
     [Fact]
@@ -156,11 +183,15 @@ public sealed class MoneyAlertsTests(MoneyMariaDb maria) : IClassFixture<MoneyMa
     {
         var (_, alerts) = await StartAsync();
 
-        await alerts.UnhandedArrivalAsync("p2", R2, Ann, "p1", Ct);
-        await alerts.UnhandedArrivalAsync("p2", R2, Bob, null, Ct);
+        await alerts.UnhandedArrivalAsync("p1", R2, Ann, null, Ct);
+        await alerts.UnhandedArrivalAsync("p1", R2, Bob, null, Ct);
+        _clock.Advance(TimeSpan.FromHours(1));
+        await alerts.UnhandedArrivalAsync("p1", R1, Bob, null, Ct); // the key's third in a day: R1's row is a warning
+        _clock.Advance(TimeSpan.FromHours(23.5));
+        await alerts.UnhandedArrivalAsync("p1", R1, Ann, null, Ct); // R2's two are past the day: this one alone calls for a notice
 
-        var a = await Single(alerts);
-        Assert.Equal((AlertLevel.Warning, 2, Bob), (a.Level, a.Count, a.AgentId));
+        var a = (await alerts.OpenAsync(Ct)).Single(r => r.RegionId == R1);
+        Assert.Equal((AlertLevel.Warning, 2, Ann), (a.Level, a.Count, a.AgentId));
     }
 
     [Fact]

@@ -39,8 +39,9 @@ public interface IMoneyAlerts
 
 /// <summary>
 /// The owner's money alerts, in the money database's <c>alerts</c> table. Each kind is grouped, per
-/// <see cref="Window"/> from a row's first time, into one row that counts up: an unhanded arrival per key and region, a
-/// key's limit per key, a person's limit per person. A moved region has one open row per region until it is cleared,
+/// <see cref="Window"/> from a row's first time, into one row that counts up: an unhanded arrival per key and region (a
+/// disagreement with another key on a row apart from plain claims), a key's limit per key, a person's limit per person.
+/// A moved region has one open row per region until it is cleared,
 /// counting moves seen (another server listing it), not requests. A row's level only rises, from notice to warning. The
 /// audit log gets a line when a row opens (for a person's limit, when it appears) and when it becomes a warning, not on
 /// every count.
@@ -85,17 +86,22 @@ public sealed class MoneyAlerts(Func<CancellationToken, Task<MySqlConnection>> o
     /// handoff. A notice, since a handoff lost despite the retries looks the same; a warning from the <see cref="WarningAt"/>th
     /// from one key within <see cref="Window"/> (repeated claims), or at once when the person's verified place
     /// (<paramref name="verifiedKeyElsewhere"/>) is another key's: then the two keys disagree, and either may be the wrong one.
+    /// A disagreement is never counted as one of the claimer's repeated claims, and is kept on rows of its own, apart from
+    /// the plain claims, so a row's count and its "repeated" mark say what they are about.
     /// </summary>
     public Task UnhandedArrivalAsync(string keyId, Guid regionId, Guid agentId, string? verifiedKeyElsewhere, CancellationToken ct) =>
         RaiseAsync(AlertKind.UnhandedArrival, keyId, regionId, agentId, async (conn, tx) =>
         {
             var other = verifiedKeyElsewhere is not null && verifiedKeyElsewhere != keyId ? verifiedKeyElsewhere : null;
-            // Across the key's regions, cleared rows too: clearing a notice doesn't reset the day's count. A row seen within
-            // the window counts whole, so the count rolls; it may reach a little past a day, which fails safe.
-            var before = await ScalarAsync(conn, tx, "SELECT COALESCE(SUM(count), 0) FROM alerts WHERE kind = @kind AND key_id = @key AND last_at > @since", ct,
-                ("@kind", nameof(AlertKind.UnhandedArrival)), ("@key", keyId), ("@since", Now - Window));
+            // A disagreement raises its own warning naming both keys, and the honest one may be either of them.
+            if (other is not null) return new Level(AlertLevel.Warning, Repeated: false, other);
+            // The key's plain claims across its regions, cleared rows too: clearing a notice doesn't reset the day's count. A
+            // row seen within the window counts whole, so the count rolls; it may reach a little past a day, which fails safe.
+            var before = await ScalarAsync(conn, tx, """
+                SELECT COALESCE(SUM(count), 0) FROM alerts WHERE kind = @kind AND key_id = @key AND other_key_id IS NULL AND last_at > @since
+                """, ct, ("@kind", nameof(AlertKind.UnhandedArrival)), ("@key", keyId), ("@since", Now - Window));
             var repeated = before + 1 >= WarningAt;
-            return new Level(repeated || other is not null ? AlertLevel.Warning : AlertLevel.Notice, repeated, other);
+            return new Level(repeated ? AlertLevel.Warning : AlertLevel.Notice, repeated);
         }, ct);
 
     /// <summary><paramref name="keyId"/> reached its daily region limit or its daily payout limit: a warning.</summary>
@@ -255,7 +261,8 @@ public sealed class MoneyAlerts(Func<CancellationToken, Task<MySqlConnection>> o
     /// <summary>The columns one kind's rows are grouped by (besides the kind and the window).</summary>
     private static string GroupOf(AlertKind kind) => kind switch
     {
-        AlertKind.UnhandedArrival => "key_id = @key AND region_id = @region",
+        // Disagreements (another key named) and plain claims keep rows apart.
+        AlertKind.UnhandedArrival => "key_id = @key AND region_id = @region AND (other_key_id IS NULL) = (@other IS NULL)",
         AlertKind.KeyLimitReached => "key_id = @key",
         AlertKind.RegionMoved => "region_id = @region",
         AlertKind.PersonLimitRepeated => "agent_id = @agent",
