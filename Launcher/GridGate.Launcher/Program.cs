@@ -424,6 +424,8 @@ builder.Services.AddSingleton<MoneyStatus>();
 builder.Services.AddSingleton(sp => new MoneyPairing(sp.GetRequiredService<TimeProvider>()));
 builder.Services.AddSingleton<IMoneyPairClient>(sp => new MoneyPairClient(sp.GetRequiredService<IGridJoinClient>(), sp.GetRequiredService<TimeProvider>()));
 builder.Services.AddSingleton(sp => new RegionHosts(MoneyConnections.Robust(sp.GetRequiredService<Func<LauncherSettings>>())));
+builder.Services.AddSingleton(sp => new RegionPins(MoneyConnections.Money(sp.GetRequiredService<Func<LauncherSettings>>()),
+    sp.GetRequiredService<RegionHosts>(), sp.GetRequiredService<TimeProvider>()));
 builder.Services.AddSingleton<ISecureSessionCheck>(sp => sp.GetRequiredService<PresenceCheck>());
 builder.Services.AddSingleton(sp => new EconomyLimits(sp.GetRequiredService<TimeProvider>()));
 builder.Services.AddSingleton<EconomyHelper>();
@@ -448,7 +450,7 @@ builder.Services.AddSingleton(sp =>
         () => MoneyCertificate.LoadOrCreate(Path.Combine(paths.Security, MoneyCertificate.FileName), time),
         sp.GetRequiredService<MoneyAuthFailures>(), sp.GetRequiredService<ILoggerFactory>(), sp.GetRequiredService<MoneyStatus>(),
         sp.GetRequiredService<MoneyPairing>(), change => sp.GetRequiredService<IGridController>().UpdateSettings(change, writeConfig: false),
-        sp.GetRequiredService<RegionHosts>());
+        sp.GetRequiredService<RegionPins>());
 });
 builder.Services.AddHostedService(sp => sp.GetRequiredService<MoneyServiceHost>());
 builder.Services.AddHostedService(sp => new MoneyMaintenance(sp.GetRequiredService<MoneyLedger>(), sp.GetRequiredService<MoneyGate>().ServiceMode,

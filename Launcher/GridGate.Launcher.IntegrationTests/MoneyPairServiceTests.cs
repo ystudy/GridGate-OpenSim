@@ -77,7 +77,7 @@ public sealed class MoneyPairServiceTests(MoneyMariaDb maria) : IClassFixture<Mo
         _host = new MoneyServiceHost(ledger, presence, () => _settings, () => _mode, () => cert,
             new MoneyAuthFailures(time, loggers.CreateLogger<MoneyAuthFailures>()), loggers, new MoneyStatus(), _pairing,
             change => _saveFails ? throw new IOException("disk full") : _settings = change(_settings),
-            new RegionHosts(MoneyConnections.Robust(() => dbSettings)));
+            new RegionPins(MoneyConnections.Money(() => dbSettings), new RegionHosts(MoneyConnections.Robust(() => dbSettings)), TimeProvider.System));
         await _host.StartAsync(Ct);
         _http = new HttpClient(new SocketsHttpHandler
         {
@@ -341,6 +341,42 @@ public sealed class MoneyPairServiceTests(MoneyMariaDb maria) : IClassFixture<Mo
 
         Assert.Equal("refused", (string?)body!["code"]);
         Assert.Null(_settings.Money.PairedServers);
+    }
+
+    [Fact]
+    public async Task Transfer_in_a_hijacked_region_is_wrong_region()
+    {
+        // L-4: server A's program registers B's region id at A's address. B's region stays B's; A's key gets nothing there.
+        var db = await StartAsync();
+        const string hostA = "192.168.1.40";
+        await db.AddPresence(A, Theirs, Session, Secure);
+        var keyB = await PairAsync(ServerHost);
+        var keyA = await PairAsync(hostA);
+        Assert.Equal(1, (await Post("health", new { }, keyB)).Body!["regions"]!.GetValue<int>()); // first sight pins Theirs to B
+        await db.Sql($"UPDATE `robust`.`regions` SET serverIP = '{hostA}' WHERE uuid = '{Theirs}'");
+        var transfer = new { txnId = Guid.NewGuid(), type = "pay_avatar", from = Who(A), to = new { agentId = Guid.NewGuid(), home = "" }, amount = 1, regionId = Theirs };
+
+        Assert.Equal("wrong_region", (string?)(await Post("transfer", transfer, keyA)).Body!["code"]);
+        Assert.Equal("wrong_region", (string?)(await Post("balance", Who(A), keyA)).Body!["code"]);
+        Assert.Equal("wrong_region", (string?)(await Post("balance", Who(A), keyB)).Body!["code"]); // listed elsewhere: B doesn't cover it now either
+        Assert.Equal(0, (await Post("health", new { }, keyA)).Body!["regions"]!.GetValue<int>());
+    }
+
+    [Fact]
+    public async Task Re_pairing_keeps_pins_only_for_the_same_machine()
+    {
+        var db = await StartAsync();
+        await db.AddPresence(A, Theirs, Session, Secure);
+        var first = await PairAsync(machineId: "rs-1");
+        Assert.Equal(1, (await Post("health", new { }, first)).Body!["regions"]!.GetValue<int>());
+
+        var same = await PairAsync(machineId: "rs-1");
+        Assert.Equal(1, (await Post("health", new { }, same)).Body!["regions"]!.GetValue<int>());
+        Assert.Equal("ok", (string?)(await Post("balance", Who(A), same)).Body!["code"]);
+
+        var other = await PairAsync(machineId: "rs-2"); // another computer at the same address and first port
+        Assert.Equal(0, (await Post("health", new { }, other)).Body!["regions"]!.GetValue<int>());
+        Assert.Equal("wrong_region", (string?)(await Post("balance", Who(A), other)).Body!["code"]);
     }
 
     [Fact]

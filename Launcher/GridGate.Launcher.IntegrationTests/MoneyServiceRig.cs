@@ -93,7 +93,7 @@ internal sealed class MoneyServiceRig : IAsyncDisposable
         Pairing = new MoneyPairing(time);
         _host = new MoneyServiceHost(Ledger, presence, () => Settings, () => MoneyMode.Play, () => cert,
             new MoneyAuthFailures(FailureClock, loggers.CreateLogger<MoneyAuthFailures>()), loggers, new MoneyStatus(), Pairing,
-            change => Settings = change(Settings), new RegionHosts(MoneyConnections.Robust(() => dbSettings)));
+            change => Settings = change(Settings), new RegionPins(MoneyConnections.Money(() => dbSettings), new RegionHosts(MoneyConnections.Robust(() => dbSettings)), TimeProvider.System));
         await _host.StartAsync(Ct);
         _http = new HttpClient(new SocketsHttpHandler
         {

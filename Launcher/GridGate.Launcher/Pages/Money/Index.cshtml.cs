@@ -19,7 +19,7 @@ namespace GridGate.Launcher.Pages.Money;
 /// and the owner may change anything (each POST checks), and every change is audited.
 /// </summary>
 public sealed class IndexModel(IGridController grid, MoneyGate gate, IMoneyBooks books, MoneyStatus status, AuditLog audit, IRobustClient robust,
-    IPeopleDirectory people, IVisitorDirectory visitors, MoneyPairing pairing, TimeProvider time)
+    IPeopleDirectory people, IVisitorDirectory visitors, MoneyPairing pairing, RegionPins pins, TimeProvider time)
     : PageModel
 {
     public IReadOnlyList<MoneyMode> Offered { get; private set; } = [];
@@ -175,6 +175,15 @@ public sealed class IndexModel(IGridController grid, MoneyGate gate, IMoneyBooks
                 writeConfig: false);
             audit.Write(User, Ip, "money-pairing-remove", LogText.Clean(gone.Host), "ok");
             Notice = "Removed. Its regions can't take payments until it's paired again.";
+            try
+            {
+                await pins.RemoveServerAsync(server, ct);
+            }
+            catch (MoneyUnavailableException)
+            {
+                // The key is gone already, which ends its coverage; leftover pins only make its regions "moved" later.
+                Notice += " The money database didn't answer, so its region pins were kept.";
+            }
         }
         await ShowAsync(ct);
         return Page();

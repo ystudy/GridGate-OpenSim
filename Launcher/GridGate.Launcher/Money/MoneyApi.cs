@@ -44,12 +44,12 @@ internal static class MoneyApi
     private sealed class BadRequest : Exception;
 
     /// <summary>
-    /// What the endpoints need. <see cref="Pairing"/>, <see cref="Update"/> and <see cref="Hosts"/> are for Region Servers
+    /// What the endpoints need. <see cref="Pairing"/>, <see cref="Update"/> and <see cref="Pins"/> are for Region Servers
     /// (money plan 3): without them nobody can pair and a server key gets <c>unavailable</c>. <see cref="Fingerprint"/> is
     /// the certificate this listener serves.
     /// </summary>
     internal sealed record Context(MoneyLedger Ledger, PresenceCheck Presence, Func<LauncherSettings> Settings, MoneyAuthFailures Failures, ILogger Log,
-        MoneyPairing? Pairing = null, Func<Func<LauncherSettings, LauncherSettings>, LauncherSettings>? Update = null, RegionHosts? Hosts = null,
+        MoneyPairing? Pairing = null, Func<Func<LauncherSettings, LauncherSettings>, LauncherSettings>? Update = null, RegionPins? Pins = null,
         string Fingerprint = "", Func<MoneyMode>? Mode = null);
 
     public static void Map(IEndpointRouteBuilder app, Context c)
@@ -138,9 +138,13 @@ internal static class MoneyApi
                     bool Replaced(PairedServer p) =>
                         (machine is not null && string.Equals(p.MachineId, machine, StringComparison.Ordinal))
                         || (string.Equals(p.Host, host, StringComparison.OrdinalIgnoreCase) && p.FirstPort == firstPort);
-                    var replacing = c.Settings().Money.PairedServers?.Any(Replaced) == true;
+                    var replaced = (c.Settings().Money.PairedServers ?? []).Where(Replaced).ToList();
+                    var replacing = replaced.Count > 0;
                     try
                     {
+                        // Pins follow the same machine (money design §8.3); a different machine at that address gets none.
+                        if (c.Pins is { } pins)
+                            foreach (var old in replaced) await pins.CarryOverAsync(old, server, ct);
                         update(s => s with
                         {
                             Money = s.Money with
@@ -232,14 +236,16 @@ internal static class MoneyApi
         }
         try
         {
-            // A paired Region Server's key covers the regions Robust lists at its address, never this computer's own.
-            if (grant.ServerHost is { } serverHost)
+            // A paired Region Server's key covers the regions Robust lists at its address that are pinned to it (money design
+            // §8.3), never this computer's own.
+            if (grant.ServerHost is not null)
             {
-                if (c.Hosts is null) throw new MoneyUnavailableException(new InvalidOperationException("no region lookup"));
+                if (c.Pins is null) throw new MoneyUnavailableException(new InvalidOperationException("no region pins"));
                 var own = c.Settings().Regions.Select(r => r.Uuid).ToHashSet();
+                var server = c.Settings().Money.PairedServers?.FirstOrDefault(p => "server:" + p.Id.ToString("N") == grant.KeyId);
                 grant = grant with
                 {
-                    Regions = (await c.Hosts.RegionsAtAsync(serverHost, grant.FromPort, grant.ToPort, ct)).Where(r => !own.Contains(r)).ToHashSet(),
+                    Regions = server is null ? new HashSet<Guid>() : await c.Pins.CoveredAsync(server, grant.FromPort, grant.ToPort, own, ct),
                 };
             }
             answer = await endpoint(http, grant, ct);
