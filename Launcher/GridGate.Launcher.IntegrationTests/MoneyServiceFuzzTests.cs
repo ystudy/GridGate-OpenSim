@@ -84,10 +84,11 @@ public sealed class MoneyServiceFuzzTests(MoneyMariaDb maria) : IClassFixture<Mo
         ["hold/return"] = hold => new JsonObject { ["txnId"] = Guid.NewGuid().ToString(), ["holdId"] = hold },
         ["economy"] = _ => new JsonObject(),
         ["health"] = _ => new JsonObject(),
-        // A is already verified at Here, so an arrival there is answered at once and a change to it can't wait for a handoff.
+        // A handoff from Here to Here: A stays in p1's region, handed there, and the arrival there verifies A again at once, so
+        // a change to it can't wait for a handoff.
         ["handoff"] = _ => new JsonObject
         {
-            ["id"] = Guid.NewGuid().ToString(), ["sessionId"] = SessionA.ToString(), ["fromRegion"] = Here.ToString(), ["toRegion"] = There.ToString(), ["kind"] = "teleport",
+            ["id"] = Guid.NewGuid().ToString(), ["sessionId"] = SessionA.ToString(), ["fromRegion"] = Here.ToString(), ["toRegion"] = Here.ToString(), ["kind"] = "teleport",
         },
         ["handoff/cancel"] = _ => new JsonObject { ["sessionId"] = SessionA.ToString(), ["fromRegion"] = Here.ToString() },
         ["arrived"] = _ => new JsonObject

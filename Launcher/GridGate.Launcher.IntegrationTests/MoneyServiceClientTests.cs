@@ -111,7 +111,7 @@ public sealed class MoneyServiceClientTests(MoneyMariaDb maria) : IClassFixture<
 
     /// <summary>
     /// The module's health, handoff and arrival, as the client sends them, move A from Here to There, so
-    /// a fee is charged There and no longer Here. A cancel, a crossing and a handoff to another grid are accepted too.
+    /// a fee is charged There and no longer Here. A crossing back, a handoff to another grid and its cancel are accepted too.
     /// </summary>
     [Fact]
     public async Task Client_handoff_and_arrival_place_an_avatar_on_the_real_service()
@@ -129,9 +129,13 @@ public sealed class MoneyServiceClientTests(MoneyMariaDb maria) : IClassFixture<
         Assert.Equal("wrong_region", (await p1.ChargeAsync(Guid.NewGuid(), "upload_fee", ClientA, 3, null, Here, Ct)).Code);
 
         Assert.Equal("ok", (await p2.HandoffAsync(Guid.NewGuid(), SessionA, There, Here, "crossing", Ct)).Code);
-        Assert.Equal("ok", (await p2.CancelHandoffAsync(SessionA, There, Ct)).Code);
-        Assert.Equal("ok", (await p2.HandoffAsync(Guid.NewGuid(), SessionA, There, Guid.NewGuid(), "other_grid", Ct)).Code);
-        Assert.Equal("unverified_avatar", (await p2.ChargeAsync(Guid.NewGuid(), "upload_fee", ClientA, 3, null, There, Ct)).Code);
+        Assert.Equal("ok", (await p1.ArrivedAsync(Guid.NewGuid(), SessionA, A, Here, Ct)).Code);
+        // A teleport to another grid that fails is taken back; one that goes through leaves nothing to charge.
+        Assert.Equal("ok", (await p1.HandoffAsync(Guid.NewGuid(), SessionA, Here, Guid.NewGuid(), "other_grid", Ct)).Code);
+        Assert.Equal("ok", (await p1.CancelHandoffAsync(SessionA, Here, Ct)).Code);
+        Assert.Equal("ok", (await p1.ChargeAsync(Guid.NewGuid(), "upload_fee", ClientA, 3, null, Here, Ct)).Code);
+        Assert.Equal("ok", (await p1.HandoffAsync(Guid.NewGuid(), SessionA, Here, Guid.NewGuid(), "other_grid", Ct)).Code);
+        Assert.Equal("unverified_avatar", (await p1.ChargeAsync(Guid.NewGuid(), "upload_fee", ClientA, 3, null, Here, Ct)).Code);
     }
 
     [Fact]
