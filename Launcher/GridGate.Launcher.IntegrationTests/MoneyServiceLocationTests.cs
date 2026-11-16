@@ -175,6 +175,22 @@ public sealed class MoneyServiceLocationTests(MoneyMariaDb maria) : IClassFixtur
         await rig.AssertBooksSoundAsync();
     }
 
+    /// <summary>
+    /// Here moves from program p1 to program p2, whose module checks in with it. A was placed at Here by p1's key: p2's key
+    /// can't charge them there, since it never placed them.
+    /// </summary>
+    [Fact]
+    public async Task A_region_moved_to_another_program_cannot_charge_who_the_old_one_placed()
+    {
+        var rig = await StartAsync();
+        rig.Settings = rig.Settings with { Regions = [.. rig.Settings.Regions.Select(r => r.Uuid == Here ? r with { Instance = "p2" } : r)] };
+        var health = await rig.Post("health", new { protocol = RegionVerification.HandoffProtocol, regions = new[] { Here, There } }, Key2);
+        Assert.True((bool?)health.Body?["ok"], health.Raw);
+
+        await AssertRefused(rig, "transfer", Body("transfer", WhoA(), Here), "unverified_avatar", Key2);
+        await AssertRefused(rig, "charge", Body("charge", WhoA(), Here), "unverified_avatar", Key2);
+    }
+
     [Fact]
     public async Task Offline_vendor_owner_can_be_paid()
     {

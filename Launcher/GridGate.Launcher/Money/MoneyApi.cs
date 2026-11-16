@@ -395,14 +395,17 @@ internal static class MoneyApi
     /// Null when coins may leave <paramref name="w"/> in <paramref name="regionId"/>; otherwise the
     /// refusal's code. In order: logged in with both session ids (Presence, which only Robust writes); verified somewhere
     /// by the service's own record, never Presence's region; that place is one of the key's regions and the one the request
-    /// names; and that region is verified.
+    /// names; this key placed them there; and that region is verified.
     /// </summary>
     private static async Task<string?> WithPayer(Context c, Who w, RegionKeyGrant grant, Guid regionId, CancellationToken ct)
     {
         var (locations, verification) = (Locations(c), Verification(c));
         if (await LoggedIn(c, w, ct) is { } refusal) return refusal;
-        if (await locations.WhereAsync(Need(w.SessionId), ct) is not { State: LocationState.Verified, RegionId: { } at }) return "unverified_avatar";
+        if (await locations.WhereAsync(Need(w.SessionId), ct) is not { State: LocationState.Verified, RegionId: { } at } place) return "unverified_avatar";
         if (!grant.Regions.Contains(at) || at != regionId) return "wrong_region";
+        // A region can come to another key (a server removed and another paired in its place, an approved move, a region
+        // moved between programs): a key charges only people it placed, never someone another key vouched for.
+        if (place.KeyId != grant.KeyId) return "unverified_avatar";
         return await verification.IsVerifiedAsync(grant, regionId, ct) ? null : "unverified_region";
     }
 
