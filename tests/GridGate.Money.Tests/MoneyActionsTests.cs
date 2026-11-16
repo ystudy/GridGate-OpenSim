@@ -591,6 +591,30 @@ public sealed class MoneyActionsTests
     }
 
     [Fact]
+    public async Task A_refusal_after_a_lost_attempt_is_still_unknown()
+    {
+        // The lost attempt may have gone through: the refusal of the retry doesn't prove it didn't.
+        _service.Queue("transfer", MoneyAnswer.NoAnswer, new MoneyAnswer("wrong_region"));
+
+        await _actions.PayObjectAsync(P, Me, Part(), Part(), ThemWho, 10);
+
+        Assert.Contains(_service.Of("transfer").First().Txn.ToString(), Assert.Single(_view.Errors));
+        Assert.Equal(MoneyRules.CheckingText, Assert.Single(_view.Told).Text);
+        Assert.Empty(_view.Paid);
+    }
+
+    [Fact]
+    public void A_pass_refused_after_a_lost_attempt_is_still_unknown()
+    {
+        _service.Queue("transfer", MoneyAnswer.NoAnswer, new MoneyAnswer("wrong_region"));
+
+        Assert.False(_actions.MovePass(P, ThemWho, 5));
+
+        Assert.Contains(_service.Of("transfer").First().Txn.ToString(), Assert.Single(_view.Errors));
+        Assert.Equal(MoneyRules.CheckingText, Assert.Single(_view.Told).Text);
+    }
+
+    [Fact]
     public void Actions_type_lives_in_the_module()
     {
         Assert.Equal("GridGateMoney", typeof(MoneyActions).Assembly.GetName().Name);
