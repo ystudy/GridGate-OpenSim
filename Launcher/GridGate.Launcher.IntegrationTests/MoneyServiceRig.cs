@@ -172,12 +172,14 @@ internal sealed class MoneyServiceRig : IAsyncDisposable
     /// <summary>
     /// Places <paramref name="session"/> at <paramref name="region"/> as the service learns it (money design §8.4): Robust
     /// writes a start, and the region's module reports the arrival with its key. Verified once that module has checked in.
+    /// For a region or session that isn't the rig's own, pass the <paramref name="key"/> that covers the region and the
+    /// session's <paramref name="agent"/>.
     /// </summary>
-    public async Task<string> Place(Guid session, Guid region, string source = "login")
+    public async Task<string> Place(Guid session, Guid region, string source = "login", string? key = null, Guid? agent = null)
     {
-        var agent = AgentOf(session);
-        await Db.AddSessionStart(session, agent, region, source);
-        var code = CodeOf(await Arrived(KeyOf(region), session, agent, region));
+        var who = agent ?? AgentOf(session);
+        await Db.AddSessionStart(session, who, region, source);
+        var code = CodeOf(await Arrived(key ?? KeyOf(region), session, who, region));
         Assert.True(code is "ok" or "unverified_avatar", $"placing at {region}: {code}");
         return code;
     }
