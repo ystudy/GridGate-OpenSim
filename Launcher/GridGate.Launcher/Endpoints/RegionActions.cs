@@ -174,7 +174,7 @@ public sealed class RegionActions(IGridController grid, BackgroundWork backgroun
                 }
                 catch (Exception e)
                 {
-                    log.LogError(e, "Regions: restart of {Region} failed: {Message}", first.Name, e.Message);
+                    log.LogError(e, "Regions: restart of {Region} failed: {Message}. Restart it by hand so it loads the new settings.", first.Name, e.Message);
                 }
             }
         });

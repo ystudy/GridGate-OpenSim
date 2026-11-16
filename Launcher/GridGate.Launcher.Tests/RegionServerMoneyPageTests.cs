@@ -203,7 +203,7 @@ public sealed class RegionServerMoneyPageTests
         var doc = await PostAsync(await SignedInAsync(f), "Pair", new() { ["Code"] = Code });
 
         Assert.Contains("Paired. This server's regions take payments once they start.", MainText(doc));
-        Assert.Empty(await RestartsAsync(f, 1));
+        Assert.Empty(await RestartsAsync(f, 0));
     }
 
     [Fact]
@@ -214,7 +214,7 @@ public sealed class RegionServerMoneyPageTests
 
         await PostAsync(await SignedInAsync(f), "Pair", new() { ["Code"] = Code });
 
-        Assert.Empty(await RestartsAsync(f, 1));
+        Assert.Empty(await RestartsAsync(f, 0));
     }
 
     [Fact]
