@@ -126,7 +126,7 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
         {
             _scenes.Add(scene);
             Places ??= new PlaceReporter(_client!, TimeProvider.System, text => Log.Warn("[GRIDGATE MONEY]: " + text));
-            _healthTimer ??= TimeProvider.System.CreateTimer(_ => ReportHealth(), null, HealthEvery, HealthEvery);
+            _healthTimer ??= TimeProvider.System.CreateTimer(_ => TimedHealth(), null, HealthEvery, HealthEvery);
         }
         var regionId = scene.RegionInfo.RegionID;
         _actions[regionId] = new MoneyActions(_client!, regionId.Guid, KnownEconomy, new View(this));
@@ -137,6 +137,9 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
         scene.EventManager.OnTeleportStart += OnTeleportStart;
         scene.EventManager.OnTeleportFail += OnTeleportFail;
         scene.EventManager.OnCrossAgentToNewRegion += OnCrossAgentToNewRegion;
+        // Reported now and again once the region has started. OpenSim adds the region before registering it with the grid,
+        // so a Region Server's key doesn't cover it yet and the service ignores it in this first report (ruling 28).
+        scene.EventManager.OnRegionStarted += OnRegionStarted;
         ReportHealth();
     }
 
@@ -161,8 +164,11 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
         scene.EventManager.OnTeleportStart -= OnTeleportStart;
         scene.EventManager.OnTeleportFail -= OnTeleportFail;
         scene.EventManager.OnCrossAgentToNewRegion -= OnCrossAgentToNewRegion;
+        scene.EventManager.OnRegionStarted -= OnRegionStarted;
         lock (_scenes) _scenes.Remove(scene);
         _actions.TryRemove(scene.RegionInfo.RegionID, out _);
+        // At once, so the service stops counting the removed region as run here.
+        ReportHealth();
     }
 
     public void Close()
@@ -180,6 +186,24 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
         List<Guid> regions;
         lock (_scenes) regions = _scenes.Select(s => s.RegionInfo.RegionID.Guid).ToList();
         Places?.Health(regions);
+    }
+
+    /// <summary>The health timer's callback, on a pool thread nobody waits for: a failure (say, at shutdown) is logged by type only.</summary>
+    private void TimedHealth()
+    {
+        try
+        {
+            ReportHealth();
+        }
+        catch (Exception e)
+        {
+            Log.Warn($"[GRIDGATE MONEY]: The health report failed with {e.GetType().Name}.");
+        }
+    }
+
+    private void OnRegionStarted(Scene scene)
+    {
+        if (Enabled) ReportHealth();
     }
 
     private void OnMakeRootAgent(ScenePresence sp) => Places?.Arrived(sp);

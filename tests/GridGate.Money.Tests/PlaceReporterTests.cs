@@ -298,6 +298,97 @@ public sealed class PlaceReporterTests
     }
 
     /// <summary>
+    /// Controller ruling 28: OpenSim adds a region before registering it with the grid, so a Region Server's key doesn't
+    /// cover it at that first report. Once the region has started it is reported again, with the region in it.
+    /// </summary>
+    [Fact]
+    public void Health_is_sent_again_when_the_region_has_started()
+    {
+        var region = Build();
+        region.FlushPlaces();
+        var before = region.Service.PlacesOf("health").Count();
+
+        region.Scene.EventManager.TriggerOnRegionStarted(region.Scene);
+        region.FlushPlaces();
+
+        var health = region.Service.PlacesOf("health").ToList();
+        Assert.Equal(before + 1, health.Count);
+        Assert.Equal(2, health[^1].Args[0]);
+        Assert.Equal(new[] { Region.Guid }, (Guid[])health[^1].Args[1]!);
+    }
+
+    /// <summary>Controller ruling 28: removing a region reports health at once without it, and its start no longer reports.</summary>
+    [Fact]
+    public void Health_is_sent_without_a_removed_region()
+    {
+        var region = Build();
+        region.FlushPlaces();
+
+        region.Module.RemoveRegion(region.Scene);
+        region.FlushPlaces();
+        var count = region.Service.PlacesOf("health").Count();
+        region.Scene.EventManager.TriggerOnRegionStarted(region.Scene);
+        region.FlushPlaces();
+
+        var health = region.Service.PlacesOf("health").ToList();
+        Assert.Empty((Guid[])health[^1].Args[1]!);
+        Assert.Equal(count, health.Count);
+    }
+
+    /// <summary>A time provider whose timers can't be made: something going wrong inside the reporter's loop, on demand.</summary>
+    private sealed class NoTimers : TimeProvider
+    {
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) =>
+            throw new InvalidOperationException("no timers here");
+    }
+
+    /// <summary>
+    /// Review M2: a failure inside the loop (here, waiting to retry) is logged by its type and the loop goes on, so the
+    /// program never silently stops reporting.
+    /// </summary>
+    [Fact]
+    public async Task The_loop_goes_on_after_a_failure()
+    {
+        var region = Build();
+        var client = region.Arrive(Buyer);
+        var service = new FakeMoneyService();
+        service.Queue("handoff", MoneyAnswer.Unavailable, MoneyAnswer.Unavailable);
+        var warnings = new List<string>();
+        using var places = new PlaceReporter(service, new NoTimers(), w => { lock (warnings) warnings.Add(w); });
+
+        foreach (var n in new[] { 1, 2, 3 })
+        {
+            places.TeleportStarting(client, Region.Guid, HeldReporter.To(n), false);
+            await places.FlushAsync().WaitAsync(TimeSpan.FromSeconds(15), TestContext.Current.CancellationToken);
+        }
+
+        Assert.Equal(3, service.PlacesOf("handoff").Count());
+        Assert.Equal(HeldReporter.To(3).RegionID.Guid, service.PlacesOf("handoff").Last().Args[2]);
+        // The same failure twice is logged once.
+        var warning = Assert.Single(warnings);
+        Assert.Contains(nameof(InvalidOperationException), warning);
+        Assert.DoesNotContain("no timers here", warning);
+    }
+
+    /// <summary>Review M1: once disposed, events and health queue nothing and throw nothing, and disposing again is harmless.</summary>
+    [Fact]
+    public void Reports_after_dispose_are_ignored()
+    {
+        var region = Build();
+        var client = region.Arrive(Buyer);
+        var service = new FakeMoneyService();
+        var places = new PlaceReporter(service, TimeProvider.System, _ => { });
+
+        places.Dispose();
+        places.TeleportStarting(client, Region.Guid, Elsewhere, false);
+        places.Health([Region.Guid]);
+        places.Dispose();
+
+        Assert.True(places.FlushAsync().IsCompleted);
+        Assert.Empty(service.Places);
+    }
+
+    /// <summary>
     /// A reporter on a fake clock whose service holds the first report it is sent (a teleport handoff to region 0) until
     /// released, so the reports queued after it wait.
     /// </summary>

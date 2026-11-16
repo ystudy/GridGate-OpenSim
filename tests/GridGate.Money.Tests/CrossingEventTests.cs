@@ -21,8 +21,12 @@ namespace GridGate.Money.Tests;
 [Collection(SceneCollection.Name)]
 public sealed class CrossingEventTests
 {
+    /// <remarks>
+    /// OpenSim sometimes tries a crossing again on a later update before the avatar is in transit (about one run in eight
+    /// here), firing the event again; the money module takes each as another handoff (controller ruling 27).
+    /// </remarks>
     [Fact]
-    public void Crossing_fires_OnCrossAgentToNewRegion_once_with_the_destination()
+    public void Crossing_fires_OnCrossAgentToNewRegion_with_the_destination_before_the_arrival()
     {
         // Run everything on one thread, as upstream's crossing tests do.
         Util.FireAndForgetMethod = FireAndForgetMethod.RegressionTest;
@@ -84,10 +88,15 @@ public sealed class CrossingEventTests
             ((TestClient)inB.ControllingClient).CompleteMovement();
             Assert.False(inB.IsChildAgent);
 
-            var crossing = Assert.Single(crossings);
-            Assert.Equal(sceneB.RegionInfo.RegionID, crossing.Region);
-            Assert.Equal(userId, crossing.Avatar);
-            Assert.Equal("cross,root-in-B", string.Join(",", order));
+            // At least once, every time with the destination, and all before the avatar is root in B.
+            Assert.NotEmpty(crossings);
+            Assert.All(crossings, c =>
+            {
+                Assert.Equal(sceneB.RegionInfo.RegionID, c.Region);
+                Assert.Equal(userId, c.Avatar);
+            });
+            Assert.Equal("root-in-B", order[^1]);
+            Assert.All(order.SkipLast(1), o => Assert.Equal("cross", o));
         }
         finally
         {

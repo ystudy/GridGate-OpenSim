@@ -34,6 +34,9 @@ internal sealed class PlaceReporter : IDisposable
     /// <summary>How long a report other than health stays worth sending: the service's handoff life (money design §8.4).</summary>
     public static readonly TimeSpan MaxAge = TimeSpan.FromMinutes(2);
 
+    // Real time, not the injected clock: the clock itself may be what failed.
+    private static readonly TimeSpan FailurePause = TimeSpan.FromMilliseconds(500);
+
     private static readonly TimeSpan[] Retries = [TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(9), TimeSpan.FromSeconds(17)];
 
     private readonly IMoneyService _service;
@@ -118,12 +121,20 @@ internal sealed class PlaceReporter : IDisposable
             _disposed = true;
         }
         _stop.Cancel();
-        // A report in flight is cancelled with the loop; give it a moment so the client isn't disposed under it.
-        if (_loop.Wait(TimeSpan.FromSeconds(2)))
+        // A report in flight is cancelled with the loop; give it a moment so the client isn't disposed under it. The loop
+        // catches everything, but nothing it did may come out of the module's Close.
+        bool ended;
+        try
         {
-            _stop.Dispose();
-            _queued.Dispose();
+            ended = _loop.Wait(TimeSpan.FromSeconds(2));
         }
+        catch (AggregateException)
+        {
+            ended = true;
+        }
+        if (!ended) return;
+        _stop.Dispose();
+        lock (_gate) _queued.Dispose();
     }
 
     private static bool IsNpc(IClientAPI client) => client.SceneAgent is { PresenceType: PresenceType.Npc };
@@ -162,8 +173,9 @@ internal sealed class PlaceReporter : IDisposable
                 _overflowed++;
             }
             _waiting.AddLast(report);
+            // Inside the lock: Dispose, which disposes the semaphore, can't come between the check above and this.
+            _queued.Release();
         }
-        _queued.Release();
     }
 
     private LinkedListNode<Report>? Waiting(Func<Report, bool> match)
@@ -175,54 +187,93 @@ internal sealed class PlaceReporter : IDisposable
 
     private bool TooOld(Report r) => !r.IsHealth && _time.GetUtcNow() - r.Queued > MaxAge;
 
+    /// <summary>
+    /// Runs until the reporter is disposed. Whatever goes wrong with one report is logged by type and the loop goes on, so
+    /// the program never silently stops reporting.
+    /// </summary>
     private async Task LoopAsync()
     {
         var ct = _stop.Token;
-        try
+        var failures = new HashSet<string>(StringComparer.Ordinal);
+        while (!ct.IsCancellationRequested)
         {
-            while (true)
+            try
             {
-                Report? report;
-                int overflowed, stale = 0;
+                await NextAsync(ct).ConfigureAwait(false);
+            }
+            catch (Exception) when (ct.IsCancellationRequested)
+            {
+                // Closing: what is still queued is lost, as when the program stops.
+            }
+            catch (Exception e)
+            {
+                // Each kind of failure is logged once; a pause keeps one that repeats from spinning.
+                if (failures.Add(e.GetType().Name)) Warn($"The place reporter's loop failed with {e.GetType().Name} and goes on.");
                 lock (_gate)
-                {
-                    (overflowed, _overflowed) = (_overflowed, 0);
-                    for (var node = _waiting.First; node is not null;)
-                    {
-                        var next = node.Next;
-                        if (TooOld(node.Value))
-                        {
-                            _waiting.Remove(node);
-                            stale++;
-                        }
-                        node = next;
-                    }
-                    report = _waiting.First?.Value;
-                    if (report is not null) _waiting.RemoveFirst();
-                }
-                if (overflowed > 0) _warn($"Dropped {Reports(overflowed)}: more than {MaxWaiting} were waiting for the money service.");
-                if (stale > 0) _warn($"Dropped {Reports(stale)} older than {MaxAge.TotalMinutes:0} minutes, unsent.");
-                if (report is null)
-                {
-                    lock (_gate)
-                        if (_waiting.Count == 0) _idle.TrySetResult();
-                    await _queued.WaitAsync(ct).ConfigureAwait(false);
-                    continue;
-                }
+                    if (_waiting.Count == 0) _idle.TrySetResult();
                 try
                 {
-                    await SendAsync(report, ct).ConfigureAwait(false);
+                    await Task.Delay(FailurePause, ct).ConfigureAwait(false);
                 }
-                finally
+                catch (OperationCanceledException)
                 {
-                    lock (_gate)
-                        if (_waiting.Count == 0) _idle.TrySetResult();
+                    // Closing.
                 }
             }
         }
-        catch (Exception) when (ct.IsCancellationRequested)
+    }
+
+    /// <summary>Drops what is too old, then sends the oldest report left, or waits for one.</summary>
+    private async Task NextAsync(CancellationToken ct)
+    {
+        Report? report;
+        int overflowed, stale = 0;
+        lock (_gate)
         {
-            // Closing: what is still queued is lost, as when the program stops.
+            (overflowed, _overflowed) = (_overflowed, 0);
+            for (var node = _waiting.First; node is not null;)
+            {
+                var next = node.Next;
+                if (TooOld(node.Value))
+                {
+                    _waiting.Remove(node);
+                    stale++;
+                }
+                node = next;
+            }
+            report = _waiting.First?.Value;
+            if (report is not null) _waiting.RemoveFirst();
+        }
+        if (overflowed > 0) Warn($"Dropped {Reports(overflowed)}: more than {MaxWaiting} were waiting for the money service.");
+        if (stale > 0) Warn($"Dropped {Reports(stale)} older than {MaxAge.TotalMinutes:0} minutes, unsent.");
+        if (report is null)
+        {
+            lock (_gate)
+                if (_waiting.Count == 0) _idle.TrySetResult();
+            await _queued.WaitAsync(ct).ConfigureAwait(false);
+            return;
+        }
+        try
+        {
+            await SendAsync(report, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            lock (_gate)
+                if (_waiting.Count == 0) _idle.TrySetResult();
+        }
+    }
+
+    /// <summary>Tells <c>warn</c>; a warning that can't be written is lost rather than stopping the loop.</summary>
+    private void Warn(string text)
+    {
+        try
+        {
+            _warn(text);
+        }
+        catch (Exception)
+        {
+            // Nowhere left to say it.
         }
     }
 
@@ -233,13 +284,13 @@ internal sealed class PlaceReporter : IDisposable
             if (await TryAsync(report, ct).ConfigureAwait(false) != MoneyAnswer.UnavailableCode) return;
             if (attempt == Retries.Length)
             {
-                _warn($"Dropped {report.What}: the money service couldn't be reached in {attempt + 1} tries.");
+                Warn($"Dropped {report.What}: the money service couldn't be reached in {attempt + 1} tries.");
                 return;
             }
             await Task.Delay(Retries[attempt], _time, ct).ConfigureAwait(false);
             if (TooOld(report))
             {
-                _warn($"Dropped {report.What}: older than {MaxAge.TotalMinutes:0} minutes before the money service could be reached.");
+                Warn($"Dropped {report.What}: older than {MaxAge.TotalMinutes:0} minutes before the money service could be reached.");
                 return;
             }
         }
@@ -258,7 +309,7 @@ internal sealed class PlaceReporter : IDisposable
         }
         catch (Exception e)
         {
-            _warn($"Sending {report.What} failed with {e.GetType().Name}.");
+            Warn($"Sending {report.What} failed with {e.GetType().Name}.");
             return MoneyAnswer.UnavailableCode;
         }
     }
