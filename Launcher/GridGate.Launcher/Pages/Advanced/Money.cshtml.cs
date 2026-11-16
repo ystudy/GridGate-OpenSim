@@ -2,6 +2,7 @@ using GridGate.Launcher.Core.Grid;
 using GridGate.Launcher.Core.Logs;
 using GridGate.Launcher.Core.Money;
 using GridGate.Launcher.Core.Settings;
+using GridGate.Launcher.Endpoints;
 using GridGate.Launcher.Security;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
@@ -13,7 +14,7 @@ namespace GridGate.Launcher.Pages.Advanced;
 /// publishes, and pairing with that server's money service by a one-time code. Region Servers only; admins only (the
 /// Advanced folder's rule). The code and the key are never shown or audited.
 /// </summary>
-public sealed class MoneyModel(IGridController grid, MoneyGate gate, IMoneyPairClient pair, AuditLog audit) : PageModel
+public sealed class MoneyModel(IGridController grid, MoneyGate gate, IMoneyPairClient pair, AuditLog audit, RegionActions regions) : PageModel
 {
     public enum PairState { NotPaired, Paired, CertificateChanged }
 
@@ -70,7 +71,11 @@ public sealed class MoneyModel(IGridController grid, MoneyGate gate, IMoneyPairC
                 GridName = outcome.Grid is { } named && s.Join is { } here && here.Host == named.Host ? named.GridName : s.GridName,
             }, writeConfig: true);
             audit.Write(User, Ip, "money-pair", "money", "ok");
-            Notice = "Paired. Restart the regions to start taking payments.";
+            // A region program reads its key only when it starts: the running ones restart now, so payments work without
+            // a step the owner could miss.
+            Notice = regions.RestartRunning("money pairing").Count == 0
+                ? "Paired. This server's regions take payments once they start."
+                : "Paired. Restarting this server's regions so they start taking payments. This takes a few minutes, and anyone in them is disconnected.";
         }
         else
         {

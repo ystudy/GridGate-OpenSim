@@ -47,6 +47,25 @@ public sealed class MoneyMaintenanceTests(MoneyMariaDb maria) : IClassFixture<Mo
     }
 
     [Fact]
+    public async Task Sweep_drops_locations_of_logged_out_sessions()
+    {
+        var (ledger, db, time) = await MoneyLedgerTransferTests.Setup(maria);
+        var gone = Guid.NewGuid();
+        var longAgo = (time.GetUtcNow() - MoneyLocations.KeepAbsentFor - TimeSpan.FromHours(1)).UtcDateTime;
+        await db.Sql($"INSERT INTO `money`.`session_locations` (session_id, agent_id, region_id, key_id, state, updated) " +
+            $"VALUES ('{gone}', '{A}', '{Guid.NewGuid()}', 'p1', 'Verified', '{longAgo:yyyy-MM-dd HH:mm:ss}')");
+        var presence = new PresenceCheck(db.OpenRobust);
+        var verification = new RegionVerification(db.OpenMoney, db.OpenRobust, new RegionPins(db.OpenMoney, new RegionHosts(db.OpenRobust), time), time);
+        var locations = new MoneyLocations(db.OpenMoney, db.OpenRobust, verification, presence, time);
+        using var maintenance = new MoneyMaintenance(ledger, () => MoneyMode.Play, time, NullLogger<MoneyMaintenance>.Instance, locations: locations);
+        await maintenance.StartAsync(Ct);
+
+        await Eventually(async () => await db.Scalar("SELECT COUNT(*) FROM `money`.`session_locations`") == 0, "the location is dropped",
+            () => time.Advance(MoneyMaintenance.SweepEvery));
+        await maintenance.StopAsync(Ct);
+    }
+
+    [Fact]
     public async Task Self_check_is_recorded_for_the_dashboard()
     {
         var (ledger, _, time) = await MoneyLedgerTransferTests.Setup(maria);

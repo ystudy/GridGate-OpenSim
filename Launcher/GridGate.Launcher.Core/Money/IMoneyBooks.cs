@@ -21,4 +21,15 @@ public interface IMoneyBooks
     Task<MoneyResult> RefundAsync(long entryId, StaffAction who, CancellationToken ct);
     Task<MoneyResult> SetPayoutsAllowedAsync(Guid residentId, bool allowed, CancellationToken ct);
     Task<SelfCheckResult> SelfCheckAsync(CancellationToken ct);
+
+    /// <summary>A person's or key's daily limits now; null for a person without a wallet.</summary>
+    Task<LimitView?> LimitsAsync(LimitTarget target, CancellationToken ct);
+    Task<LimitView?> PersonLimitsAsync(AccountRef person, CancellationToken ct);
+
+    /// <summary>
+    /// The owner's own limits for one person or key; a null limit uses the grid default, and both null removes them (any
+    /// <c>until</c> ignored). Otherwise <c>until</c>, if given, must be UTC and still ahead.
+    /// </summary>
+    Task<MoneyOutcome> SetLimitsAsync(LimitTarget target, long? dailySpend, long? dailyPayout, DateTime? until, StaffAction staff, CancellationToken ct);
+    Task<MoneyOutcome> SetPersonLimitsAsync(AccountRef person, long? dailySpend, long? dailyPayout, DateTime? until, StaffAction staff, CancellationToken ct);
 }

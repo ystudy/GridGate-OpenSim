@@ -21,6 +21,7 @@ public sealed class MoneyServiceTests(MoneyMariaDb maria) : IClassFixture<MoneyM
     private static readonly Guid B = Guid.Parse("b0000000-0000-0000-0000-00000000000b");
     private static readonly Guid Here = Guid.Parse("e0000000-0000-0000-0000-00000000000e");
     private static readonly Guid There = Guid.Parse("f0000000-0000-0000-0000-00000000000f");
+    private static readonly Guid Yonder = Guid.Parse("e1000000-0000-0000-0000-00000000000e");
     private static readonly Guid SessionA = Guid.Parse("5000000a-0000-0000-0000-000000000005");
     private static readonly Guid SecureA = Guid.Parse("6000000a-0000-0000-0000-000000000006");
     private const string Key = "the-region-key-for-program-one-0000000000000000";
@@ -46,9 +47,13 @@ public sealed class MoneyServiceTests(MoneyMariaDb maria) : IClassFixture<MoneyM
         try { Directory.Delete(_dir, true); } catch (IOException) { }
     }
 
-    /// <summary>Starts the service on a fresh database: program p1 holds region Here, and A is logged in there.</summary>
+    /// <summary>
+    /// Starts the service on a fresh database: program p1 holds region Here and p2 region There. When it is listening on a
+    /// working database, both programs' modules have checked in and the service has placed A at Here and B at There. With
+    /// <paramref name="yonder"/>, p1 also holds region Yonder.
+    /// </summary>
     private async Task<MoneyTestDatabase> StartAsync(MoneyMode mode = MoneyMode.Play, Func<LauncherSettings, LauncherSettings>? dbOverride = null,
-        Func<X509Certificate2>? certificate = null, int? port = null, OwnerPlan? plan = null)
+        Func<X509Certificate2>? certificate = null, int? port = null, OwnerPlan? plan = null, bool yonder = false)
     {
         _mode = mode;
         var db = await maria.FreshAsync();
@@ -63,7 +68,8 @@ public sealed class MoneyServiceTests(MoneyMariaDb maria) : IClassFixture<MoneyM
             Plan = plan,
             MoneyPort = _port,
             Programs = [new ProgramSettings("p1", 8004, 8011), new ProgramSettings("p2", 8005, 8012)],
-            Regions = [new RegionSettings("p1", "Here", Here, UdpPort: 8004), new RegionSettings("p2", "There", There, UdpPort: 8005)],
+            Regions = [new RegionSettings("p1", "Here", Here, UdpPort: 8004), new RegionSettings("p2", "There", There, UdpPort: 8005),
+                .. yonder ? [new RegionSettings("p1", "Yonder", Yonder, UdpPort: 8006)] : Array.Empty<RegionSettings>()],
             Money = new MoneySettings(Mode: mode, UploadFee: 3, ProgramKeys: new() { ["p1"] = Key, ["p2"] = Key2 }),
         };
         var dbSettings = dbOverride?.Invoke(settings) ?? settings;
@@ -74,13 +80,33 @@ public sealed class MoneyServiceTests(MoneyMariaDb maria) : IClassFixture<MoneyM
         Directory.CreateDirectory(_dir);
         var cert = MoneyCertificate.LoadOrCreate(Path.Combine(_dir, MoneyCertificate.FileName), time);
         _fingerprint = MoneyCertificate.Fingerprint(cert);
-        _host = new MoneyServiceHost(ledger, presence, () => settings, () => _mode, certificate ?? (() => cert), new MoneyAuthFailures(time, loggers.CreateLogger<MoneyAuthFailures>()), loggers, _status);
+        var verification = new RegionVerification(MoneyConnections.Money(() => dbSettings), MoneyConnections.Robust(() => dbSettings),
+            new RegionPins(MoneyConnections.Money(() => dbSettings), new RegionHosts(MoneyConnections.Robust(() => dbSettings)), time), time);
+        var locations = new MoneyLocations(MoneyConnections.Money(() => dbSettings), MoneyConnections.Robust(() => dbSettings), verification, presence, time);
+        _host = new MoneyServiceHost(ledger, presence, () => settings, () => _mode, certificate ?? (() => cert), new MoneyAuthFailures(time, loggers.CreateLogger<MoneyAuthFailures>()), loggers, _status,
+            verification: verification, locations: locations);
         await _host.StartAsync(Ct);
         _http = new HttpClient(new SocketsHttpHandler
         {
             SslOptions = { RemoteCertificateValidationCallback = (_, c, _, _) => c is not null && MoneyCertificate.Fingerprint(X509CertificateLoader.LoadCertificate(c.GetRawCertData())) == _fingerprint },
         }) { BaseAddress = new Uri($"https://127.0.0.1:{_port}/money/v1/") };
+        if (_status.ServiceRunning && dbOverride is null && mode is MoneyMode.Play or MoneyMode.Real)
+        {
+            await Place(db, Key, A, Here, SessionA);
+            await Place(db, Key2, B, There, SessionB);
+        }
         return db;
+    }
+
+    /// <summary>
+    /// <paramref name="key"/>'s module checks in for <paramref name="region"/>, Robust writes a login start for the session
+    /// and the module reports the arrival: the service has the avatar verified there.
+    /// </summary>
+    private async Task Place(MoneyTestDatabase db, string key, Guid agent, Guid region, Guid session)
+    {
+        Assert.Equal(HttpStatusCode.OK, (await Post("health", new { protocol = RegionVerification.HandoffProtocol, regions = new[] { region } }, key)).Status);
+        await db.AddSessionStart(session, agent, region, "login");
+        Assert.Equal("ok", (string?)(await Post("arrived", new { id = Guid.NewGuid(), sessionId = session, agentId = agent, regionId = region }, key)).Body!["code"]);
     }
 
     private async Task<(HttpStatusCode Status, JsonNode? Body, string Raw)> Post(string path, object? body, string? key = Key)
@@ -253,8 +279,10 @@ public sealed class MoneyServiceTests(MoneyMariaDb maria) : IClassFixture<MoneyM
     [Fact]
     public async Task Balance_for_avatar_elsewhere_is_wrong_region()
     {
-        var db = await StartAsync();
-        await db.Sql($"UPDATE `robust`.`Presence` SET RegionID = '{There}'");
+        await StartAsync();
+        // A teleports to There: p1 hands them off and p2 reports the arrival.
+        Assert.Equal("ok", (string?)(await Post("handoff", new { id = Guid.NewGuid(), sessionId = SessionA, fromRegion = Here, toRegion = There, kind = "teleport" })).Body!["code"]);
+        Assert.Equal("ok", (string?)(await Post("arrived", new { id = Guid.NewGuid(), sessionId = SessionA, agentId = A, regionId = There }, Key2)).Body!["code"]);
 
         Assert.Equal("wrong_region", (string?)(await Post("balance", WhoA())).Body!["code"]);
     }
@@ -302,6 +330,45 @@ public sealed class MoneyServiceTests(MoneyMariaDb maria) : IClassFixture<MoneyM
         });
 
         Assert.Equal("wrong_region", (string?)body!["code"]);
+    }
+
+    [Fact]
+    public async Task Payer_verified_in_another_region_of_the_same_key_is_wrong_region()
+    {
+        await StartAsync(yonder: true);
+        // p1's module runs both its regions, so both are verified; A is verified at Here.
+        Assert.Equal(HttpStatusCode.OK, (await Post("health", new { protocol = RegionVerification.HandoffProtocol, regions = new[] { Here, Yonder } })).Status);
+        object Pay(Guid region) => new
+        {
+            txnId = Guid.NewGuid(), type = "pay_avatar", from = WhoA(), to = new { agentId = B, home = "" }, amount = 10, regionId = region,
+        };
+
+        Assert.Equal("wrong_region", (string?)(await Post("transfer", Pay(Yonder))).Body!["code"]);
+        Assert.Equal("ok", (string?)(await Post("transfer", Pay(Here))).Body!["code"]);
+
+        // Once p1 has handed A to Yonder, the other way round.
+        Assert.Equal("ok", (string?)(await Post("handoff", new { id = Guid.NewGuid(), sessionId = SessionA, fromRegion = Here, toRegion = Yonder, kind = "teleport" })).Body!["code"]);
+        Assert.Equal("ok", (string?)(await Post("arrived", new { id = Guid.NewGuid(), sessionId = SessionA, agentId = A, regionId = Yonder })).Body!["code"]);
+        Assert.Equal("wrong_region", (string?)(await Post("transfer", Pay(Here))).Body!["code"]);
+        Assert.Equal("ok", (string?)(await Post("transfer", Pay(Yonder))).Body!["code"]);
+    }
+
+    [Fact]
+    public async Task Region_payments_record_their_key()
+    {
+        var db = await StartAsync();
+        await Post("transfer", new { txnId = Guid.NewGuid(), type = "pay_avatar", from = WhoA(), to = new { agentId = B, home = "" }, amount = 10, regionId = Here });
+        var hold = await Post("hold", new
+        {
+            txnId = Guid.NewGuid(), kind = "object", buyer = WhoA(), seller = new { agentId = B, home = "" }, amount = 5, regionId = Here, objectId = Guid.NewGuid(), objectName = "dress",
+        });
+        await Post("charge", new { txnId = Guid.NewGuid(), type = "upload_fee", payer = WhoA(), amount = 3, regionId = Here });
+        await db.Sql($"UPDATE `money`.`accounts` SET payouts_allowed = 1 WHERE agent_id = '{A}'");
+        await Post("payout", new { txnId = Guid.NewGuid(), ownerId = A, to = new { agentId = B, home = "" }, amount = 2, regionId = Here, objectId = Guid.NewGuid(), objectName = "slot" });
+
+        Assert.Equal("ok", (string?)hold.Body!["code"]);
+        Assert.Equal(4, await db.Scalar("SELECT COUNT(*) FROM `money`.`entries` WHERE key_id = 'p1' AND type IN ('pay_avatar', 'hold', 'upload_fee', 'script_payout')"));
+        Assert.Equal("p1", await db.Text($"SELECT key_id FROM `money`.`holds` WHERE id = {hold.Body["holdId"]}"));
     }
 
     [Fact]
@@ -382,13 +449,14 @@ public sealed class MoneyServiceTests(MoneyMariaDb maria) : IClassFixture<MoneyM
             ("transfer", new { txnId = Guid.NewGuid(), type = "pay_avatar", from = WhoA(), to = new { agentId = B, home = "" }, amount = 10, regionId = Here }),
             ("balance", WhoA()),
             ("economy", new { }),
-            ("health", new { }),
         })
         {
             var (status, answer, _) = await Post(path, body);
             Assert.Equal(HttpStatusCode.OK, status);
             Assert.Equal("unavailable", (string?)answer!["code"]);
         }
+        // Health is still heard, so regions are verified the moment coins come back on.
+        Assert.True((bool?)(await Post("health", new { }))!.Body!["ok"]);
         // A bad key is still refused as one.
         Assert.Equal(HttpStatusCode.Unauthorized, (await Post("balance", WhoA(), key: "wrong")).Status);
         // A purchase already paid for still finishes.
@@ -494,7 +562,7 @@ public sealed class MoneyServiceTests(MoneyMariaDb maria) : IClassFixture<MoneyM
     {
         await StartAsync();
 
-        var (_, body, _) = await Post("charge", new { txnId = Guid.NewGuid(), type = "upload_fee", payer = WhoA(), amount = 3 });
+        var (_, body, _) = await Post("charge", new { txnId = Guid.NewGuid(), type = "upload_fee", payer = WhoA(), amount = 3, regionId = Here });
 
         Assert.Equal("ok", (string?)body!["code"]);
         Assert.Equal(97, body["balance"]!.GetValue<long>());
@@ -616,7 +684,7 @@ public sealed class MoneyServiceTests(MoneyMariaDb maria) : IClassFixture<MoneyM
     {
         await StartAsync();
         var rng = new Random(1234);
-        string[] paths = ["balance", "transfer", "payout", "charge", "hold", "hold/complete", "hold/return", "economy", "health"];
+        string[] paths = ["balance", "transfer", "payout", "charge", "hold", "hold/complete", "hold/return", "economy", "health", "handoff", "handoff/cancel", "arrived"];
         string[] pieces = ["{", "}", "[", "]", ",", ":", "\"agentId\"", "\"amount\"", "\"txnId\"", "\"from\"", "\"home\"", "null", "true", "-1", "1e9",
             "99999999999999999999", "\"x\"", $"\"{A}\"", "\"\"", "0", "\"holdId\"", "\"type\"", "\"pay_avatar\"", "{\"agentId\":1}"];
 

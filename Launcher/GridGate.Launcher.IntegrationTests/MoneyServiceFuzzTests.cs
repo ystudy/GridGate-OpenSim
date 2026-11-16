@@ -74,7 +74,7 @@ public sealed class MoneyServiceFuzzTests(MoneyMariaDb maria) : IClassFixture<Mo
             ["txnId"] = Guid.NewGuid().ToString(), ["ownerId"] = A.ToString(), ["to"] = new JsonObject { ["agentId"] = B.ToString(), ["home"] = "" },
             ["amount"] = 1, ["regionId"] = Here.ToString(), ["objectId"] = Guid.NewGuid().ToString(), ["objectName"] = "slot",
         },
-        ["charge"] = _ => new JsonObject { ["txnId"] = Guid.NewGuid().ToString(), ["type"] = "upload_fee", ["payer"] = Who(), ["amount"] = 1 },
+        ["charge"] = _ => new JsonObject { ["txnId"] = Guid.NewGuid().ToString(), ["type"] = "upload_fee", ["payer"] = Who(), ["amount"] = 1, ["regionId"] = Here.ToString() },
         ["hold"] = _ => new JsonObject
         {
             ["txnId"] = Guid.NewGuid().ToString(), ["kind"] = "object", ["buyer"] = Who(), ["seller"] = new JsonObject { ["agentId"] = B.ToString(), ["home"] = "" },
@@ -84,6 +84,17 @@ public sealed class MoneyServiceFuzzTests(MoneyMariaDb maria) : IClassFixture<Mo
         ["hold/return"] = hold => new JsonObject { ["txnId"] = Guid.NewGuid().ToString(), ["holdId"] = hold },
         ["economy"] = _ => new JsonObject(),
         ["health"] = _ => new JsonObject(),
+        // A handoff from Here to Here: A stays in p1's region, handed there, and the arrival there verifies A again at once, so
+        // a change to it can't wait for a handoff.
+        ["handoff"] = _ => new JsonObject
+        {
+            ["id"] = Guid.NewGuid().ToString(), ["sessionId"] = SessionA.ToString(), ["fromRegion"] = Here.ToString(), ["toRegion"] = Here.ToString(), ["kind"] = "teleport",
+        },
+        ["handoff/cancel"] = _ => new JsonObject { ["sessionId"] = SessionA.ToString(), ["fromRegion"] = Here.ToString() },
+        ["arrived"] = _ => new JsonObject
+        {
+            ["id"] = Guid.NewGuid().ToString(), ["sessionId"] = SessionA.ToString(), ["agentId"] = A.ToString(), ["regionId"] = Here.ToString(),
+        },
     };
 
     private static JsonObject Who() => new()

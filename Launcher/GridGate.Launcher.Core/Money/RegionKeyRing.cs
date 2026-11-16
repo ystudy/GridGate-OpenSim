@@ -43,7 +43,7 @@ public sealed class RegionKeyRing
     /// Where <paramref name="p"/>'s ports end: the next paired server's first port on the same address, or past the last
     /// port when there is none.
     /// </summary>
-    private static int NextFirstPort(List<PairedServer> all, PairedServer p) =>
+    internal static int NextFirstPort(List<PairedServer> all, PairedServer p) =>
         all.Where(o => o.Id != p.Id && string.Equals(o.Host, p.Host, StringComparison.OrdinalIgnoreCase) && o.FirstPort > p.FirstPort)
             .Select(o => o.FirstPort).DefaultIfEmpty(65536).Min();
 

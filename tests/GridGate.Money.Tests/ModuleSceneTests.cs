@@ -454,6 +454,20 @@ public sealed class ModuleSceneTests
         Assert.Null(charge.Args[3]);
     }
 
+    /// <summary>A fee is charged in the region the payer is in, so the service can check they are there.</summary>
+    [Fact]
+    public void Charge_sends_the_region()
+    {
+        var region = Build();
+        region.Arrive(Buyer);
+
+        region.Module.ApplyUploadCharge(Buyer, 3, "upload");
+
+        var charge = Assert.Single(region.Service.Of("charge"));
+        Assert.Equal("upload_fee", charge.Args[0]);
+        Assert.Equal(region.Scene.RegionInfo.RegionID.Guid, charge.Args[4]);
+    }
+
     /// <summary>money review 2026-11-15, R-10: other charge types OpenSim might send take nothing.</summary>
     [Theory]
     [InlineData(MoneyTransactionType.LandSale)]

@@ -1,0 +1,70 @@
+@model GridGate.Launcher.Pages.Money.IndexModel
+@using GridGate.Launcher.Money
+@{
+    var m = Model.Saved;
+    static string Whose(bool own) => own ? "own limit" : "grid default";
+}
+@* The daily limits and each region program's and Region Server's own. *@
+<section class="work-panel" id="money-limits" aria-labelledby="money-limits-title">
+    <h2 id="money-limits-title" class="panel-title">Limits<help-tip>Daily limits cap how many coins can move in the last 24 hours, rolling, so there is no midnight reset to time an attack around. Staff gifts, take-backs and refunds never count. Change the grid's defaults under Settings; one person's own limits are on their page.</help-tip></h2>
+    <dl id="money-limit-defaults">
+        <dt>Daily spending limit per person</dt><dd>@IndexModel.N(m.DailySpendLimit) coins</dd>
+        <dt>Daily region limit per region program or Region Server</dt><dd>@IndexModel.N(m.DailyKeySpendLimit) coins</dd>
+        <dt>Daily script payouts per region program or Region Server</dt><dd>@IndexModel.N(m.DailyKeyPayoutLimit) coins</dd>
+        <dt>Daily script payout limit per resident</dt><dd>@IndexModel.N(m.DailyPayoutLimit) coins</dd>
+        <dt>Largest single payment</dt><dd>@IndexModel.N(m.MaxPayment) coins</dd>
+    </dl>
+    <h3 class="h6">Each region program and Region Server<help-tip>The owner can give one region program or one Region Server its own daily limits, higher or lower than the grid's: more for a trusted busy mall, less for a new server nobody knows yet. Leave a box empty for the grid default; each change needs a reason and is written to the audit log.</help-tip></h3>
+    @if (Model.KeyLimits.Count == 0)
+    {
+        <p>There are no region programs or Region Servers yet.</p>
+    }
+    else
+    {
+        <div class="table-responsive">
+            <table class="table align-middle">
+                <thead><tr><th>Who</th><th>Daily region limit</th><th>Daily script payouts</th><th>Last 24 hours</th>@if (Model.IsOwner) { <th>Set its own limits</th> }</tr></thead>
+                <tbody>
+                @for (var i = 0; i < Model.KeyLimits.Count; i++)
+                {
+                    var row = Model.KeyLimits[i];
+                    <tr data-key="@row.KeyId">
+                        <td>@row.Name</td>
+                        @if (row.View is { } v)
+                        {
+                            <td>@IndexModel.N(v.DailySpend) (@Whose(v.OwnSpend))</td>
+                            <td>@IndexModel.N(v.DailyPayout) (@Whose(v.OwnPayout))</td>
+                            <td>@IndexModel.N(v.SpentToday) taken, @IndexModel.N(v.PaidOutToday) paid out</td>
+                        }
+                        else
+                        {
+                            <td colspan="3">Can't be read.</td>
+                        }
+                        @if (Model.IsOwner)
+                        {
+                            <td>
+                                <form method="post" action="/money?handler=KeyLimits" asp-antiforgery="true">
+                                    <input type="hidden" name="KeyId" value="@row.KeyId">
+                                    <label class="form-label visually-hidden" for="key-spend-@i">Daily region limit</label>
+                                    <input class="form-control form-control-sm mb-1" id="key-spend-@i" name="DailySpend" type="number" min="0" max="@MoneyPageRules.MaxDailyPayoutLimit"
+                                           placeholder="Region limit: default" value="@(row.View is { OwnSpend: true } own ? (long?)own.DailySpend : null)">
+                                    <label class="form-label visually-hidden" for="key-payout-@i">Daily script payouts</label>
+                                    <input class="form-control form-control-sm mb-1" id="key-payout-@i" name="DailyPayout" type="number" min="0" max="@MoneyPageRules.MaxDailyPayoutLimit"
+                                           placeholder="Payouts: default" value="@(row.View is { OwnPayout: true } ownPayout ? (long?)ownPayout.DailyPayout : null)">
+                                    <label class="form-label visually-hidden" for="key-reason-@i">Reason</label>
+                                    <input class="form-control form-control-sm mb-1" id="key-reason-@i" name="Reason" maxlength="@MoneyPageRules.MaxReason" placeholder="Reason" required>
+                                    <button type="submit" class="btn btn-sm btn-outline-secondary">Set</button>
+                                </form>
+                            </td>
+                        }
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    }
+    <p class="mb-0">
+        <a href="@MoneyVerifyText.Link(MoneyVerifyText.LimitsAnchor)" target="_blank" rel="noopener noreferrer">How the daily limits work</a> ·
+        <a href="@MoneyVerifyText.Link(MoneyVerifyText.OwnLimitsAnchor)" target="_blank" rel="noopener noreferrer">Giving one person or server its own limits</a>
+    </p>
+</section>

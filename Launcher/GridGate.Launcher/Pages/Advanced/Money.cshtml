@@ -40,7 +40,7 @@
             }
         </p>
         <form method="post" action="/advanced/money?handler=Pair" asp-antiforgery="true" class="mb-3">
-            <label class="form-label" for="rs-money-code">Pairing code<help-tip>Make one on the Grid Asset Server's Money page, under Region Servers. It works once, for 15 minutes.</help-tip></label>
+            <label class="form-label" for="rs-money-code">Pairing code<help-tip>Make one on the Grid Asset Server's Money page, under Region Servers. It works once, for 15 minutes. Pairing restarts this server's running regions, so anyone in them is disconnected.</help-tip></label>
             <input class="form-control mb-2" id="rs-money-code" name="Code" maxlength="32" autocomplete="off" spellcheck="false" placeholder="7K2M-9QXD-4HTB-ZW3R" required>
             <button type="submit" class="btn btn-primary">Pair</button>
         </form>

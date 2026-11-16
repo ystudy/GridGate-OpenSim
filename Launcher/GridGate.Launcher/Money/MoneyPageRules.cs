@@ -9,7 +9,8 @@ public sealed record GloebitFormModel(GloebitSettings? App, string Action);
 /// <summary>What the Money staff pages check before anything is saved or moved (money plan 2, task 9).</summary>
 public static class MoneyPageRules
 {
-    public const long MaxDailyPayoutLimit = 100_000_000;
+    /// <summary>The largest daily limit of any kind, the same bound the ledger puts on an owner's own limits.</summary>
+    public const long MaxDailyPayoutLimit = MoneyLedger.MaxDailyLimit;
     public const long MaxMaxPayment = 1_000_000_000;
     public const int MaxReason = 200;
 
@@ -56,6 +57,13 @@ public static class MoneyPageRules
                 return $"The {name} must be 0 to the largest payment ({m.MaxPayment.ToString("N0", CultureInfo.InvariantCulture)}).";
         if (m.DailyPayoutLimit is < 0 or > MaxDailyPayoutLimit)
             return $"The daily payout limit must be 0 to {MaxDailyPayoutLimit.ToString("N0", CultureInfo.InvariantCulture)}.";
+        foreach (var (name, value) in new[]
+                 {
+                     ("daily spending limit", m.DailySpendLimit), ("daily region spending limit", m.DailyKeySpendLimit),
+                     ("daily region payout limit", m.DailyKeyPayoutLimit),
+                 })
+            if (value is < 0 or > MaxDailyPayoutLimit)
+                return $"The {name} must be 0 to {MaxDailyPayoutLimit.ToString("N0", CultureInfo.InvariantCulture)}.";
         return null;
     }
 
@@ -88,7 +96,40 @@ public static class MoneyPageRules
         MoneyOutcome.BadAmount => "That amount or reason isn't allowed.",
         MoneyOutcome.NoWallet => "That person has no wallet here.",
         MoneyOutcome.VisitorsOff => "Visitor wallets are off.",
+        MoneyOutcome.VisitorGridNotListed => "That visitor's grid isn't on your list.",
         MoneyOutcome.DuplicateReference => "That entry was already refunded.",
+        MoneyOutcome.OverDailyLimit => "That person has reached their daily limit, which counts the last 24 hours.",
+        MoneyOutcome.OverKeyLimit => "That region program or Region Server has reached its daily money limit, which counts the last 24 hours.",
         _ => "That couldn't be done (" + Code(o) + ").",
     };
+
+    /// <summary>
+    /// The first problem with an owner's own limits, in words for the page, or null. An empty field (null) uses the grid
+    /// default, so only a number outside 0 to <see cref="MaxDailyPayoutLimit"/> is wrong.
+    /// </summary>
+    public static string? LimitProblem(long? dailySpend, long? dailyPayout) =>
+        dailySpend is < 0 or > MaxDailyPayoutLimit || dailyPayout is < 0 or > MaxDailyPayoutLimit
+            ? $"Each limit must be 0 to {MaxDailyPayoutLimit.ToString("N0", CultureInfo.InvariantCulture)}, or empty for the grid default."
+            : null;
+
+    /// <summary>An owner's own limits as the audit log records them: "spend 50000 payout default", or "default" when both are.</summary>
+    public static string LimitsText(long? dailySpend, long? dailyPayout) =>
+        dailySpend is null && dailyPayout is null ? "default"
+            : $"spend {dailySpend?.ToString(CultureInfo.InvariantCulture) ?? "default"} payout {dailyPayout?.ToString(CultureInfo.InvariantCulture) ?? "default"}";
+
+    /// <summary>The longest grid address the list keeps, the size of a wallet's home column.</summary>
+    public const int MaxGridAddress = 255;
+
+    /// <summary>
+    /// A listed grid's address as it is stored and compared (as the ledger stores homes), or
+    /// null when <paramref name="address"/> isn't an absolute http(s) address with a host.
+    /// </summary>
+    public static string? GridAddress(string? address)
+    {
+        var t = (address ?? "").Trim();
+        if (t.Length is 0 or > MaxGridAddress || !Uri.TryCreate(t, UriKind.Absolute, out var u) || u.Scheme is not ("http" or "https")
+            || u.Host.Length == 0 || u.UserInfo.Length > 0 || u.Query.Length > 0 || u.Fragment.Length > 0)
+            return null;
+        return MoneyHomes.Normal(t) is { Length: > 0 } normal ? normal : null;
+    }
 }

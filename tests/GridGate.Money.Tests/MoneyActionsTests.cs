@@ -371,7 +371,7 @@ public sealed class MoneyActionsTests
     }
 
     [Fact]
-    public void Charge_carries_who_is_paid()
+    public void Charge_carries_who_is_paid_and_the_region()
     {
         _service.Queue("charge", new MoneyAnswer("ok", 90, 10));
 
@@ -380,6 +380,7 @@ public sealed class MoneyActionsTests
         var call = Assert.Single(_service.Of("charge"));
         Assert.Equal("group_join_fee", call.Args[0]);
         Assert.Equal((Guid?)Them, call.Args[3]);
+        Assert.Equal(Region, call.Args[4]); // the service checks the payer is in this region
         Assert.Contains(_view.Pushed, x => x.Agent == Me && x.Balance == 90 && x.Note!.TransactionType == Type("GroupJoin"));
     }
 

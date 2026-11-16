@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Net;
 using System.Net.Http;
@@ -44,7 +45,7 @@ public interface IMoneyService
 
     Task<MoneyAnswer> PayoutAsync(Guid txn, Guid ownerId, MoneyWho to, long amount, Guid regionId, Guid objectId, string objectName, CancellationToken ct);
 
-    Task<MoneyAnswer> ChargeAsync(Guid txn, string type, MoneyWho payer, long amount, Guid? payTo, CancellationToken ct);
+    Task<MoneyAnswer> ChargeAsync(Guid txn, string type, MoneyWho payer, long amount, Guid? payTo, Guid regionId, CancellationToken ct);
 
     Task<MoneyAnswer> HoldAsync(Guid txn, string kind, MoneyWho buyer, MoneyWho seller, long amount, Guid regionId, Guid? objectId, string? objectName,
         CancellationToken ct);
@@ -55,6 +56,20 @@ public interface IMoneyService
 
     /// <summary>The settings, or null when the service can't be reached.</summary>
     Task<EconomyInfo?> EconomyAsync(CancellationToken ct);
+
+    // Where avatars are: the region module's place reports.
+
+    /// <summary>The money protocol this program speaks and the regions it runs.</summary>
+    Task<MoneyAnswer> HealthAsync(int protocol, IReadOnlyList<Guid> regions, CancellationToken ct);
+
+    /// <summary><paramref name="sessionId"/> leaves <paramref name="fromRegion"/> for <paramref name="toRegion"/>; <paramref name="kind"/> is teleport, crossing or other_grid.</summary>
+    Task<MoneyAnswer> HandoffAsync(Guid id, Guid sessionId, Guid fromRegion, Guid toRegion, string kind, CancellationToken ct);
+
+    /// <summary>A teleport from <paramref name="fromRegion"/> failed: its open handoff is void.</summary>
+    Task<MoneyAnswer> CancelHandoffAsync(Guid sessionId, Guid fromRegion, CancellationToken ct);
+
+    /// <summary>The avatar became a root agent in <paramref name="regionId"/>.</summary>
+    Task<MoneyAnswer> ArrivedAsync(Guid id, Guid sessionId, Guid agentId, Guid regionId, CancellationToken ct);
 }
 
 /// <summary>
@@ -66,6 +81,13 @@ public sealed class MoneyServiceClient : IMoneyService, IDisposable
 {
     /// <summary>The longest any call waits, so a synchronous OpenSim caller is never held for long.</summary>
     public static readonly TimeSpan Timeout = TimeSpan.FromSeconds(10);
+
+    /// <summary>
+    /// The longest an arrival waits. The service holds an arrival up to 10 seconds while its handoff may still be on the way,
+    /// so it needs longer than <see cref="Timeout"/> to get its answer; only the region module's
+    /// background reporter sends arrivals, never an OpenSim thread.
+    /// </summary>
+    public static readonly TimeSpan ArrivalTimeout = TimeSpan.FromSeconds(20);
 
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
     {
@@ -111,8 +133,8 @@ public sealed class MoneyServiceClient : IMoneyService, IDisposable
         CancellationToken ct) =>
         Post("payout", new PayoutBody(txn, ownerId, Payee(to), amount, regionId, objectId, objectName), ct);
 
-    public Task<MoneyAnswer> ChargeAsync(Guid txn, string type, MoneyWho payer, long amount, Guid? payTo, CancellationToken ct) =>
-        Post("charge", new ChargeBody(txn, type, payer, amount, payTo), ct);
+    public Task<MoneyAnswer> ChargeAsync(Guid txn, string type, MoneyWho payer, long amount, Guid? payTo, Guid regionId, CancellationToken ct) =>
+        Post("charge", new ChargeBody(txn, type, payer, amount, payTo, regionId), ct);
 
     public Task<MoneyAnswer> HoldAsync(Guid txn, string kind, MoneyWho buyer, MoneyWho seller, long amount, Guid regionId, Guid? objectId,
         string? objectName, CancellationToken ct) =>
@@ -124,25 +146,43 @@ public sealed class MoneyServiceClient : IMoneyService, IDisposable
 
     public async Task<EconomyInfo?> EconomyAsync(CancellationToken ct)
     {
-        var wire = await Send<EconomyWire>("economy", new { }, ct).ConfigureAwait(false);
+        var wire = await Send<EconomyWire>("economy", new { }, Timeout, ct).ConfigureAwait(false);
         return wire is { Code: "ok", CurrencySymbol: { } symbol }
             ? new EconomyInfo(symbol, wire.UploadFee, wire.ClassifiedFee, wire.VisitorWallets, wire.ScriptPayouts, wire.MaxPayment)
             : null;
     }
+
+    /// <summary>The service answers health with how many regions the key covers, not a code: "ok" when it says ok.</summary>
+    public async Task<MoneyAnswer> HealthAsync(int protocol, IReadOnlyList<Guid> regions, CancellationToken ct) =>
+        await Send<HealthWire>("health", new HealthBody(protocol, regions), Timeout, ct).ConfigureAwait(false) is { Ok: true }
+            ? new MoneyAnswer("ok")
+            : MoneyAnswer.Unavailable;
+
+    public Task<MoneyAnswer> HandoffAsync(Guid id, Guid sessionId, Guid fromRegion, Guid toRegion, string kind, CancellationToken ct) =>
+        Post("handoff", new HandoffBody(id, sessionId, fromRegion, toRegion, kind), ct);
+
+    public Task<MoneyAnswer> CancelHandoffAsync(Guid sessionId, Guid fromRegion, CancellationToken ct) =>
+        Post("handoff/cancel", new CancelBody(sessionId, fromRegion), ct);
+
+    /// <summary>Waits up to <see cref="ArrivalTimeout"/>: the service may hold an arrival while its handoff is on the way.</summary>
+    public Task<MoneyAnswer> ArrivedAsync(Guid id, Guid sessionId, Guid agentId, Guid regionId, CancellationToken ct) =>
+        Post("arrived", new ArrivedBody(id, sessionId, agentId, regionId), ArrivalTimeout, ct);
 
     public void Dispose() => _http.Dispose();
 
     /// <summary>The one being paid only needs an id and a home; a session would only be one more thing to leak.</summary>
     private static MoneyWho Payee(MoneyWho w) => w with { SessionId = null, SecureSessionId = null };
 
-    private async Task<MoneyAnswer> Post(string path, object body, CancellationToken ct) =>
-        await Send<MoneyAnswer>(path, body, ct).ConfigureAwait(false) is { Code: { Length: > 0 } } answer ? answer : MoneyAnswer.Unavailable;
+    private Task<MoneyAnswer> Post(string path, object body, CancellationToken ct) => Post(path, body, Timeout, ct);
 
-    /// <summary>Null for anything but a 200 with a readable JSON body. Only the caller's own cancellation throws.</summary>
-    private async Task<T?> Send<T>(string path, object body, CancellationToken ct) where T : class
+    private async Task<MoneyAnswer> Post(string path, object body, TimeSpan timeout, CancellationToken ct) =>
+        await Send<MoneyAnswer>(path, body, timeout, ct).ConfigureAwait(false) is { Code: { Length: > 0 } } answer ? answer : MoneyAnswer.Unavailable;
+
+    /// <summary>Null for anything but a 200 with a readable JSON body within <paramref name="timeout"/>. Only the caller's own cancellation throws.</summary>
+    private async Task<T?> Send<T>(string path, object body, TimeSpan timeout, CancellationToken ct) where T : class
     {
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        cts.CancelAfter(Timeout);
+        cts.CancelAfter(timeout);
         try
         {
             using var request = new HttpRequestMessage(HttpMethod.Post, path)
@@ -174,11 +214,21 @@ public sealed class MoneyServiceClient : IMoneyService, IDisposable
 
     private sealed record PayoutBody(Guid TxnId, Guid OwnerId, MoneyWho To, long Amount, Guid RegionId, Guid ObjectId, string ObjectName);
 
-    private sealed record ChargeBody(Guid TxnId, string Type, MoneyWho Payer, long Amount, Guid? PayTo);
+    private sealed record ChargeBody(Guid TxnId, string Type, MoneyWho Payer, long Amount, Guid? PayTo, Guid RegionId);
 
     private sealed record HoldBody(Guid TxnId, string Kind, MoneyWho Buyer, MoneyWho Seller, long Amount, Guid RegionId, Guid? ObjectId, string? ObjectName);
 
     private sealed record SettleBody(Guid TxnId, long HoldId);
+
+    private sealed record HealthBody(int Protocol, IReadOnlyList<Guid> Regions);
+
+    private sealed record HealthWire(bool Ok, int Regions);
+
+    private sealed record HandoffBody(Guid Id, Guid SessionId, Guid FromRegion, Guid ToRegion, string Kind);
+
+    private sealed record CancelBody(Guid SessionId, Guid FromRegion);
+
+    private sealed record ArrivedBody(Guid Id, Guid SessionId, Guid AgentId, Guid RegionId);
 
     private sealed record EconomyWire(string? Code, string? CurrencySymbol, long UploadFee, long ClassifiedFee, bool VisitorWallets, bool ScriptPayouts,
         long MaxPayment);

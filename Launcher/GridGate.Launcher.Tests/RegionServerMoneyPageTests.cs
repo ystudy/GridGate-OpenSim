@@ -42,10 +42,12 @@ public sealed class RegionServerMoneyPageTests
         new(host, 8002, 8003, "Avalon", $"http://{host}:8002/", LauncherVersion.Current, false, 8004, 8006,
             MoneyMode.Play, 8000, new string('A', 64), $"http://{host}:8001/economy/");
 
-    private static LauncherFactory Make(FakePairClient pair, OwnerPlan plan = OwnerPlan.RegionServer, ServerPairing? pairing = null)
+    private static LauncherFactory Make(FakePairClient pair, OwnerPlan plan = OwnerPlan.RegionServer, ServerPairing? pairing = null,
+        IReadOnlyList<RegionSettings>? regions = null)
     {
         var f = new LauncherFactory(s => s with
         {
+            Regions = regions is null ? s.Regions : [.. regions],
             SetupToken = null,
             GridName = "Avalon",
             Plan = plan,
@@ -133,13 +135,86 @@ public sealed class RegionServerMoneyPageTests
 
         var doc = await PostAsync(await SignedInAsync(f), "Pair", new() { ["Code"] = Code });
 
-        Assert.Contains("Paired. Restart the regions to start taking payments.", MainText(doc));
+        Assert.Contains("Paired.", MainText(doc));
         Assert.Equal([Code], pair.Codes);
         Assert.Equal("the-key", f.Grid.CurrentSettings().Money.Pairing?.Key);
         var line = Assert.Single(Audit(f), a => a.GetProperty("action").GetString() == "money-pair");
         Assert.Equal("ok", line.GetProperty("result").GetString());
         Assert.DoesNotContain(Code.Replace("-", ""), line.GetRawText().Replace("-", ""));
         Assert.DoesNotContain("the-key", line.GetRawText());
+    }
+
+    private static readonly Guid NearA = Guid.Parse("60000000-0000-0000-0000-000000000001");
+    private static readonly Guid NearB = Guid.Parse("60000000-0000-0000-0000-000000000002");
+    private static readonly Guid FarC = Guid.Parse("60000000-0000-0000-0000-000000000003");
+
+    /// <summary>Two regions in program Near, one in program Far.</summary>
+    private static IReadOnlyList<RegionSettings> ThreeRegions() =>
+    [
+        new RegionSettings("Near", "Near A", NearA, X: 1000, UdpPort: 9001),
+        new RegionSettings("Near", "Near B", NearB, X: 1001, UdpPort: 9001),
+        new RegionSettings("Far", "Far C", FarC, X: 1002, UdpPort: 9002),
+    ];
+
+    private static string[] Restarts(LauncherFactory f) =>
+        f.Grid.Snapshot().Where(c => c.StartsWith("RegionPower Restart ", StringComparison.Ordinal)).ToArray();
+
+    /// <summary>Waits until <paramref name="count"/> region restarts were asked for, then a moment more for any extra one.</summary>
+    private static async Task<string[]> RestartsAsync(LauncherFactory f, int count)
+    {
+        for (var i = 0; i < 100 && Restarts(f).Length < count; i++) await Task.Delay(50, Ct);
+        await Task.Delay(300, Ct);
+        return Restarts(f);
+    }
+
+    [Fact]
+    public async Task Pairing_restarts_each_running_region_program_once()
+    {
+        await using var f = Make(new FakePairClient(), regions: ThreeRegions());
+
+        var doc = await PostAsync(await SignedInAsync(f), "Pair", new() { ["Code"] = Code });
+
+        Assert.Contains("Paired. Restarting this server's regions so they start taking payments.", MainText(doc));
+        var restarts = await RestartsAsync(f, 2);
+        Assert.Equal(2, restarts.Length);
+        Assert.Contains($"RegionPower Restart {FarC}", restarts);
+        Assert.Single(restarts, c => c == $"RegionPower Restart {NearA}" || c == $"RegionPower Restart {NearB}");
+    }
+
+    [Fact]
+    public async Task Pairing_leaves_a_stopped_program_stopped()
+    {
+        await using var f = Make(new FakePairClient(), regions: ThreeRegions());
+        f.Grid.ProgramStates["Far"] = GridGate.Launcher.Core.Processes.ProcessState.Stopped;
+
+        await PostAsync(await SignedInAsync(f), "Pair", new() { ["Code"] = Code });
+
+        var only = Assert.Single(await RestartsAsync(f, 1));
+        Assert.True(only == $"RegionPower Restart {NearA}" || only == $"RegionPower Restart {NearB}", only);
+    }
+
+    [Fact]
+    public async Task Pairing_with_no_region_running_restarts_nothing_and_says_so()
+    {
+        await using var f = Make(new FakePairClient(), regions: ThreeRegions());
+        f.Grid.ProgramStates["Near"] = GridGate.Launcher.Core.Processes.ProcessState.Stopped;
+        f.Grid.ProgramStates["Far"] = GridGate.Launcher.Core.Processes.ProcessState.Stopped;
+
+        var doc = await PostAsync(await SignedInAsync(f), "Pair", new() { ["Code"] = Code });
+
+        Assert.Contains("Paired. This server's regions take payments once they start.", MainText(doc));
+        Assert.Empty(await RestartsAsync(f, 0));
+    }
+
+    [Fact]
+    public async Task A_refused_pairing_restarts_nothing()
+    {
+        var pair = new FakePairClient { Next = new(null, "The Grid Asset Server didn't accept this code.") };
+        await using var f = Make(pair, regions: ThreeRegions());
+
+        await PostAsync(await SignedInAsync(f), "Pair", new() { ["Code"] = Code });
+
+        Assert.Empty(await RestartsAsync(f, 0));
     }
 
     [Fact]

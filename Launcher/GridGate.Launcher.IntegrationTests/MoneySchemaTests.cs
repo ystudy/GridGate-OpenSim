@@ -19,7 +19,7 @@ public sealed class MoneySchemaTests(MoneyMariaDb maria) : IClassFixture<MoneyMa
         await db.EnsureSchemaAsync();
 
         Assert.Equal(3, await db.Scalar("SELECT COUNT(*) FROM `money`.`accounts`"));
-        Assert.Equal("2", await db.Text("SELECT value FROM `money`.`state` WHERE name = 'schema_version'"));
+        Assert.Equal("3", await db.Text("SELECT value FROM `money`.`state` WHERE name = 'schema_version'"));
         Assert.Equal("0", await db.Text("SELECT value FROM `money`.`state` WHERE name = 'frozen'"));
         Assert.Equal("system:bank", await db.Text("SELECT home FROM `money`.`accounts` WHERE id = 1"));
         Assert.Equal("system:fees", await db.Text("SELECT home FROM `money`.`accounts` WHERE id = 2"));
@@ -53,8 +53,74 @@ public sealed class MoneySchemaTests(MoneyMariaDb maria) : IClassFixture<MoneyMa
         await db.EnsureSchemaAsync();
 
         Assert.Equal("utf8mb4_bin", await HomeCollation(db));
-        Assert.Equal("2", await db.Text("SELECT value FROM `money`.`state` WHERE name = 'schema_version'"));
+        Assert.Equal("3", await db.Text("SELECT value FROM `money`.`state` WHERE name = 'schema_version'"));
         Assert.Equal(3, await db.Scalar("SELECT COUNT(*) FROM `money`.`accounts`"));
+    }
+
+    private static readonly string[] V3Tables =
+        ["session_locations", "handoffs", "region_pins", "key_heard", "region_heard", "limit_overrides", "alerts", "key_locks"];
+
+    [Fact]
+    public async Task Fresh_schema_is_version_3_with_the_new_tables()
+    {
+        var db = await maria.FreshAsync();
+
+        await db.EnsureSchemaAsync();
+
+        Assert.Equal("3", await db.Text("SELECT value FROM `money`.`state` WHERE name = 'schema_version'"));
+        foreach (var table in V3Tables)
+            Assert.Equal(1, await db.Scalar($"SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = 'money' AND TABLE_NAME = '{table}'"));
+        foreach (var table in new[] { "entries", "holds" })
+            Assert.Equal("varchar(64)", await db.Text($"SELECT COLUMN_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = 'money' AND TABLE_NAME = '{table}' AND COLUMN_NAME = 'key_id'"));
+        Assert.Equal(3, await db.Scalar("SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = 'money' AND TABLE_NAME = 'entries' AND INDEX_NAME = 'key_type_at'"));
+        // A Conflict alert names both servers, and a warning says whether it came from the key's own repeated claims.
+        Assert.Equal("varchar(64)", await db.Text("SELECT COLUMN_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = 'money' AND TABLE_NAME = 'alerts' AND COLUMN_NAME = 'other_key_id'"));
+        Assert.Equal("tinyint(4)", await db.Text("SELECT COLUMN_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = 'money' AND TABLE_NAME = 'alerts' AND COLUMN_NAME = 'repeated'"));
+        // Where a person is (the website) is found by agent, newest first.
+        Assert.Equal(2, await db.Scalar("SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = 'money' AND TABLE_NAME = 'session_locations' AND INDEX_NAME = 'agent_updated'"));
+    }
+
+    [Fact]
+    public async Task Version_2_database_moves_to_3_and_keeps_entries()
+    {
+        var db = await maria.FreshAsync();
+        await db.EnsureSchemaAsync();
+        await Seed(db);
+        // Make it a version 2 database: no key_id, no new tables.
+        await db.Sql("""
+            ALTER TABLE `money`.`entries` DROP INDEX key_type_at;
+            ALTER TABLE `money`.`entries` DROP COLUMN key_id;
+            ALTER TABLE `money`.`holds` DROP COLUMN key_id;
+            DROP TABLE `money`.`session_locations`, `money`.`handoffs`, `money`.`region_pins`, `money`.`key_heard`, `money`.`region_heard`,
+              `money`.`limit_overrides`, `money`.`alerts`, `money`.`key_locks`;
+            UPDATE `money`.`state` SET value = '2' WHERE name = 'schema_version';
+            """);
+
+        await db.EnsureSchemaAsync();
+
+        Assert.Equal("3", await db.Text("SELECT value FROM `money`.`state` WHERE name = 'schema_version'"));
+        Assert.Equal(1, await db.Scalar("SELECT COUNT(*) FROM `money`.`entries`"));
+        Assert.Equal(1, await db.Scalar("SELECT COUNT(*) FROM `money`.`entries` WHERE key_id IS NULL"));
+        Assert.Equal(1, await db.Scalar("SELECT COUNT(*) FROM `money`.`holds` WHERE key_id IS NULL"));
+        foreach (var table in V3Tables)
+            Assert.Equal(1, await db.Scalar($"SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = 'money' AND TABLE_NAME = '{table}'"));
+        Assert.Equal(3, await db.Scalar("SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = 'money' AND TABLE_NAME = 'entries' AND INDEX_NAME = 'key_type_at'"));
+    }
+
+    [Fact]
+    public async Task Moneyuser_can_delete_old_locations_but_not_entries()
+    {
+        var db = await maria.FreshAsync();
+        await db.EnsureSchemaAsync();
+        await Seed(db);
+        await AsMoneyuser(db, $"INSERT INTO `money`.`session_locations` (session_id, agent_id, state, updated) VALUES ('{Guid.NewGuid()}', '{Guid.NewGuid()}', 'in', UTC_TIMESTAMP(6))");
+
+        await AsMoneyuser(db, "DELETE FROM `money`.`session_locations` WHERE updated < UTC_TIMESTAMP(6)");
+
+        Assert.Equal(0, await db.Scalar("SELECT COUNT(*) FROM `money`.`session_locations`"));
+        var e = await Assert.ThrowsAsync<MySqlException>(() => AsMoneyuser(db, "DELETE FROM `money`.`entries`"));
+        Assert.Contains("denied", e.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(1, await db.Scalar("SELECT COUNT(*) FROM `money`.`entries`"));
     }
 
     [Fact]

@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using System.Threading;
 using System.Threading.Tasks;
 using log4net;
 using Mono.Addins;
@@ -13,6 +14,7 @@ using OpenSim.Framework;
 using OpenSim.Region.Framework.Interfaces;
 using OpenSim.Region.Framework.Scenes;
 using OpenSim.Services.Interfaces;
+using GridRegion = OpenSim.Services.Interfaces.GridRegion;
 
 namespace GridGate.Region.Money;
 
@@ -29,6 +31,7 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
     private static readonly ILog Log = LogManager.GetLogger(MethodBase.GetCurrentMethod()!.DeclaringType);
     private static readonly TimeSpan EconomyFresh = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan LandHoldLimit = TimeSpan.FromSeconds(3);
+    private static readonly TimeSpan HealthEvery = TimeSpan.FromMinutes(3);
     // Until the service first answers: no fees are known (so none are offered free, R-8), and visitors and payouts are off.
     private static readonly EconomyInfo NoEconomy = new("C$", 0, 0, false, false, 1_000_000);
 
@@ -46,6 +49,7 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
     private EconomyInfo? _economy;
     private DateTime _economyAt = DateTime.MinValue;
     private bool _economyRefreshing;
+    private ITimer? _healthTimer;
 
     private sealed record LandHold(UUID Agent, long HoldId, Payer Payer, MoneyWho Seller, DateTime At);
 
@@ -54,6 +58,12 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
 
     /// <summary>False on a Region Server not paired with its grid's money yet: every payment is refused (money plan 3).</summary>
     internal bool IsPaired { get; private set; }
+
+    /// <summary>
+    /// The one place reporter of this program (the module is shared by all its regions), made with the first region: one
+    /// queue, so a move between two of its regions is handed off before the arrival it vouches for.
+    /// </summary>
+    internal PlaceReporter? Places { get; private set; }
 
     public string Name => ModuleName;
 
@@ -112,11 +122,28 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
         if (!Enabled) return;
         // Registered here, not in RegionLoaded: YEngine hooks OnObjectPaid in its own RegionLoaded.
         scene.RegisterModuleInterface<IMoneyModule>(this);
-        lock (_scenes) _scenes.Add(scene);
+        lock (_scenes)
+        {
+            _scenes.Add(scene);
+            Places ??= new PlaceReporter(_client!, TimeProvider.System, text => Log.Warn("[GRIDGATE MONEY]: " + text));
+            _healthTimer ??= TimeProvider.System.CreateTimer(_ => TimedHealth(), null, HealthEvery, HealthEvery);
+        }
         var regionId = scene.RegionInfo.RegionID;
         _actions[regionId] = new MoneyActions(_client!, regionId.Guid, KnownEconomy, new View(this));
         scene.EventManager.OnNewClient += OnNewClient;
         scene.EventManager.OnClientClosed += OnClientClosed;
+        // Where avatars are: reported in the background, never holding up a teleport or crossing. A teleport or crossing is
+        // remembered when it starts and handed off once the avatar is let go here (or has arrived in another of this
+        // program's regions), so one that fails hands nobody over.
+        scene.EventManager.OnMakeRootAgent += OnMakeRootAgent;
+        scene.EventManager.OnTeleportStart += OnTeleportStart;
+        scene.EventManager.OnTeleportFail += OnTeleportFail;
+        scene.EventManager.OnCrossAgentToNewRegion += OnCrossAgentToNewRegion;
+        scene.EventManager.OnMakeChildAgent += OnMakeChildAgent;
+        // Reported now and again once the region has started. OpenSim adds the region before registering it with the grid,
+        // so a Region Server's key doesn't cover it yet and the service ignores it in this first report.
+        scene.EventManager.OnRegionStarted += OnRegionStarted;
+        ReportHealth();
     }
 
     public void RegionLoaded(Scene scene)
@@ -136,11 +163,70 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
         scene.UnregisterModuleInterface<IMoneyModule>(this);
         scene.EventManager.OnNewClient -= OnNewClient;
         scene.EventManager.OnClientClosed -= OnClientClosed;
+        scene.EventManager.OnMakeRootAgent -= OnMakeRootAgent;
+        scene.EventManager.OnTeleportStart -= OnTeleportStart;
+        scene.EventManager.OnTeleportFail -= OnTeleportFail;
+        scene.EventManager.OnCrossAgentToNewRegion -= OnCrossAgentToNewRegion;
+        scene.EventManager.OnMakeChildAgent -= OnMakeChildAgent;
+        scene.EventManager.OnRegionStarted -= OnRegionStarted;
         lock (_scenes) _scenes.Remove(scene);
         _actions.TryRemove(scene.RegionInfo.RegionID, out _);
+        // At once, so the service stops counting the removed region as run here.
+        ReportHealth();
     }
 
-    public void Close() => (_client as IDisposable)?.Dispose();
+    public void Close()
+    {
+        _healthTimer?.Dispose();
+        Places?.Dispose();
+        (_client as IDisposable)?.Dispose();
+    }
+
+    // ---- where avatars are --------------------------------------------------------------------------
+
+    /// <summary>The program's regions, at once on each new region and every <see cref="HealthEvery"/>.</summary>
+    private void ReportHealth()
+    {
+        List<Guid> regions;
+        lock (_scenes) regions = _scenes.Select(s => s.RegionInfo.RegionID.Guid).ToList();
+        Places?.Health(regions);
+    }
+
+    /// <summary>The health timer's callback, on a pool thread nobody waits for: a failure (say, at shutdown) is logged by type only.</summary>
+    private void TimedHealth()
+    {
+        try
+        {
+            ReportHealth();
+        }
+        catch (Exception e)
+        {
+            Log.Warn($"[GRIDGATE MONEY]: The health report failed with {e.GetType().Name}.");
+        }
+    }
+
+    private void OnRegionStarted(Scene scene)
+    {
+        if (Enabled) ReportHealth();
+    }
+
+    private void OnMakeRootAgent(ScenePresence sp) => Places?.Arrived(sp);
+
+    // Raised by the scene the avatar is leaving, so the client's scene is the region it leaves.
+    private void OnTeleportStart(IClientAPI client, GridRegion destination, GridRegion finalDestination, uint teleportFlags, bool gridLogout)
+    {
+        if (client.Scene?.RegionInfo is { } from) Places?.TeleportStarting(client, from.RegionID.Guid, finalDestination, gridLogout);
+    }
+
+    private void OnTeleportFail(IClientAPI client, bool gridLogout)
+    {
+        if (client.Scene?.RegionInfo is { } from) Places?.TeleportFailed(client, from.RegionID.Guid);
+    }
+
+    private void OnCrossAgentToNewRegion(ScenePresence sp, bool isFlying, GridRegion newRegion) => Places?.Crossing(sp, newRegion);
+
+    // Raised by the scene the avatar is leaving, once a teleport or crossing out of it has succeeded.
+    private void OnMakeChildAgent(ScenePresence sp) => Places?.Released(sp);
 
     // ---- economy settings ----------------------------------------------------------------------------
 

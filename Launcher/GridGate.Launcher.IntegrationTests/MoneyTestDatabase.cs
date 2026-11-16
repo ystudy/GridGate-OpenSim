@@ -86,6 +86,16 @@ public sealed class MoneyMariaDb : IAsyncLifetime
               `Logout` CHAR(16) NOT NULL DEFAULT '0',
               PRIMARY KEY (`UserID`)
             ) ENGINE=InnoDB DEFAULT CHARSET=latin1;
+            CREATE TABLE `robust`.`gridgate_session_starts` (
+              `Id` BIGINT NOT NULL AUTO_INCREMENT,
+              `SessionID` CHAR(36) NOT NULL,
+              `UserID` CHAR(36) NOT NULL,
+              `RegionID` CHAR(36) NOT NULL,
+              `Source` VARCHAR(16) NOT NULL,
+              `At` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              PRIMARY KEY (`Id`),
+              KEY (`SessionID`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
             """);
         return db;
     }
@@ -182,6 +192,13 @@ public sealed class MoneyTestDatabase(LauncherSettings settings)
     /// <summary>Puts an avatar in a region, as Robust's presence service does at login or the Gatekeeper for a visitor.</summary>
     public Task AddPresence(Guid user, Guid region, Guid session, Guid secure) =>
         Sql($"INSERT INTO `robust`.`Presence` (`UserID`, `RegionID`, `SessionID`, `SecureSessionID`) VALUES ('{user}', '{region}', '{session}', '{secure}')");
+
+    /// <summary>Records a session start the way Robust's presence service does (Task 1's gridgate_session_starts); returns the new Id.</summary>
+    public async Task<long> AddSessionStart(Guid session, Guid user, Guid region, string source)
+    {
+        await Sql($"INSERT INTO `robust`.`gridgate_session_starts` (`SessionID`, `UserID`, `RegionID`, `Source`) VALUES ('{session}', '{user}', '{region}', '{source}')");
+        return await Scalar($"SELECT MAX(`Id`) FROM `robust`.`gridgate_session_starts` WHERE `SessionID` = '{session}'");
+    }
 
     /// <summary>Registers a region with Robust the way a region does: its id, the address it reports (serverIP) and its UDP port (serverPort).</summary>
     public Task AddRegion(Guid id, string serverIp, int port = 9000) =>

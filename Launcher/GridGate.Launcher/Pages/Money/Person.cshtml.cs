@@ -13,13 +13,68 @@ using Microsoft.AspNetCore.Mvc.RazorPages;
 namespace GridGate.Launcher.Pages.Money;
 
 /// <summary>
-/// One person's coins (<c>/money/person?id=…&amp;home=…</c>; money design §9.1): balance, the newest history, and for
-/// admins give, take, freeze and the script payout switch. A visitor is named by id and home grid, and can be moved to a
-/// new home address (money plan 3). Opening the page never creates a wallet. Only while money is on.
+/// One person's coins (<c>/money/person?id=…&amp;home=…</c>; money design §9.1): balance, the newest history, whether money
+/// works for them right now and their daily limits, and for admins give, take, freeze and
+/// the script payout switch; the owner may give them limits of their own. A visitor is named by id and home grid, and can
+/// be moved to a new home address (money plan 3). Opening the page never creates a wallet. Only while money is on.
 /// </summary>
 public sealed class PersonModel(MoneyGate gate, IMoneyBooks books, AuditLog audit, IRobustClient robust, IVisitorDirectory visitors,
-    Func<LauncherSettings> settings) : PageModel
+    Func<LauncherSettings> settings, IMoneyRegions regions, TimeProvider time) : PageModel
 {
+    /// <summary>Whether money works for them now, in words, and the guide heading that explains why not.</summary>
+    public string MoneyHere { get; private set; } = "";
+    public string? MoneyHereAnchor { get; private set; }
+
+    /// <summary>Their daily limits and use; null without a wallet.</summary>
+    public LimitView? Limits { get; private set; }
+
+    /// <summary>Only the owner gives a person limits of their own.</summary>
+    public bool CanSetLimits { get; private set; }
+
+    /// <summary>"Daily spending: 2,300 of 10,000 used (grid default)."</summary>
+    public static string LimitLine(string what, long used, long limit, bool own, DateTime? until) =>
+        $"{what}: {N(used)} of {N(limit)} used ({(own ? "own limit" + (until is { } u ? $" until {u:yyyy-MM-dd HH:mm} UTC" : "") : "grid default")}).";
+
+    /// <summary>
+    /// The owner's limits for this person: any amount, or empty for the grid default (both
+    /// empty goes back to the defaults). An end date is optional: the limits end at 00:00 UTC on it. Needs a reason; audited.
+    /// </summary>
+    public async Task<IActionResult> OnPostLimitsAsync(long? dailySpend, long? dailyPayout, DateTime? until, CancellationToken ct)
+    {
+        if (!Owner) return StatusCode(StatusCodes.Status403Forbidden);
+        if (await NameAsync(ct) is not { } name) return NotFound();
+        var removing = dailySpend is null && dailyPayout is null;
+        // The form's date is a day in UTC, so the server's own time zone can't move the end.
+        DateTime? end = removing || until is not { } day ? null : DateTime.SpecifyKind(day.Date, DateTimeKind.Utc);
+        if (string.IsNullOrWhiteSpace(Reason))
+        {
+            Error = "Say why.";
+        }
+        else if (!ModelState.IsValid)
+        {
+            Error = "Each limit must be a whole number, or empty for the grid default, and the end a date.";
+        }
+        else if (MoneyPageRules.LimitProblem(dailySpend, dailyPayout) is { } problem)
+        {
+            Error = problem;
+        }
+        else if (end is { } e && e <= time.GetUtcNow().UtcDateTime)
+        {
+            Error = "The end date must be a day still to come: the limits end at 00:00 UTC on it.";
+        }
+        else
+        {
+            var o = await books.SetPersonLimitsAsync(Who, dailySpend, dailyPayout, end,
+                new StaffAction(User.Identity?.Name ?? "staff", LogText.Clean(Reason.Trim(), MoneyPageRules.MaxReason)), ct);
+            audit.Write(User, Ip, "money-person-limits", LogText.Clean(name), MoneyPageRules.Code(o) + " " + MoneyPageRules.LimitsText(dailySpend, dailyPayout)
+                + (end is { } ends ? " until " + ends.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) : ""));
+            if (o == MoneyOutcome.Ok) Notice = removing ? "Back to the grid defaults." : "Saved.";
+            else Error = MoneyPageRules.Words(o);
+        }
+        await ShowAsync(ct);
+        return Page();
+    }
+
     public const int HistoryLines = 100;
 
     [BindProperty(SupportsGet = true)] public Guid Id { get; set; }
@@ -139,6 +194,8 @@ public sealed class PersonModel(MoneyGate gate, IMoneyBooks books, AuditLog audi
 
     private bool Admin => StaffSignIn.RoleOf(User) >= StaffRole.Admin;
 
+    private bool Owner => StaffSignIn.RoleOf(User) == StaffRole.Owner;
+
     private string? Ip => HttpContext.Connection.RemoteIpAddress?.ToString();
 
     private void Done(MoneyOutcome o)
@@ -174,6 +231,7 @@ public sealed class PersonModel(MoneyGate gate, IMoneyBooks books, AuditLog audi
         Name = name;
         Symbol = settings().Money.CurrencySymbol;
         CanChange = Admin;
+        CanSetLimits = Owner;
         try
         {
             var balance = await books.FindBalanceAsync(Who, ct);
@@ -182,11 +240,38 @@ public sealed class PersonModel(MoneyGate gate, IMoneyBooks books, AuditLog audi
             DatabaseDown = balance.Outcome == MoneyOutcome.Unavailable;
             Flags = await books.AccountFlagsAsync(Who, ct);
             History = await books.HistoryAsync(Who, HistoryLines, ct);
+            Limits = await books.PersonLimitsAsync(Who, ct);
         }
         catch (MoneyUnavailableException)
         {
             DatabaseDown = true;
         }
+        try
+        {
+            (MoneyHere, MoneyHereAnchor) = await MoneyHereAsync(ct);
+        }
+        catch (MoneyUnavailableException)
+        {
+            MoneyHere = "Can't be read right now.";
+        }
         return true;
+    }
+
+    /// <summary>
+    /// Whether money works for them now: a visitor from a grid whose visitors can't use money
+    /// is told so; anyone else by where their newest logged-in session is.
+    /// </summary>
+    private async Task<(string, string?)> MoneyHereAsync(CancellationToken ct)
+    {
+        var s = settings();
+        if (!Who.IsResident && s.Money.EffectiveVisitors == VisitorMoney.Off)
+            return ("Off: visitor money is off on this grid.", MoneyVerifyText.VisitorsAnchor);
+        if (!Who.IsResident && s.Money.EffectiveVisitors == VisitorMoney.Listed && !s.Money.GridListed(Who.Home))
+            return ("Off: their home grid isn't on your list of grids.", MoneyVerifyText.VisitorsAnchor);
+        var where = await regions.WhereAgentAsync(Id, ct);
+        if (where?.RegionId is not { } id) return MoneyVerifyText.MoneyHere(where, null, null);
+        // Verified where they are is not enough: the region itself must still be verified for payments there to work.
+        var region = (await regions.AllAsync(s, ct)).FirstOrDefault(r => r.RegionId == id);
+        return MoneyVerifyText.MoneyHere(where, region, region?.Name ?? s.Regions.FirstOrDefault(r => r.Uuid == id)?.Name);
     }
 }

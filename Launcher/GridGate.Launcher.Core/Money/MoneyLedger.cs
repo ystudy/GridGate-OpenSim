@@ -37,13 +37,16 @@ public sealed partial class MoneyLedger(
             return new MoneyResult(MoneyOutcome.Ok, account.Balance);
         }, ct);
 
-    /// <summary>One avatar paying another (or an object's owner).</summary>
+    /// <summary>One avatar paying another (or an object's owner), within the payer's and the key's daily limits.</summary>
     public Task<MoneyResult> TransferAsync(TransferRequest r, CancellationToken ct)
     {
         if (!AmountOk(r.Amount)) return Task.FromResult(MoneyResult.Of(MoneyOutcome.BadAmount));
         if (Same(r.From, r.To)) return Task.FromResult(MoneyResult.Of(MoneyOutcome.NotAllowed));
-        return Idempotent(r.TxnId, "transfer", r, (conn, tx) =>
-            MoveAsync(conn, tx, r.From, r.To, r.Amount, new Entry(r.Type, r.RegionId, r.ObjectId, r.ObjectName), ct), ct);
+        return Idempotent(r.TxnId, "transfer", r, async (conn, tx) =>
+        {
+            if (r.KeyId is { } key) await LockKeyAsync(conn, tx, key, ct);
+            return await MoveAsync(conn, tx, r.From, r.To, r.Amount, new Entry(r.Type, r.RegionId, r.ObjectId, r.ObjectName, KeyId: r.KeyId), ct);
+        }, ct);
     }
 
     // ---------------------------------------------------------------------------------------------------------------
@@ -59,7 +62,8 @@ public sealed partial class MoneyLedger(
         string? Reason = null,
         string? PaymentRef = null,
         long? Reverses = null,
-        long? HoldId = null);
+        long? HoldId = null,
+        string? KeyId = null);
 
     private bool AmountOk(long amount) => amount > 0 && amount <= settings().MaxPayment;
 
@@ -74,7 +78,7 @@ public sealed partial class MoneyLedger(
     /// </summary>
     private const string UnreadableHome = "system:unreadable";
 
-    /// <summary>Resolves both accounts and moves the coins from <paramref name="from"/> to <paramref name="to"/>, guarded.</summary>
+    /// <summary>Resolves both accounts and moves the coins from <paramref name="from"/> to <paramref name="to"/>, guarded and within the daily limits.</summary>
     private async Task<MoneyResult> MoveAsync(MySqlConnection conn, MySqlTransaction tx, AccountRef from, AccountRef to, long amount, Entry entry, CancellationToken ct)
     {
         if (await GridFrozenAsync(conn, tx, ct)) return MoneyResult.Of(MoneyOutcome.Frozen);
@@ -82,17 +86,19 @@ public sealed partial class MoneyLedger(
         if (payer is null) return MoneyResult.Of(r1);
         var (payee, r2) = await ResolveAsync(conn, tx, to, ct);
         if (payee is null) return MoneyResult.Of(r2);
-        return await MoveBetweenAsync(conn, tx, payer.Id, payee.Id, amount, entry, guarded: true, ct);
+        return await MoveBetweenAsync(conn, tx, payer.Id, payee.Id, amount, entry, guarded: true, ct, limited: true);
     }
 
     /// <summary>
     /// Locks both accounts in id order, applies any allowance due, then debits (guarded unless <paramref name="guarded"/> is
     /// false: settling a hold), credits and writes the entry. <paramref name="staffTakes"/> is staff taking coins back or
     /// refunding: the balance is still checked, but a frozen account isn't refused, since freezing an account is how staff
-    /// stop it spending while they claw coins back (money review 2026-11-15, L-7).
+    /// stop it spending while they claw coins back. <paramref name="limited"/> is a region
+    /// spending from the payer: it must fit the payer's daily limit and, with <see cref="Entry.KeyId"/>, the key's, checked
+    /// once both accounts are locked (and the key before them).
     /// </summary>
     private async Task<MoneyResult> MoveBetweenAsync(MySqlConnection conn, MySqlTransaction tx, long fromId, long toId, long amount, Entry entry, bool guarded, CancellationToken ct,
-        bool staffTakes = false)
+        bool staffTakes = false, bool limited = false)
     {
         var first = await LockAsync(conn, tx, Math.Min(fromId, toId), ct);
         var second = await LockAsync(conn, tx, Math.Max(fromId, toId), ct);
@@ -102,6 +108,8 @@ public sealed partial class MoneyLedger(
         if (guarded)
         {
             if (payer.Frozen && !staffTakes) return MoneyResult.Of(MoneyOutcome.AccountFrozen);
+            if (limited && await SpendAllowedAsync(conn, tx, payer.Id, entry.KeyId, amount, ct) is not MoneyOutcome.Ok and var over)
+                return MoneyResult.Of(over);
             var debited = await ExecAsync(conn, tx,
                 "UPDATE accounts SET balance = balance - @amt WHERE id = @id AND (frozen = 0 OR @staff) AND (kind = 'Bank' OR balance >= @amt)",
                 ct, ("@amt", amount), ("@id", payer.Id), ("@staff", staffTakes));
@@ -121,8 +129,8 @@ public sealed partial class MoneyLedger(
     private async Task<long> WriteEntryAsync(MySqlConnection conn, MySqlTransaction tx, long fromId, long toId, long amount, long fromAfter, long toAfter, Entry e, CancellationToken ct)
     {
         await using var cmd = new MySqlCommand("""
-            INSERT INTO entries (at, type, from_id, to_id, amount, from_after, to_after, region_id, object_id, object_name, staff, reason, payment_ref, reverses, hold_id)
-            VALUES (@at, @type, @from, @to, @amt, @fa, @ta, @region, @object, @name, @staff, @reason, @ref, @rev, @hold)
+            INSERT INTO entries (at, type, from_id, to_id, amount, from_after, to_after, region_id, object_id, object_name, staff, reason, payment_ref, reverses, hold_id, key_id)
+            VALUES (@at, @type, @from, @to, @amt, @fa, @ta, @region, @object, @name, @staff, @reason, @ref, @rev, @hold, @key)
             """, conn, tx);
         cmd.Parameters.AddWithValue("@at", Now);
         cmd.Parameters.AddWithValue("@type", e.Type);
@@ -139,6 +147,7 @@ public sealed partial class MoneyLedger(
         cmd.Parameters.AddWithValue("@ref", Trim(e.PaymentRef, 128));
         cmd.Parameters.AddWithValue("@rev", e.Reverses);
         cmd.Parameters.AddWithValue("@hold", e.HoldId);
+        cmd.Parameters.AddWithValue("@key", e.KeyId);
         await cmd.ExecuteNonQueryAsync(ct);
         return cmd.LastInsertedId;
     }
@@ -158,9 +167,13 @@ public sealed partial class MoneyLedger(
         if (who.AgentId == Guid.Empty || home.StartsWith("system:", StringComparison.Ordinal) || home.Length > 255)
             return (null, MoneyOutcome.NoWallet);
         var resident = home.Length == 0;
-        var visitorsOn = settings().VisitorWallets;
-        if (!resident && !visitorsOn && !staff)
-            return (null, MoneyOutcome.VisitorsOff);
+        var s = settings();
+        var visitorsOn = s.EffectiveVisitors != VisitorMoney.Off;
+        if (!resident && !staff)
+        {
+            if (!visitorsOn) return (null, MoneyOutcome.VisitorsOff);
+            if (s.EffectiveVisitors == VisitorMoney.Listed && !s.GridListed(home)) return (null, MoneyOutcome.VisitorGridNotListed);
+        }
 
         if (await FindAsync(conn, tx, who.AgentId, home, ct) is { } found)
             return (found, MoneyOutcome.Ok);

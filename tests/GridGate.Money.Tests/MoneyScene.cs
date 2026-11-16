@@ -70,24 +70,42 @@ internal sealed class MoneyScene
         beforeMoney?.Invoke(scene);
 
         var service = new FakeMoneyService { Economy = economy ?? new EconomyInfo("C$", 0, 0, true, true, 1_000_000) };
-        var module = new GridGateMoneyModule();
-        module.Initialise(config);
-        Assert.True(module.Enabled);
-        var field = typeof(GridGateMoneyModule).GetField("_client", BindingFlags.NonPublic | BindingFlags.Instance)
-                    ?? throw new InvalidOperationException("GridGateMoneyModule no longer keeps its client in _client.");
-        (field.GetValue(module) as IDisposable)?.Dispose();
-        field.SetValue(module, service);
-
-        module.PostInitialise();
-        module.AddRegion(scene);
-        scene.AddRegionModule(module.Name, module);
-        module.RegionLoaded(scene);
-        scene.SetModuleInterfaces();
+        var module = NewModule(service, config);
+        AddTo(module, scene);
 
         var region = new MoneyScene { Scene = scene, Module = module, Service = service };
         region.WaitForEconomy(service.Economy!);
         return region;
     }
+
+    /// <summary>The module, initialised from <paramref name="config"/> (default <see cref="Config"/>), talking to <paramref name="service"/>.</summary>
+    public static GridGateMoneyModule NewModule(FakeMoneyService service, IConfigSource? config = null)
+    {
+        var module = new GridGateMoneyModule();
+        module.Initialise(config ?? Config());
+        Assert.True(module.Enabled);
+        var field = typeof(GridGateMoneyModule).GetField("_client", BindingFlags.NonPublic | BindingFlags.Instance)
+                    ?? throw new InvalidOperationException("GridGateMoneyModule no longer keeps its client in _client.");
+        (field.GetValue(module) as IDisposable)?.Dispose();
+        field.SetValue(module, service);
+        module.PostInitialise();
+        return module;
+    }
+
+    /// <summary>Loads <paramref name="module"/> into <paramref name="scene"/> as OpenSim loads a shared module.</summary>
+    public static void AddTo(GridGateMoneyModule module, Scene scene)
+    {
+        module.AddRegion(scene);
+        scene.AddRegionModule(module.Name, module);
+        module.RegionLoaded(scene);
+        scene.SetModuleInterfaces();
+    }
+
+    /// <summary>Waits until the module has sent every place report queued so far.</summary>
+    public void FlushPlaces() => Flush(Module);
+
+    public static void Flush(GridGateMoneyModule module) =>
+        Assert.True(module.Places!.FlushAsync().Wait(TimeSpan.FromSeconds(15)), "The module's place reports never went out.");
 
     /// <summary>The module asks the service for its settings in the background; waits until it has them.</summary>
     private void WaitForEconomy(EconomyInfo economy)
@@ -120,6 +138,18 @@ internal sealed class MoneyScene
             var call = Service.Of(method).FirstOrDefault(c => match is null || match(c));
             if (call is not null) return call;
             Assert.True(DateTime.UtcNow < deadline, $"No {method} call reached the money service.");
+            Thread.Sleep(10);
+        }
+    }
+
+    /// <summary>Waits until the service has had a place report of <paramref name="method"/>.</summary>
+    public Call WaitForPlace(string method)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(15);
+        while (true)
+        {
+            if (Service.PlacesOf(method).FirstOrDefault() is { } call) return call;
+            Assert.True(DateTime.UtcNow < deadline, $"No {method} report reached the money service.");
             Thread.Sleep(10);
         }
     }

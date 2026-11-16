@@ -38,6 +38,12 @@ public enum MoneyOutcome
     /// are frozen (money review 2026-11-15, L-3).
     /// </summary>
     HoldMismatch,
+
+    /// <summary>A hypergrid visitor from a grid the owner hasn't listed, on either side.</summary>
+    VisitorGridNotListed,
+
+    /// <summary>A region key's daily spending or payout limit is used up.</summary>
+    OverKeyLimit,
 }
 
 /// <summary>
@@ -85,4 +91,5 @@ public sealed record TransferRequest(
     long Amount,
     Guid? RegionId = null,
     Guid? ObjectId = null,
-    string? ObjectName = null);
+    string? ObjectName = null,
+    string? KeyId = null);

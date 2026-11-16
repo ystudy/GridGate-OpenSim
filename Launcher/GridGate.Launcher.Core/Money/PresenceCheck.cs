@@ -2,8 +2,8 @@ using MySqlConnector;
 
 namespace GridGate.Launcher.Core.Money;
 
-/// <summary>What Robust's Presence table says about a session.</summary>
-public enum PresenceOutcome { Ok, NoSession, WrongRegion, Unavailable }
+/// <summary>What Robust's Presence table says about a session. Where it is isn't Presence's to say.</summary>
+public enum PresenceOutcome { Ok, NoSession, Unavailable }
 
 /// <summary>The economy helper's check of a viewer's secure session (money design §8.5); a seam so tests can fake it.</summary>
 public interface ISecureSessionCheck
@@ -18,26 +18,30 @@ public interface ISecureSessionCheck
 public sealed class PresenceCheck(Func<CancellationToken, Task<MySqlConnection>> openRobust) : ISecureSessionCheck
 {
     /// <summary>
-    /// Ok when <paramref name="agentId"/> is logged in with both session ids and is now in one of <paramref name="regions"/>.
+    /// Ok when <paramref name="agentId"/> is logged in with both session ids, in any region. Only Robust's login and the
+    /// Gatekeeper write a Presence row, so this part is trustworthy; <c>Presence.RegionID</c> isn't, since any region can
+    /// rewrite it, so where the avatar is comes from the money service's own record instead.
     /// </summary>
-    public async Task<PresenceOutcome> CheckAsync(Guid agentId, Guid sessionId, Guid secureSessionId, IReadOnlySet<Guid> regions, CancellationToken ct)
+    public Task<PresenceOutcome> LoggedInAsync(Guid agentId, Guid sessionId, Guid secureSessionId, CancellationToken ct) =>
+        secureSessionId == Guid.Empty ? Task.FromResult(PresenceOutcome.NoSession)
+            : HasRowAsync(agentId, sessionId, secureSessionId, ct);
+
+    /// <summary>Ok when <paramref name="agentId"/> is logged in with <paramref name="sessionId"/>, in any region: what an arrival needs.</summary>
+    public Task<PresenceOutcome> HasSessionAsync(Guid agentId, Guid sessionId, CancellationToken ct) =>
+        HasRowAsync(agentId, sessionId, null, ct);
+
+    private async Task<PresenceOutcome> HasRowAsync(Guid agentId, Guid sessionId, Guid? secureSessionId, CancellationToken ct)
     {
-        if (agentId == Guid.Empty || sessionId == Guid.Empty || secureSessionId == Guid.Empty)
-            return PresenceOutcome.NoSession;
+        if (agentId == Guid.Empty || sessionId == Guid.Empty) return PresenceOutcome.NoSession;
         try
         {
             await using var conn = await openRobust(ct);
-            await using var cmd = new MySqlCommand(
-                "SELECT RegionID FROM Presence WHERE UserID = @u AND SessionID = @s AND SecureSessionID = @ss", conn);
+            await using var cmd = new MySqlCommand("SELECT 1 FROM Presence WHERE UserID = @u AND SessionID = @s" +
+                (secureSessionId is null ? "" : " AND SecureSessionID = @ss"), conn);
             cmd.Parameters.AddWithValue("@u", agentId.ToString());
             cmd.Parameters.AddWithValue("@s", sessionId.ToString());
-            cmd.Parameters.AddWithValue("@ss", secureSessionId.ToString());
-            return await cmd.ExecuteScalarAsync(ct) switch
-            {
-                Guid region => regions.Contains(region) ? PresenceOutcome.Ok : PresenceOutcome.WrongRegion,
-                string text when Guid.TryParse(text, out var region) => regions.Contains(region) ? PresenceOutcome.Ok : PresenceOutcome.WrongRegion,
-                _ => PresenceOutcome.NoSession,
-            };
+            if (secureSessionId is { } secure) cmd.Parameters.AddWithValue("@ss", secure.ToString());
+            return await cmd.ExecuteScalarAsync(ct) is null ? PresenceOutcome.NoSession : PresenceOutcome.Ok;
         }
         catch (MySqlException)
         {

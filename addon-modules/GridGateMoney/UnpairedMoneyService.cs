@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -22,7 +23,7 @@ public sealed class UnpairedMoneyService : IMoneyService
     public Task<MoneyAnswer> PayoutAsync(Guid txn, Guid ownerId, MoneyWho to, long amount, Guid regionId, Guid objectId, string objectName, CancellationToken ct) =>
         Refused;
 
-    public Task<MoneyAnswer> ChargeAsync(Guid txn, string type, MoneyWho payer, long amount, Guid? payTo, CancellationToken ct) => Refused;
+    public Task<MoneyAnswer> ChargeAsync(Guid txn, string type, MoneyWho payer, long amount, Guid? payTo, Guid regionId, CancellationToken ct) => Refused;
 
     public Task<MoneyAnswer> HoldAsync(Guid txn, string kind, MoneyWho buyer, MoneyWho seller, long amount, Guid regionId, Guid? objectId, string? objectName,
         CancellationToken ct) => Refused;
@@ -32,4 +33,12 @@ public sealed class UnpairedMoneyService : IMoneyService
     public Task<MoneyAnswer> ReturnAsync(Guid txn, long holdId, CancellationToken ct) => Refused;
 
     public Task<EconomyInfo?> EconomyAsync(CancellationToken ct) => Task.FromResult<EconomyInfo?>(null);
+
+    public Task<MoneyAnswer> HealthAsync(int protocol, IReadOnlyList<Guid> regions, CancellationToken ct) => Refused;
+
+    public Task<MoneyAnswer> HandoffAsync(Guid id, Guid sessionId, Guid fromRegion, Guid toRegion, string kind, CancellationToken ct) => Refused;
+
+    public Task<MoneyAnswer> CancelHandoffAsync(Guid sessionId, Guid fromRegion, CancellationToken ct) => Refused;
+
+    public Task<MoneyAnswer> ArrivedAsync(Guid id, Guid sessionId, Guid agentId, Guid regionId, CancellationToken ct) => Refused;
 }

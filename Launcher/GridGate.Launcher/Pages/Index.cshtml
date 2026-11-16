@@ -47,7 +47,7 @@
 <partial name="_PlainHttpWarning" />
 @foreach (var n in Model.MoneyNotices)
 {
-    <div id="@n.Id" class="@(n.Info ? "alert alert-info" : "error-box error alert alert-danger")" role="@(n.Info ? "status" : "alert")">@n.Text @if (n.Id == "money-frozen") { <a href="/money">Money</a> }</div>
+    <div id="@n.Id" class="@(n.Info ? "alert alert-info" : "error-box error alert alert-danger")" role="@(n.Info ? "status" : "alert")">@n.Text @if (n.MoneyLink) { <a href="/money">Money</a> }</div>
 }
 @if (Model.EmailWarnings.Count > 0)
 {

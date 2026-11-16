@@ -27,7 +27,7 @@ public sealed class MoneyServiceRefusalTests(MoneyMariaDb maria) : IClassFixture
     [
         ("transfer", new { txnId = Guid.NewGuid(), type = "pay_avatar", from = payer, to = payee, amount = 10, regionId = Here }),
         ("hold", new { txnId = Guid.NewGuid(), kind = "object", buyer = payer, seller = payee, amount = 10, regionId = Here, objectId = Guid.NewGuid(), objectName = "dress" }),
-        ("charge", new { txnId = Guid.NewGuid(), type = "upload_fee", payer, amount = 3 }),
+        ("charge", new { txnId = Guid.NewGuid(), type = "upload_fee", payer, amount = 3, regionId = Here }),
     ];
 
     private static object Resident(Guid id) => new { agentId = id, home = "" };
@@ -62,7 +62,7 @@ public sealed class MoneyServiceRefusalTests(MoneyMariaDb maria) : IClassFixture
     [Fact]
     public async Task An_avatar_in_another_programs_region_is_refused_on_every_move()
     {
-        // B is logged in at There, which key p1 doesn't cover.
+        // B is at There, which key p1 doesn't cover.
         var rig = await StartAsync();
 
         await AssertRefusedEverywhere(rig, WhoB(), "wrong_region");
@@ -72,9 +72,19 @@ public sealed class MoneyServiceRefusalTests(MoneyMariaDb maria) : IClassFixture
     public async Task An_avatar_who_moved_to_another_programs_region_is_refused_on_every_move()
     {
         var rig = await StartAsync();
-        await rig.Db.Sql($"UPDATE `robust`.`Presence` SET RegionID = '{There}' WHERE UserID = '{A}'");
+        await rig.MoveToThere(SessionA);
 
         await AssertRefusedEverywhere(rig, WhoA(), "wrong_region");
+    }
+
+    [Fact]
+    public async Task Presence_saying_an_avatar_is_here_is_not_enough()
+    {
+        // Any region can rewrite Presence.RegionID: B's row claims Here, the service has B at There.
+        var rig = await StartAsync();
+        await rig.Db.Sql($"UPDATE `robust`.`Presence` SET RegionID = '{Here}' WHERE UserID = '{B}'");
+
+        await AssertRefusedEverywhere(rig, WhoB(), "wrong_region");
     }
 
     [Fact]

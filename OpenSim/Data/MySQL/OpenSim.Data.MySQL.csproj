@@ -141,6 +141,9 @@
     <Compile Include="MySQLHGTravelData.cs">
       <SubType>Code</SubType>
     </Compile>
+    <Compile Include="MySQLSessionStartsData.cs">
+      <SubType>Code</SubType>
+    </Compile>
     <Compile Include="MySQLInventoryData.cs">
       <SubType>Code</SubType>
     </Compile>
@@ -196,6 +199,8 @@
     <EmbeddedResource Include="Resources\GridUserStore.migrations">
     </EmbeddedResource>
     <EmbeddedResource Include="Resources\HGTravelStore.migrations">
+    </EmbeddedResource>
+    <EmbeddedResource Include="Resources\GridGateSessionStarts.migrations">
     </EmbeddedResource>
     <EmbeddedResource Include="Resources\IM_Store.migrations">
     </EmbeddedResource>

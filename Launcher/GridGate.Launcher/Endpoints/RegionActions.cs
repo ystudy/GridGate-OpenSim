@@ -137,6 +137,50 @@ public sealed class RegionActions(IGridController grid, BackgroundWork backgroun
         });
     }
 
+    /// <summary>
+    /// Restarts every region program that is running or starting a region, one after another in the background, so each
+    /// loads the settings just saved (<paramref name="why"/> says what for, in the log). Stopped and parked regions stay as
+    /// they are. Returns the names of the regions that restart; empty when none runs. Failures are logged.
+    /// </summary>
+    public IReadOnlyList<string> RestartRunning(string why)
+    {
+        var status = grid.GetStatus();
+        var programs = status.Programs
+            .Where(p => RegionPowerPlan.IsActive(p.Process.State))
+            .Select(p => status.Regions.Where(r => r.Instance == p.Instance && r.State is RegionState.Running or RegionState.Starting).ToList())
+            .Where(regions => regions.Count > 0)
+            .ToList();
+        if (programs.Count == 0) return [];
+
+        log.LogInformation("Regions: restarting the running regions ({Why}).", why);
+        background.Run($"regions restart ({why})", async stopping =>
+        {
+            foreach (var regions in programs)
+            {
+                var first = regions[0];
+                try
+                {
+                    await grid.RegionPowerAsync(first.Id, RegionPower.Restart, stopping);
+                    log.LogInformation("Regions: restart finished for {Region}.", first.Name);
+                }
+                catch (OperationCanceledException) when (stopping.IsCancellationRequested)
+                {
+                    log.LogInformation("Regions: the launcher stopped while restarting the regions ({Why}).", why);
+                    return;
+                }
+                catch (PortConflictException e)
+                {
+                    log.LogCritical("{Message}", e.Message);
+                }
+                catch (Exception e)
+                {
+                    log.LogError(e, "Regions: restart of {Region} failed: {Message}. Restart it by hand so it loads the new settings.", first.Name, e.Message);
+                }
+            }
+        });
+        return programs.SelectMany(regions => regions.Select(r => r.Name)).ToList();
+    }
+
     /// <summary>Starts <paramref name="action"/> in the background; false when there is no such (live) region.</summary>
     public bool TryRun(Guid id, RegionPower action)
     {

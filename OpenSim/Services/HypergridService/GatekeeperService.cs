@@ -31,6 +31,7 @@ using System.Net;
 using System.Reflection;
 using System.Text.RegularExpressions;
 
+using OpenSim.Data;
 using OpenSim.Framework;
 using OpenSim.Services.Interfaces;
 using GridRegion = OpenSim.Services.Interfaces.GridRegion;
@@ -59,6 +60,8 @@ namespace OpenSim.Services.HypergridService
         private static ISimulationService m_SimulationService;
         private static IGridUserService m_GridUserService;
         private static IBansService m_BansService;
+        // GridGate: where each session starts; null means "don't record". See MERGING.md.
+        private static ISessionStartsData m_SessionStarts;
 
         private static Regex m_AllowedClientsRegex = null;
         private static Regex m_DeniedClientsRegex = null;
@@ -196,6 +199,22 @@ namespace OpenSim.Services.HypergridService
 
                 if (m_GridService is null || m_PresenceService is null || m_SimulationService is null)
                     throw new Exception("Unable to load a required plugin, Gatekeeper Service cannot function.");
+
+                // GridGate: the table the money service reads to learn where a session started.
+                IConfig sessionDb = config.Configs["DatabaseService"];
+                string sessionDll = sessionDb?.GetString("StorageProvider", string.Empty);
+                string sessionConn = sessionDb?.GetString("ConnectionString", string.Empty);
+                if (!string.IsNullOrWhiteSpace(sessionDll) && !string.IsNullOrWhiteSpace(sessionConn))
+                {
+                    try
+                    {
+                        m_SessionStarts = ServerUtils.LoadPlugin<ISessionStartsData>(sessionDll, [sessionConn, "gridgate_session_starts"]);
+                    }
+                    catch (Exception e)
+                    {
+                        m_log.WarnFormat("[GATEKEEPER SERVICE]: Session starts are not recorded: {0}", e.GetType().Name);
+                    }
+                }
 
                 IConfig presenceConfig = config.Configs["PresenceService"];
                 if (presenceConfig is not null)
@@ -618,6 +637,20 @@ namespace OpenSim.Services.HypergridService
             if(didit)
             {
                 m_log.DebugFormat("[GATEKEEPER SERVICE]: Login presence {0} is ok", aCircuit.Name);
+
+                // GridGate: a session that did not start at this grid's login service (a visitor, or a
+                // teleport that came in here first). Local logins already wrote their "login" row.
+                if (!isFirstLogin && m_SessionStarts is not null)
+                {
+                    try
+                    {
+                        m_SessionStarts.Record(aCircuit.SessionID, aCircuit.AgentID, destination.RegionID, "gatekeeper");
+                    }
+                    catch (Exception e)
+                    {
+                        m_log.WarnFormat("[GATEKEEPER SERVICE]: Could not record where a session starts: {0}", e.GetType().Name);
+                    }
+                }
 
                 if(!isFirstLogin && m_GridUserService is not null && account is null) 
                 {
