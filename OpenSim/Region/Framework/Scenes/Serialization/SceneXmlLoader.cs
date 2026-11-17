@@ -64,6 +64,8 @@ namespace OpenSim.Region.Framework.Scenes.Serialization
                 foreach (XmlNode aPrimNode in rootNode.ChildNodes)
                 {
                     SceneObjectGroup obj = SceneObjectSerializer.FromOriginalXmlFormat(aPrimNode.OuterXml);
+                    // GridGate: saved script states in a file come from outside this program.
+                    obj.StateFromOutside = true;
 
                     if (newIDS)
                     {
@@ -277,6 +279,8 @@ namespace OpenSim.Region.Framework.Scenes.Serialization
             foreach (XmlNode aPrimNode in rootNode.ChildNodes)
             {
                 SceneObjectGroup obj = DeserializeGroupFromXml2(aPrimNode.OuterXml);
+                // GridGate: saved script states in a file come from outside this program.
+                obj.StateFromOutside = true;
                 scene.AddNewSceneObject(obj, true);
                 if (startScripts)
                     sceneObjects.Add(obj);

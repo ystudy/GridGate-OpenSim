@@ -850,6 +850,9 @@ namespace OpenSim.Framework
                     {
                         ISceneObject so = scene.DeserializeObject(info["sog"].AsString());
                         so.ExtraFromXmlString(info["extra"].AsString());
+                        // GridGate: an agent from this program's own regions is handed over without being packed, so
+                        // these attachments and their script states come from another program.
+                        so.StateFromOutside = true;
                         so.HasGroupChanged = info["modified"].AsBoolean();
                         AttachmentObjects.Add(so);
                         AttachmentObjectStates.Add(info["state"].AsString());

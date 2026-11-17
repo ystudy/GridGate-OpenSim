@@ -20,6 +20,8 @@
 
   <ItemGroup>
     <ProjectReference Include="../OpenSim.Tests.Common/OpenSim.Tests.Common.csproj" />
+    <!-- OpenSim's POST /object/ handler, for where an object from another program arrives. -->
+    <ProjectReference Include="$(GgRoot)OpenSim/Server/Handlers/OpenSim.Server.Handlers.csproj" />
   </ItemGroup>
 
   <ItemGroup>
@@ -32,6 +34,7 @@
     <Reference Include="log4net"><HintPath>$(GgRoot)bin/log4net.dll</HintPath></Reference>
     <Reference Include="OpenMetaverse"><HintPath>$(GgRoot)bin/OpenMetaverse.dll</HintPath></Reference>
     <Reference Include="OpenMetaverseTypes"><HintPath>$(GgRoot)bin/OpenMetaverseTypes.dll</HintPath></Reference>
+    <Reference Include="OpenMetaverse.StructuredData"><HintPath>$(GgRoot)bin/OpenMetaverse.StructuredData.dll</HintPath></Reference>
   </ItemGroup>
 
 </Project>

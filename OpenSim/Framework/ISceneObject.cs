@@ -48,5 +48,12 @@ namespace OpenSim.Framework
         string GetStateSnapshot();
         void SetState(string xmlstr, IScene s);
         bool HasGroupChanged { get; set; }
+
+        /// <summary>
+        /// GridGate: true when this object's script state came from outside this program (another program's crossing
+        /// or teleport, or an archive). A script engine then restores no PERMISSION_DEBIT from that state. Not
+        /// persisted, and not copied by <see cref="CloneForNewScene"/>.
+        /// </summary>
+        bool StateFromOutside { get; set; }
     }
 }

@@ -670,6 +670,9 @@ namespace OpenSim.Region.CoreModules.World.Archiver
             foreach (string serialisedSceneObject in serialisedSceneObjects)
             {
                 SceneObjectGroup sceneObject = serialiser.DeserializeGroupFromXml2(serialisedSceneObject);
+                // GridGate: the archive's saved script states come from outside this program, though the scripts
+                // start as at a region start.
+                sceneObject.StateFromOutside = true;
                 if (m_merge)
                 {
                     if(scene.TryGetSceneObjectGroup(sceneObject.UUID, out SceneObjectGroup oldSog))

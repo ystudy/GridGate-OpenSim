@@ -214,6 +214,13 @@ namespace OpenSim.Region.Framework.Scenes
         private long m_minPersistTime = 0;
 
         /// <summary>
+        /// GridGate: true when this object's script state came from outside this program (another program's crossing
+        /// or teleport, or an archive), so YEngine restores no PERMISSION_DEBIT from it. Not persisted, and not copied
+        /// by <see cref="CloneForNewScene"/>.
+        /// </summary>
+        public bool StateFromOutside { get; set; }
+
+        /// <summary>
         /// This indicates whether the object has changed such that it needs to be repersisted to permenant storage
         /// (the database).
         /// </summary>
@@ -5356,6 +5363,8 @@ namespace OpenSim.Region.Framework.Scenes
         {
             SceneObjectGroup sog = Copy(false);
             sog.IsDeleted = false;
+            // GridGate: the copy carries a state snapshot from this program's own scripts, not the state that came in.
+            sog.StateFromOutside = false;
             return sog;
         }
 
