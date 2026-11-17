@@ -10,9 +10,18 @@ public sealed record RegionMove(Guid RegionId, Guid PinnedTo, Guid ListedAt);
 /// listed in Robust at a paired server's address and ports it is pinned to that server in the money database; after that
 /// only that server's key covers it, however Robust's list changes. A region listed at another server stays uncovered
 /// until the owner approves the move; a request that finds it raises a <see cref="AlertKind.RegionMoved"/> alert when
-/// <paramref name="alerts"/> is given. A database failure is <see cref="MoneyUnavailableException"/>.
+/// <paramref name="alerts"/> is given.
+/// <para>
+/// Robust lets any Region Server register any region id at its own address, so a server may pin a region where people
+/// logged in or were handed off before it covered it. A pin therefore keeps when it was made (<c>pinned</c>, from
+/// <paramref name="time"/>, the clock handoffs are written by) and its start floor: the newest Robust start id at that
+/// moment, read over <paramref name="openRobust"/>. The server's key counts only handoffs written since the pin and starts
+/// newer than the floor (<see cref="MoneyLocations"/>). A database failure, the money or the Robust one, is
+/// <see cref="MoneyUnavailableException"/>.
+/// </para>
 /// </summary>
-public sealed class RegionPins(Func<CancellationToken, Task<MySqlConnection>> openMoney, RegionHosts hosts, TimeProvider time, MoneyAlerts? alerts = null)
+public sealed class RegionPins(Func<CancellationToken, Task<MySqlConnection>> openMoney, Func<CancellationToken, Task<MySqlConnection>> openRobust,
+    RegionHosts hosts, TimeProvider time, MoneyAlerts? alerts = null)
 {
     /// <summary>
     /// The regions Robust lists at <paramref name="server"/>'s address and port range, minus <paramref name="ownRegions"/>,
@@ -32,12 +41,15 @@ public sealed class RegionPins(Func<CancellationToken, Task<MySqlConnection>> op
             var unpinned = listed.Where(r => !pins.ContainsKey(r)).ToList();
             if (unpinned.Count > 0)
             {
+                // Read just before the pins are written: a start Robust writes after this read is newer than the floor.
+                var floor = await NewestStartAsync(ct);
                 foreach (var id in unpinned)
                 {
                     // IGNORE: two requests may pin the same new region; whichever server's row landed first stands.
-                    await Exec(conn, null, "INSERT IGNORE INTO region_pins (region_id, server_id, machine_id, pinned) VALUES (@r, @s, @m, @t)", ct,
-                        ("@r", id.ToString()), ("@s", server.Id.ToString("N")), ("@m", (object?)server.MachineId ?? DBNull.Value),
-                        ("@t", time.GetUtcNow().UtcDateTime));
+                    await Exec(conn, null, """
+                        INSERT IGNORE INTO region_pins (region_id, server_id, machine_id, pinned, start_floor) VALUES (@r, @s, @m, @t, @floor)
+                        """, ct, ("@r", id.ToString()), ("@s", server.Id.ToString("N")), ("@m", (object?)server.MachineId ?? DBNull.Value),
+                        ("@t", time.GetUtcNow().UtcDateTime), ("@floor", floor));
                 }
                 pins = await PinsOfAsync(conn, listed, ct);
             }
@@ -81,17 +93,19 @@ public sealed class RegionPins(Func<CancellationToken, Task<MySqlConnection>> op
     /// <summary>
     /// Pins <paramref name="regionId"/> to <paramref name="toServerId"/>. Everyone placed in the region was placed under the
     /// server it was pinned to before, which the new server never vouched for: their money pauses until their next login.
-    /// The caller audits it.
+    /// The new server gets a new pin time and start floor, so the starts and handoffs from before the approval don't count
+    /// for it. The caller audits it.
     /// </summary>
     public async Task ApproveMoveAsync(Guid regionId, Guid toServerId, CancellationToken ct)
     {
-        var now = time.GetUtcNow().UtcDateTime;
         try
         {
+            var floor = await NewestStartAsync(ct);
+            var now = time.GetUtcNow().UtcDateTime;
             await using var conn = await openMoney(ct);
             await using var tx = await conn.BeginTransactionAsync(ct);
-            await Exec(conn, tx, "UPDATE region_pins SET server_id = @s, machine_id = NULL, pinned = @t WHERE region_id = @r", ct,
-                ("@s", toServerId.ToString("N")), ("@t", now), ("@r", regionId.ToString()));
+            await Exec(conn, tx, "UPDATE region_pins SET server_id = @s, machine_id = NULL, pinned = @t, start_floor = @floor WHERE region_id = @r", ct,
+                ("@s", toServerId.ToString("N")), ("@t", now), ("@floor", floor), ("@r", regionId.ToString()));
             await Exec(conn, tx, "UPDATE session_locations SET state = 'Unverified', updated = @t WHERE region_id = @r AND state IN ('Verified', 'Handed')", ct,
                 ("@t", now), ("@r", regionId.ToString()));
             await tx.CommitAsync(ct);
@@ -109,7 +123,8 @@ public sealed class RegionPins(Func<CancellationToken, Task<MySqlConnection>> op
     /// <summary>
     /// Pairing again: when <paramref name="old"/> and <paramref name="replacement"/> are the same machine (both ids known
     /// and equal) its pins, its key's limit override, the people it placed and the handoffs it sent follow it. A different machine gets none: the old pins stay with
-    /// the old server id, so those regions show as moves until the owner approves them.
+    /// the old server id, so those regions show as moves until the owner approves them. Carried pins keep their pin time and
+    /// start floor: the same machine already covered those regions.
     /// </summary>
     public async Task CarryOverAsync(PairedServer old, PairedServer replacement, CancellationToken ct)
     {
@@ -130,6 +145,17 @@ public sealed class RegionPins(Func<CancellationToken, Task<MySqlConnection>> op
         {
             throw new MoneyUnavailableException(e);
         }
+    }
+
+    /// <summary>
+    /// The newest start Robust has written, or 0 when there is none. Robust's own clock never matters here: start ids only
+    /// grow, so a start newer than a pin's floor was written after the floor was read.
+    /// </summary>
+    private async Task<long> NewestStartAsync(CancellationToken ct)
+    {
+        await using var conn = await openRobust(ct);
+        await using var cmd = new MySqlCommand("SELECT COALESCE(MAX(Id), 0) FROM gridgate_session_starts", conn);
+        return Convert.ToInt64(await cmd.ExecuteScalarAsync(ct));
     }
 
     private async Task RunAsync(string sql, CancellationToken ct, params (string Name, object Value)[] args)

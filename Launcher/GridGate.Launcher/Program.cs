@@ -430,7 +430,7 @@ builder.Services.AddSingleton(sp => new MoneyAlerts(MoneyConnections.Money(sp.Ge
     sp.GetRequiredService<TimeProvider>(), sp.GetRequiredService<ILogger<MoneyAlerts>>(), sp.GetRequiredService<AuditLog>()));
 builder.Services.AddSingleton<IMoneyAlerts>(sp => sp.GetRequiredService<MoneyAlerts>());
 builder.Services.AddSingleton(sp => new RegionPins(MoneyConnections.Money(sp.GetRequiredService<Func<LauncherSettings>>()),
-    sp.GetRequiredService<RegionHosts>(), sp.GetRequiredService<TimeProvider>(), sp.GetRequiredService<MoneyAlerts>()));
+    MoneyConnections.Robust(sp.GetRequiredService<Func<LauncherSettings>>()), sp.GetRequiredService<RegionHosts>(), sp.GetRequiredService<TimeProvider>(), sp.GetRequiredService<MoneyAlerts>()));
 builder.Services.AddSingleton(sp => new RegionVerification(MoneyConnections.Money(sp.GetRequiredService<Func<LauncherSettings>>()),
     MoneyConnections.Robust(sp.GetRequiredService<Func<LauncherSettings>>()), sp.GetRequiredService<RegionPins>(), sp.GetRequiredService<TimeProvider>()));
 builder.Services.AddSingleton(sp => new MoneyLocations(MoneyConnections.Money(sp.GetRequiredService<Func<LauncherSettings>>()),

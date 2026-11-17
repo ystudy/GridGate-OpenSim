@@ -227,4 +227,87 @@ public sealed class MoneyVerificationStoryTests(MoneyMariaDb maria) : IClassFixt
         Assert.Equal("ok", CodeOf(await rig.Post("transfer", Pay(WhoA(), Resident(B), 10, Here))));
         await rig.AssertBooksSoundAsync();
     }
+
+    /// <summary>A region running stock OpenSim that no key covers, until a paired server lists it.</summary>
+    private static readonly Guid Harbour = Guid.Parse("f4000000-0000-0000-0000-00000000000f");
+
+    /// <summary>A new resident logs in at <paramref name="region"/>: Robust writes Presence and a login start.</summary>
+    private static async Task<(Guid Agent, Guid Session, Guid Secure)> LogInAsync(MoneyServiceRig rig, Guid region)
+    {
+        var who = (Agent: Guid.NewGuid(), Session: Guid.NewGuid(), Secure: Guid.NewGuid());
+        await rig.Db.AddUser(who.Agent);
+        await rig.Db.AddPresence(who.Agent, region, who.Session, who.Secure);
+        await rig.Db.AddSessionStart(who.Session, who.Agent, region, "login");
+        return who;
+    }
+
+    [Fact]
+    public async Task A_server_that_pins_a_region_after_a_login_cannot_charge_that_login()
+    {
+        // Wendy logs in at Harbour, which no key covers. Robust lets any Region Server register any region id at its own
+        // address: Sam's server then lists Harbour, so it is pinned to Sam's server at first sight. Wendy's login came
+        // before that pin, so it isn't Sam's to use: Sam can't verify her, and her coins stay put.
+        var rig = await StartAsync();
+        rig.Settings = rig.Settings with { Money = rig.Settings.Money with { StartingBalancePlay = 1000 } };
+        var wendy = await LogInAsync(rig, Harbour);
+        await PairAsync(rig, SamHost, SamKey, Harbour);
+
+        Assert.Equal("unverified_avatar", CodeOf(await rig.Arrived(SamKey, wendy.Session, wendy.Agent, Harbour)));
+        Assert.Equal(LocationState.Unverified, (await rig.Locations.WhereAsync(wendy.Session, Ct))?.State);
+        Assert.Equal("ok", CodeOf(await rig.Post("balance", Who(wendy.Agent, wendy.Session, wendy.Secure), SamKey)));
+        var (moved, balance) = (await Moved(rig), await Balance(rig, wendy.Agent));
+        Assert.Equal(1000, balance);
+
+        var charge = await rig.Post("transfer", Pay(Who(wendy.Agent, wendy.Session, wendy.Secure), Resident(B), 400, Harbour), SamKey);
+
+        Assert.Equal("unverified_avatar", CodeOf(charge));
+        Assert.Equal(moved, await Moved(rig));
+        Assert.Equal(balance, await Balance(rig, wendy.Agent));
+        await rig.AssertBooksSoundAsync();
+    }
+
+    [Fact]
+    public async Task A_server_that_pins_a_region_after_a_handoff_cannot_use_it()
+    {
+        // A, verified at Here, teleports to Harbour, which no key covers. Moments later Sam's server lists Harbour and pins
+        // it. The handoff was written before the pin, so it isn't Sam's to use: A's arrival there verifies nobody.
+        var rig = await StartAsync();
+        Assert.Equal("ok", await rig.Handoff(Key, SessionA, Here, Harbour));
+        rig.LocationClock.Advance(TimeSpan.FromSeconds(5)); // well inside the handoff's life
+        await PairAsync(rig, SamHost, SamKey, Harbour);
+
+        Assert.Equal("unverified_avatar", CodeOf(await rig.Arrived(SamKey, SessionA, A, Harbour)));
+        var (moved, balance) = (await Moved(rig), await Balance(rig, A));
+
+        Assert.Equal("unverified_avatar", CodeOf(await rig.Post("transfer", Pay(WhoA(), Resident(B), 10, Harbour), SamKey)));
+        Assert.Equal(moved, await Moved(rig));
+        Assert.Equal(balance, await Balance(rig, A));
+        await rig.AssertBooksSoundAsync();
+    }
+
+    [Fact]
+    public async Task A_login_after_the_pin_still_verifies()
+    {
+        // Sam's server covered Harbour before Wendy logged in there: her login is Sam's to use.
+        var rig = await StartAsync();
+        await PairAsync(rig, SamHost, SamKey, Harbour);
+        var wendy = await LogInAsync(rig, Harbour);
+
+        Assert.Equal("ok", CodeOf(await rig.Arrived(SamKey, wendy.Session, wendy.Agent, Harbour)));
+        Assert.Equal("ok", CodeOf(await rig.Post("transfer", Pay(Who(wendy.Agent, wendy.Session, wendy.Secure), Resident(B), 10, Harbour), SamKey)));
+        await rig.AssertBooksSoundAsync();
+    }
+
+    [Fact]
+    public async Task A_handoff_after_the_pin_still_verifies()
+    {
+        // Sam's server covered Harbour before A teleported there from Here: the handoff is Sam's to use.
+        var rig = await StartAsync();
+        await PairAsync(rig, SamHost, SamKey, Harbour);
+        Assert.Equal("ok", await rig.Handoff(Key, SessionA, Here, Harbour));
+
+        Assert.Equal("ok", CodeOf(await rig.Arrived(SamKey, SessionA, A, Harbour)));
+        Assert.Equal("ok", CodeOf(await rig.Post("transfer", Pay(WhoA(), Resident(B), 10, Harbour), SamKey)));
+        await rig.AssertBooksSoundAsync();
+    }
 }

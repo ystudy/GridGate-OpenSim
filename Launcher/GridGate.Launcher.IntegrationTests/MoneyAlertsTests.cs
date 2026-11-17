@@ -294,7 +294,7 @@ public sealed class MoneyAlertsTests(MoneyMariaDb maria) : IClassFixture<MoneyMa
     public async Task A_region_listed_at_another_server_raises_a_move()
     {
         var (db, alerts) = await StartAsync();
-        var pins = new RegionPins(db.OpenMoney, new RegionHosts(db.OpenRobust), TimeProvider.System, alerts);
+        var pins = new RegionPins(db.OpenMoney, db.OpenRobust, new RegionHosts(db.OpenRobust), TimeProvider.System, alerts);
         var (a, b) = (Server("192.168.1.20", "m-a"), Server("192.168.1.30", "m-b"));
         await MoveR1(db, pins, a, b);
         Assert.Empty(await alerts.OpenAsync(Ct)); // first sight is a pin, not a move
@@ -309,7 +309,7 @@ public sealed class MoneyAlertsTests(MoneyMariaDb maria) : IClassFixture<MoneyMa
     public async Task Many_requests_listing_a_moved_region_give_one_row_and_one_audit_line()
     {
         var (db, alerts) = await StartAsync();
-        var pins = new RegionPins(db.OpenMoney, new RegionHosts(db.OpenRobust), TimeProvider.System, alerts);
+        var pins = new RegionPins(db.OpenMoney, db.OpenRobust, new RegionHosts(db.OpenRobust), TimeProvider.System, alerts);
         var (a, b, c) = (Server("192.168.1.20", "m-a"), Server("192.168.1.30", "m-b"), Server("192.168.1.40", "m-c"));
         await MoveR1(db, pins, a, b);
 
@@ -317,7 +317,7 @@ public sealed class MoneyAlertsTests(MoneyMariaDb maria) : IClassFixture<MoneyMa
             await pins.CoveredAsync(b, 9000, 65536, new HashSet<Guid>(), Ct, raiseMoves: true);
         // A restart forgets what it raised; the open row still says this move was seen.
         var restarted = new MoneyAlerts(db.OpenMoney, _clock, audit: _audit);
-        await new RegionPins(db.OpenMoney, new RegionHosts(db.OpenRobust), TimeProvider.System, restarted)
+        await new RegionPins(db.OpenMoney, db.OpenRobust, new RegionHosts(db.OpenRobust), TimeProvider.System, restarted)
             .CoveredAsync(b, 9000, 65536, new HashSet<Guid>(), Ct, raiseMoves: true);
 
         var moved = await Single(alerts);
@@ -337,7 +337,7 @@ public sealed class MoneyAlertsTests(MoneyMariaDb maria) : IClassFixture<MoneyMa
     public async Task The_website_status_read_raises_no_alert()
     {
         var (db, alerts) = await StartAsync();
-        var pins = new RegionPins(db.OpenMoney, new RegionHosts(db.OpenRobust), TimeProvider.System, alerts);
+        var pins = new RegionPins(db.OpenMoney, db.OpenRobust, new RegionHosts(db.OpenRobust), TimeProvider.System, alerts);
         var (a, b) = (Server("192.168.1.20", "m-a"), Server("192.168.1.30", "m-b"));
         await MoveR1(db, pins, a, b);
         var verification = new RegionVerification(db.OpenMoney, db.OpenRobust, pins, _clock);

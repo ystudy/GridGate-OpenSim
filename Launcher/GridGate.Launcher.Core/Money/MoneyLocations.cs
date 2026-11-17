@@ -84,6 +84,9 @@ public sealed class MoneyLocations(Func<CancellationToken, Task<MySqlConnection>
     /// <summary>What vouches for an arrival: a handoff (<paramref name="HandoffId"/>) or a start (<paramref name="StartId"/>).</summary>
     private sealed record Match(string? HandoffId, long? StartId);
 
+    /// <summary>A region's pin to a paired server: when it was made, and the newest Robust start id at that moment.</summary>
+    private sealed record Pin(DateTime Pinned, long StartFloor);
+
     private DateTime Now => time.GetUtcNow().UtcDateTime;
 
     /// <summary>
@@ -368,23 +371,31 @@ public sealed class MoneyLocations(Func<CancellationToken, Task<MySqlConnection>
     {
         var here = row?.Location;
 
+        // A paired Region Server's key counts only what happened in the region after it was pinned to that server: Robust
+        // lets any server register any region id, so a server that pins a region late must not inherit the people who logged
+        // in or were handed off there before. Handoffs are compared by time (both times come from this service's clock),
+        // starts by id (Robust's clock is another machine's). Without a pin to this key's server, nothing counts. The own
+        // program's keys have no pins.
+        Pin? pin = null;
+        if (grant.ServerHost is not null && (pin = await PinAsync(conn, tx, grant, regionId, ct)) is null) return null;
+
         // 1. A handoff: the session was handed to this region from its verified place, by a handoff still open and younger
-        // than HandoffLife.
+        // than HandoffLife (and, for a paired key, written at or after the pin).
         if (here is { State: LocationState.Handed } && here.RegionId == regionId)
         {
             await using var cmd = Command(conn, tx, $"""
                 SELECT id FROM handoffs
-                WHERE session_id = @s AND to_region = @r AND kind IN {OpenKinds} AND created > @since
+                WHERE session_id = @s AND to_region = @r AND kind IN {OpenKinds} AND created > @since{(pin is null ? "" : " AND created >= @pinned")}
                 ORDER BY created DESC LIMIT 1
-                """, ("@s", sessionId.ToString()), ("@r", regionId.ToString()), ("@since", Now - HandoffLife));
+                """, ("@s", sessionId.ToString()), ("@r", regionId.ToString()), ("@since", Now - HandoffLife), ("@pinned", pin?.Pinned));
             await using var r = await cmd.ExecuteReaderAsync(ct);
             if (await r.ReadAsync(ct)) return new Match(r.GetValue(0).ToString(), null);
         }
 
         // A start never moves a verified session: a second start through the Gatekeeper is refused while the session is
         // verified here. Only a start newer than last_start_id counts, so each start places once and a used one can't verify
-        // the session again.
-        var after = row?.LastStartId ?? 0;
+        // the session again. For a paired key it must also be newer than the pin's start floor.
+        var after = Math.Max(row?.LastStartId ?? 0, pin?.StartFloor ?? 0);
 
         // 2. A login start counts only when the session was never placed. A login region could otherwise hold back its own
         // arrival and use the start once the avatar had moved on and been placed unverified elsewhere. An early claim by
@@ -401,6 +412,20 @@ public sealed class MoneyLocations(Func<CancellationToken, Task<MySqlConnection>
             return new Match(null, gatekeeper);
 
         return null;
+    }
+
+    /// <summary>
+    /// <paramref name="regionId"/>'s pin, read in the arrival's transaction, when it belongs to <paramref name="grant"/>'s
+    /// paired server (key id <c>server:&lt;id&gt;</c>); null otherwise.
+    /// </summary>
+    private static async Task<Pin?> PinAsync(MySqlConnection conn, MySqlTransaction tx, RegionKeyGrant grant, Guid regionId, CancellationToken ct)
+    {
+        const string Prefix = "server:";
+        if (!grant.KeyId.StartsWith(Prefix, StringComparison.Ordinal) || !Guid.TryParseExact(grant.KeyId[Prefix.Length..], "N", out var server)) return null;
+        await using var cmd = Command(conn, tx, "SELECT server_id, pinned, start_floor FROM region_pins WHERE region_id = @r", ("@r", regionId.ToString()));
+        await using var r = await cmd.ExecuteReaderAsync(ct);
+        if (!await r.ReadAsync(ct) || !Guid.TryParseExact(r.GetString(0), "N", out var pinnedTo) || pinnedTo != server) return null;
+        return new Pin(DateTime.SpecifyKind(r.GetDateTime(1), DateTimeKind.Utc), r.GetInt64(2));
     }
 
     /// <summary>

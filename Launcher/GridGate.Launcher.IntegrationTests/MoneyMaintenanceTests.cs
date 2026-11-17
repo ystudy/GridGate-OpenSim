@@ -55,7 +55,7 @@ public sealed class MoneyMaintenanceTests(MoneyMariaDb maria) : IClassFixture<Mo
         await db.Sql($"INSERT INTO `money`.`session_locations` (session_id, agent_id, region_id, key_id, state, updated) " +
             $"VALUES ('{gone}', '{A}', '{Guid.NewGuid()}', 'p1', 'Verified', '{longAgo:yyyy-MM-dd HH:mm:ss}')");
         var presence = new PresenceCheck(db.OpenRobust);
-        var verification = new RegionVerification(db.OpenMoney, db.OpenRobust, new RegionPins(db.OpenMoney, new RegionHosts(db.OpenRobust), time), time);
+        var verification = new RegionVerification(db.OpenMoney, db.OpenRobust, new RegionPins(db.OpenMoney, db.OpenRobust, new RegionHosts(db.OpenRobust), time), time);
         var locations = new MoneyLocations(db.OpenMoney, db.OpenRobust, verification, presence, time);
         using var maintenance = new MoneyMaintenance(ledger, () => MoneyMode.Play, time, NullLogger<MoneyMaintenance>.Instance, locations: locations);
         await maintenance.StartAsync(Ct);

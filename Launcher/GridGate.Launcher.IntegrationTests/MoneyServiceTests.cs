@@ -81,7 +81,7 @@ public sealed class MoneyServiceTests(MoneyMariaDb maria) : IClassFixture<MoneyM
         var cert = MoneyCertificate.LoadOrCreate(Path.Combine(_dir, MoneyCertificate.FileName), time);
         _fingerprint = MoneyCertificate.Fingerprint(cert);
         var verification = new RegionVerification(MoneyConnections.Money(() => dbSettings), MoneyConnections.Robust(() => dbSettings),
-            new RegionPins(MoneyConnections.Money(() => dbSettings), new RegionHosts(MoneyConnections.Robust(() => dbSettings)), time), time);
+            new RegionPins(MoneyConnections.Money(() => dbSettings), MoneyConnections.Robust(() => dbSettings), new RegionHosts(MoneyConnections.Robust(() => dbSettings)), time), time);
         var locations = new MoneyLocations(MoneyConnections.Money(() => dbSettings), MoneyConnections.Robust(() => dbSettings), verification, presence, time);
         _host = new MoneyServiceHost(ledger, presence, () => settings, () => _mode, certificate ?? (() => cert), new MoneyAuthFailures(time, loggers.CreateLogger<MoneyAuthFailures>()), loggers, _status,
             verification: verification, locations: locations);

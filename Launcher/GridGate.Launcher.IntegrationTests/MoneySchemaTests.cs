@@ -19,7 +19,7 @@ public sealed class MoneySchemaTests(MoneyMariaDb maria) : IClassFixture<MoneyMa
         await db.EnsureSchemaAsync();
 
         Assert.Equal(3, await db.Scalar("SELECT COUNT(*) FROM `money`.`accounts`"));
-        Assert.Equal("3", await db.Text("SELECT value FROM `money`.`state` WHERE name = 'schema_version'"));
+        Assert.Equal("4", await db.Text("SELECT value FROM `money`.`state` WHERE name = 'schema_version'"));
         Assert.Equal("0", await db.Text("SELECT value FROM `money`.`state` WHERE name = 'frozen'"));
         Assert.Equal("system:bank", await db.Text("SELECT home FROM `money`.`accounts` WHERE id = 1"));
         Assert.Equal("system:fees", await db.Text("SELECT home FROM `money`.`accounts` WHERE id = 2"));
@@ -53,7 +53,7 @@ public sealed class MoneySchemaTests(MoneyMariaDb maria) : IClassFixture<MoneyMa
         await db.EnsureSchemaAsync();
 
         Assert.Equal("utf8mb4_bin", await HomeCollation(db));
-        Assert.Equal("3", await db.Text("SELECT value FROM `money`.`state` WHERE name = 'schema_version'"));
+        Assert.Equal("4", await db.Text("SELECT value FROM `money`.`state` WHERE name = 'schema_version'"));
         Assert.Equal(3, await db.Scalar("SELECT COUNT(*) FROM `money`.`accounts`"));
     }
 
@@ -61,13 +61,13 @@ public sealed class MoneySchemaTests(MoneyMariaDb maria) : IClassFixture<MoneyMa
         ["session_locations", "handoffs", "region_pins", "key_heard", "region_heard", "limit_overrides", "alerts", "key_locks"];
 
     [Fact]
-    public async Task Fresh_schema_is_version_3_with_the_new_tables()
+    public async Task Fresh_schema_is_version_4_with_the_new_tables()
     {
         var db = await maria.FreshAsync();
 
         await db.EnsureSchemaAsync();
 
-        Assert.Equal("3", await db.Text("SELECT value FROM `money`.`state` WHERE name = 'schema_version'"));
+        Assert.Equal("4", await db.Text("SELECT value FROM `money`.`state` WHERE name = 'schema_version'"));
         foreach (var table in V3Tables)
             Assert.Equal(1, await db.Scalar($"SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = 'money' AND TABLE_NAME = '{table}'"));
         foreach (var table in new[] { "entries", "holds" })
@@ -78,10 +78,12 @@ public sealed class MoneySchemaTests(MoneyMariaDb maria) : IClassFixture<MoneyMa
         Assert.Equal("tinyint(4)", await db.Text("SELECT COLUMN_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = 'money' AND TABLE_NAME = 'alerts' AND COLUMN_NAME = 'repeated'"));
         // Where a person is (the website) is found by agent, newest first.
         Assert.Equal(2, await db.Scalar("SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = 'money' AND TABLE_NAME = 'session_locations' AND INDEX_NAME = 'agent_updated'"));
+        // A pin keeps the newest Robust start it saw when it was made.
+        Assert.Equal("bigint(20)", await StartFloorType(db));
     }
 
     [Fact]
-    public async Task Version_2_database_moves_to_3_and_keeps_entries()
+    public async Task Version_2_database_moves_to_4_and_keeps_entries()
     {
         var db = await maria.FreshAsync();
         await db.EnsureSchemaAsync();
@@ -98,13 +100,38 @@ public sealed class MoneySchemaTests(MoneyMariaDb maria) : IClassFixture<MoneyMa
 
         await db.EnsureSchemaAsync();
 
-        Assert.Equal("3", await db.Text("SELECT value FROM `money`.`state` WHERE name = 'schema_version'"));
+        Assert.Equal("4", await db.Text("SELECT value FROM `money`.`state` WHERE name = 'schema_version'"));
         Assert.Equal(1, await db.Scalar("SELECT COUNT(*) FROM `money`.`entries`"));
         Assert.Equal(1, await db.Scalar("SELECT COUNT(*) FROM `money`.`entries` WHERE key_id IS NULL"));
         Assert.Equal(1, await db.Scalar("SELECT COUNT(*) FROM `money`.`holds` WHERE key_id IS NULL"));
         foreach (var table in V3Tables)
             Assert.Equal(1, await db.Scalar($"SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = 'money' AND TABLE_NAME = '{table}'"));
         Assert.Equal(3, await db.Scalar("SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = 'money' AND TABLE_NAME = 'entries' AND INDEX_NAME = 'key_type_at'"));
+        Assert.Equal("bigint(20)", await StartFloorType(db));
+    }
+
+    private static Task<string?> StartFloorType(MoneyTestDatabase db) =>
+        db.Text("SELECT COLUMN_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = 'money' AND TABLE_NAME = 'region_pins' AND COLUMN_NAME = 'start_floor'");
+
+    [Fact]
+    public async Task Version_3_migrates_to_4()
+    {
+        // A version 3 database has pins without a start floor. They keep working, with floor 0: every start counts for them,
+        // as before.
+        var db = await maria.FreshAsync();
+        await db.EnsureSchemaAsync();
+        var (region, server) = (Guid.NewGuid(), Guid.NewGuid());
+        await db.Sql($"""
+            ALTER TABLE `money`.`region_pins` DROP COLUMN start_floor;
+            INSERT INTO `money`.`region_pins` (region_id, server_id, machine_id, pinned) VALUES ('{region}', '{server:N}', 'm-1', UTC_TIMESTAMP(6));
+            UPDATE `money`.`state` SET value = '3' WHERE name = 'schema_version';
+            """);
+
+        await db.EnsureSchemaAsync();
+
+        Assert.Equal("4", await db.Text("SELECT value FROM `money`.`state` WHERE name = 'schema_version'"));
+        Assert.Equal("bigint(20)", await StartFloorType(db));
+        Assert.Equal(0, await db.Scalar($"SELECT start_floor FROM `money`.`region_pins` WHERE region_id = '{region}' AND server_id = '{server:N}'"));
     }
 
     [Fact]

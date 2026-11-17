@@ -28,8 +28,12 @@ public sealed class MoneyLocationsTests(MoneyMariaDb maria) : IClassFixture<Mone
     private static readonly RegionKeyGrant P1 = new("p1", new HashSet<Guid> { R1, R5 });
     private static readonly RegionKeyGrant P2 = new("p2", new HashSet<Guid> { R2 });
     private static readonly RegionKeyGrant P4 = new("p4", new HashSet<Guid> { R4 });
-    private static readonly RegionKeyGrant Paired = new("server:" + Guid.Parse("d0000000-0000-0000-0000-00000000000d").ToString("N"),
-        new HashSet<Guid> { R3 }, "192.168.1.20", 9000, 65536);
+    private static readonly Guid PairedId = Guid.Parse("d0000000-0000-0000-0000-00000000000d");
+    private static readonly RegionKeyGrant Paired = new("server:" + PairedId.ToString("N"), new HashSet<Guid> { R3 }, "192.168.1.20", 9000, 65536);
+
+    /// <summary>Another paired Region Server, that R3 moves to when the owner approves it.</summary>
+    private static readonly Guid OtherId = Guid.Parse("d0000000-0000-0000-0000-0000000000ee");
+    private static readonly RegionKeyGrant Other = new("server:" + OtherId.ToString("N"), new HashSet<Guid> { R3 }, "192.168.1.30", 9000, 65536);
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
@@ -37,7 +41,12 @@ public sealed class MoneyLocationsTests(MoneyMariaDb maria) : IClassFixture<Mone
     private FakeTimeProvider _clock = null!;
     private MoneyLocations _locations = null!;
     private RegionVerification _verification = null!;
+    private RegionPins _pins = null!;
 
+    /// <summary>
+    /// A fresh database where R3 is listed in Robust at the paired server and was pinned to it at first sight, before
+    /// anyone logged in.
+    /// </summary>
     private async Task StartAsync()
     {
         _db = await maria.FreshAsync();
@@ -45,8 +54,11 @@ public sealed class MoneyLocationsTests(MoneyMariaDb maria) : IClassFixture<Mone
         await _db.AddPresence(U, R1, SessionU, SecureU);
         await _db.AddPresence(V, R1, SessionV, SecureV);
         _clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
-        var pins = new RegionPins(_db.OpenMoney, new RegionHosts(_db.OpenRobust), _clock);
-        _verification = new RegionVerification(_db.OpenMoney, _db.OpenRobust, pins, _clock);
+        _pins = new RegionPins(_db.OpenMoney, _db.OpenRobust, new RegionHosts(_db.OpenRobust), _clock);
+        await _db.AddRegion(R3, Paired.ServerHost!);
+        var server = new PairedServer(PairedId, Paired.ServerHost!, new string('a', 64), DateTimeOffset.UtcNow, 9000, "machine-paired");
+        Assert.Contains(R3, await _pins.CoveredAsync(server, 9000, 65536, new HashSet<Guid>(), Ct));
+        _verification = new RegionVerification(_db.OpenMoney, _db.OpenRobust, _pins, _clock);
         await ModulesCheckIn();
         _locations = new MoneyLocations(_db.OpenMoney, _db.OpenRobust, _verification, new PresenceCheck(_db.OpenRobust), _clock);
     }
@@ -847,5 +859,66 @@ public sealed class MoneyLocationsTests(MoneyMariaDb maria) : IClassFixture<Mone
 
         Assert.Equal(PlaceOutcome.PlacedUnverified, (await Arrive(P1, R1)).Outcome);
         Assert.Equal(PlaceOutcome.PlacedUnverified, (await Arrive(P1, R1, SessionV, V)).Outcome);
+    }
+
+    [Fact]
+    public async Task Approving_a_move_resets_the_floor()
+    {
+        // R3 moves from the paired server to another one, and the owner approves it. The starts and handoffs from before
+        // the approval were the old server's: they don't count for the new one. Ones after it do.
+        await StartAsync();
+        await _verification.HeardAsync(Other.KeyId, RegionVerification.HandoffProtocol, [R3], Ct);
+        await _db.AddSessionStart(SessionU, U, R3, "login"); // U logs in at R3 while the old server runs it
+        await _db.AddSessionStart(SessionV, V, R1, "login");
+        Assert.Equal(PlaceOutcome.Ok, (await Arrive(P1, R1, SessionV, V)).Outcome);
+        Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, R3, session: SessionV)); // V is on the way to R3
+        _clock.Advance(TimeSpan.FromSeconds(5));
+        await _db.Sql($"UPDATE `robust`.`regions` SET serverIP = '{Other.ServerHost}' WHERE uuid = '{R3}'");
+
+        await _pins.ApproveMoveAsync(R3, OtherId, Ct);
+
+        Assert.Equal(PlaceOutcome.PlacedUnverified, (await Arrive(Other, R3)).Outcome);
+        Assert.Equal(PlaceOutcome.PlacedUnverified, (await Arrive(Other, R3, SessionV, V)).Outcome);
+        Assert.Equal(0, await VerifiedRows());
+
+        // After the approval: a new login at R3, and a new handoff to it, are the new server's.
+        var (login, handed) = (Guid.NewGuid(), Guid.NewGuid());
+        await _db.AddPresence(U, R3, login, Guid.NewGuid());
+        await _db.AddSessionStart(login, U, R3, "login");
+        Assert.Equal(PlaceOutcome.Ok, (await Arrive(Other, R3, login)).Outcome);
+        await _db.AddPresence(V, R1, handed, Guid.NewGuid());
+        await _db.AddSessionStart(handed, V, R1, "login");
+        Assert.Equal(PlaceOutcome.Ok, (await Arrive(P1, R1, handed, V)).Outcome);
+        Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, R3, session: handed));
+        Assert.Equal(PlaceOutcome.Ok, (await Arrive(Other, R3, handed, V)).Outcome);
+    }
+
+    [Fact]
+    public async Task A_handoff_written_at_the_pin_time_counts()
+    {
+        // The pin and the handoff read the same clock: one written in the same instant as the pin came after it.
+        await StartAsync();
+        await _db.Sql($"DELETE FROM `money`.`region_pins` WHERE region_id = '{R3}'");
+        await LoggedInAtR1();
+        Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, R3));
+        var server = new PairedServer(PairedId, Paired.ServerHost!, new string('a', 64), DateTimeOffset.UtcNow, 9000, "machine-paired");
+        await _pins.CoveredAsync(server, 9000, 65536, new HashSet<Guid>(), Ct); // pinned again, the clock standing still
+
+        Assert.Equal(PlaceOutcome.Ok, (await Arrive(Paired, R3)).Outcome);
+    }
+
+    [Fact]
+    public async Task A_paired_key_counts_nothing_in_a_region_pinned_to_another_server()
+    {
+        // Whatever the key's grant says, a region pinned to another server holds no starts or handoffs for this key.
+        await StartAsync();
+        await _db.Sql($"UPDATE `money`.`region_pins` SET server_id = '{OtherId:N}' WHERE region_id = '{R3}'");
+        await _db.AddSessionStart(SessionU, U, R3, "login");
+        await _db.AddSessionStart(SessionV, V, R1, "login");
+        Assert.Equal(PlaceOutcome.Ok, (await Arrive(P1, R1, SessionV, V)).Outcome);
+        Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, R3, session: SessionV));
+
+        Assert.Equal(PlaceOutcome.PlacedUnverified, (await Arrive(Paired, R3)).Outcome);
+        Assert.Equal(PlaceOutcome.PlacedUnverified, (await Arrive(Paired, R3, SessionV, V)).Outcome);
     }
 }

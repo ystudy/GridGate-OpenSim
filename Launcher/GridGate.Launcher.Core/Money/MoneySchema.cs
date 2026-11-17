@@ -13,8 +13,11 @@ public enum AccountKind { Person, Visitor, Bank, Fees, Holding }
 /// </summary>
 public static class MoneySchema
 {
-    /// <summary>3: key ids on entries and holds, and the tables for locations, handoffs, pins, limits and alerts. 2: homes compared byte for byte.</summary>
-    public const int Version = 3;
+    /// <summary>
+    /// 4: each region pin keeps the newest Robust start it saw when it was made. 3: key ids on entries and holds, and the
+    /// tables for locations, handoffs, pins, limits and alerts. 2: homes compared byte for byte.
+    /// </summary>
+    public const int Version = 4;
 
     /// <summary>The system accounts' fixed ids.</summary>
     public const long BankId = 1, FeesId = 2, HoldingId = 3;
@@ -53,7 +56,8 @@ public static class MoneySchema
           to_region CHAR(36) NOT NULL, kind VARCHAR(16) NOT NULL, created DATETIME(6) NOT NULL, KEY session_created (session_id, created))
           ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
         CREATE TABLE IF NOT EXISTS region_pins (
-          region_id CHAR(36) PRIMARY KEY, server_id CHAR(32) NOT NULL, machine_id VARCHAR(64) NULL, pinned DATETIME(6) NOT NULL)
+          region_id CHAR(36) PRIMARY KEY, server_id CHAR(32) NOT NULL, machine_id VARCHAR(64) NULL, pinned DATETIME(6) NOT NULL,
+          start_floor BIGINT NOT NULL DEFAULT 0)
           ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
         CREATE TABLE IF NOT EXISTS key_heard (
           key_id VARCHAR(64) PRIMARY KEY, protocol INT NOT NULL, at DATETIME(6) NOT NULL)
@@ -77,7 +81,7 @@ public static class MoneySchema
           (1, '00000000-0000-0000-0000-000000000000', 'system:bank', 'Bank', UTC_TIMESTAMP(6)),
           (2, '00000000-0000-0000-0000-000000000000', 'system:fees', 'Fees', UTC_TIMESTAMP(6)),
           (3, '00000000-0000-0000-0000-000000000000', 'system:holding', 'Holding', UTC_TIMESTAMP(6));
-        INSERT IGNORE INTO state (name, value) VALUES ('schema_version', '3'), ('frozen', '0'), ('frozen_reason', '');
+        INSERT IGNORE INTO state (name, value) VALUES ('schema_version', '4'), ('frozen', '0'), ('frozen_reason', '');
         CREATE INDEX IF NOT EXISTS hold_id ON entries (hold_id);
         CREATE TRIGGER IF NOT EXISTS entries_never_edited BEFORE UPDATE ON entries FOR EACH ROW
           SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Money entries are never edited.';
@@ -128,6 +132,15 @@ public static class MoneySchema
         UPDATE state SET value = '3' WHERE name = 'schema_version';
         """;
 
+    /// <summary>
+    /// Version 3 to 4: <c>region_pins.start_floor</c>, the newest Robust start id when the pin was made. A paired server's
+    /// key counts only starts newer than it. Existing pins get 0, so every start still counts for them, as before.
+    /// </summary>
+    private const string To4 = """
+        ALTER TABLE region_pins ADD COLUMN IF NOT EXISTS start_floor BIGINT NOT NULL DEFAULT 0;
+        UPDATE state SET value = '4' WHERE name = 'schema_version';
+        """;
+
     /// <summary>Creates or updates the tables over <paramref name="root"/>, a root connection to the money database, and grants moneyuser its rights.</summary>
     public static async Task EnsureAsync(MySqlConnection root, CancellationToken ct)
     {
@@ -145,6 +158,12 @@ public static class MoneySchema
         if (current == "2")
         {
             await using var cmd = new MySqlCommand(To3, root);
+            await cmd.ExecuteNonQueryAsync(ct);
+            current = "3";
+        }
+        if (current == "3")
+        {
+            await using var cmd = new MySqlCommand(To4, root);
             await cmd.ExecuteNonQueryAsync(ct);
         }
         foreach (var host in DatabaseProvisioner.Hosts)
