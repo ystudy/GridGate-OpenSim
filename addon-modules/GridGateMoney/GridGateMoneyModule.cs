@@ -31,6 +31,9 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
     private static readonly ILog Log = LogManager.GetLogger(MethodBase.GetCurrentMethod()!.DeclaringType);
     private static readonly TimeSpan EconomyFresh = TimeSpan.FromSeconds(60);
     internal static readonly TimeSpan LandHoldLimit = TimeSpan.FromSeconds(1.5);
+    // A parcel's purchase mark this old belongs to a purchase that never finished.
+    private static readonly TimeSpan LandMarkStale = TimeSpan.FromMinutes(1);
+    private const string LandBusyText = "Someone is buying this parcel right now. Please try again in a moment.";
     private static readonly TimeSpan HealthEvery = TimeSpan.FromMinutes(3);
     // Until the service first answers: no fees are known (so none are offered free, R-8), and visitors and payouts are off.
     private static readonly EconomyInfo NoEconomy = new("C$", 0, 0, false, false, 1_000_000);
@@ -52,7 +55,8 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
     private bool _economyRefreshing;
     private ITimer? _healthTimer;
 
-    private sealed record LandHold(UUID Agent, long HoldId, Payer Payer, MoneyWho Seller, DateTime At);
+    /// <summary>A parcel's purchase mark; <see cref="At"/> is a monotonic timestamp (<see cref="TimeProvider.GetTimestamp"/>).</summary>
+    private sealed record LandHold(UUID Agent, long HoldId, Payer Payer, MoneyWho Seller, long At);
 
     /// <summary>Whether the INI chose this module and gave it everything it needs.</summary>
     internal bool Enabled { get; private set; }
@@ -393,14 +397,14 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
         var payer = PayerOf(client);
         var seller = WhoOf(e.parcelOwnerID);
         // One purchase of a parcel at a time: the parcel is marked before the service is asked (HoldId 0, nothing held yet),
-        // so a second buyer who gets in while the first one waits is turned away. An entry over a minute old is a purchase
-        // that never finished, and is taken over.
-        var mine = new LandHold(e.agentId, 0, payer, seller, DateTime.UtcNow);
+        // so a second buyer who gets in while the first one waits is turned away. An entry over a minute old (by the
+        // monotonic clock, so a wall-clock jump can't age one) is a purchase that never finished, and is taken over.
+        var mine = new LandHold(e.agentId, 0, payer, seller, TimeProvider.System.GetTimestamp());
         if (!_landHolds.TryAdd(key, mine))
         {
-            if (!_landHolds.TryGetValue(key, out var busy) || DateTime.UtcNow - busy.At < TimeSpan.FromMinutes(1) || !_landHolds.TryUpdate(key, mine, busy))
+            if (!_landHolds.TryGetValue(key, out var busy) || TimeProvider.System.GetElapsedTime(busy.At) < LandMarkStale || !_landHolds.TryUpdate(key, mine, busy))
             {
-                client.SendAlertMessage("Someone is buying this parcel right now. Please try again in a moment.");
+                client.SendAlertMessage(LandBusyText);
                 return;
             }
         }
@@ -411,7 +415,14 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
             _landHolds.TryRemove(KeyValuePair.Create(key, mine));
             return;
         }
-        _landHolds.TryUpdate(key, mine with { HoldId = holdId }, mine);
+        // The mark was taken over while the service was asked: this purchase no longer has the parcel, so OnLandBuy would
+        // never settle its hold. It gives the coins back and doesn't go ahead.
+        if (!_landHolds.TryUpdate(key, mine with { HoldId = holdId }, mine))
+        {
+            Run(() => actions.SettleLandAsync(payer, seller, holdId, false));
+            client.SendAlertMessage(LandBusyText);
+            return;
+        }
         e.economyValidated = true;
         e.amountDebited = e.parcelPrice;
     }
@@ -420,7 +431,8 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
     {
         var key = (scene.RegionInfo.RegionID, e.parcelLocalID);
         if (!_landHolds.TryGetValue(key, out var hold) || hold.Agent != e.agentId || hold.HoldId == 0) return;
-        _landHolds.TryRemove(key, out _);
+        // Only this purchase's own mark is removed; its hold is settled either way.
+        _landHolds.TryRemove(KeyValuePair.Create(key, hold));
         var data = scene.LandChannel?.GetLandObject(e.parcelLocalID)?.LandData;
         var confirmed = data is not null && (e.groupOwned ? data.GroupID == e.groupId && data.IsGroupOwned : data.OwnerID == e.agentId && !data.IsGroupOwned);
         if (_actions.TryGetValue(scene.RegionInfo.RegionID, out var actions))
@@ -510,7 +522,12 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
         }
         // The classified fee is the grid's own, so it is asked about even when OpenSim passes nothing.
         if (fee != "classified_fee" && amount <= 0) return NothingDue;
-        if (FindClient(agentID) is not { } c || ActionsFor(c) is not { } actions) return null;
+        if (FindClient(agentID) is not { } c || ActionsFor(c) is not { } actions)
+        {
+            // The caller says this in its own words (too few coins), so the log says what really happened.
+            Log.Debug($"[GRIDGATE MONEY]: Held no {fee} of {amount} for {agentID}: not here");
+            return null;
+        }
         var payer = PayerOf(c);
         Guid? payTo = fee == "group_join_fee" && Founder(c, extraData) is { } founder && founder != agentID.Guid ? founder : null;
 

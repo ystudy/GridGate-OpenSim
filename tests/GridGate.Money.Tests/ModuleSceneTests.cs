@@ -190,6 +190,36 @@ public sealed class ModuleSceneTests
     }
 
     [Fact]
+    public void A_purchase_whose_parcel_mark_was_taken_over_meanwhile_returns_its_hold_and_moves_no_land()
+    {
+        var l = LandForSale(100);
+        // While the service is asked, another purchase takes the parcel's mark over (as one does when the mark looks a
+        // minute old): the module's entry for the parcel is no longer this purchase's.
+        l.Region.Service.Gate = m =>
+        {
+            if (m == "hold")
+            {
+                var marks = (System.Collections.IDictionary)typeof(GridGateMoneyModule)
+                    .GetField("_landHolds", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
+                    .GetValue(l.Region.Module)!;
+                var key = marks.Keys.Cast<object>().Single();
+                var mine = marks[key]!;
+                var theirs = mine.GetType().GetMethod("<Clone>$")!.Invoke(mine, null)!;
+                mine.GetType().GetProperty("Agent")!.SetValue(theirs, Stranger);
+                marks[key] = theirs;
+            }
+            return Task.CompletedTask;
+        };
+
+        Buy(l, 100);
+
+        Assert.Equal(7L, l.Region.WaitFor("return").Args[0]);
+        Assert.Empty(l.Region.Service.Of("complete"));
+        Assert.Equal(Seller, Now(l).OwnerID);
+        l.Buyer.WaitForAlert("Someone is buying this parcel right now. Please try again in a moment.");
+    }
+
+    [Fact]
     public void A_land_hold_waits_at_most_one_and_a_half_seconds()
     {
         var l = LandForSale(100);
