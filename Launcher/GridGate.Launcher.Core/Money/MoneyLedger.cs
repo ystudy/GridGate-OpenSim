@@ -247,7 +247,7 @@ public sealed partial class MoneyLedger(
     /// </summary>
     private Task<MoneyResult> Idempotent(Guid txnId, string op, object request, Func<MySqlConnection, MySqlTransaction, Task<MoneyResult>> work, CancellationToken ct)
     {
-        var fingerprint = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(op + "\n" + JsonSerializer.Serialize(request))));
+        var fingerprint = Fingerprint(op, request);
         return RunAsync(async (conn, tx) =>
         {
             if (await StoredAsync(conn, tx, txnId, ct) is { } earlier)
@@ -258,6 +258,36 @@ public sealed partial class MoneyLedger(
                     ct, ("@txn", txnId.ToString()), ("@op", op), ("@fp", fingerprint), ("@resp", JsonSerializer.Serialize(result)), ("@now", Now));
             return result;
         }, ct, (txnId, fingerprint));
+    }
+
+    /// <summary>One operation and all its values, as <see cref="Idempotent"/> stores them.</summary>
+    private static string Fingerprint(string op, object request) =>
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(op + "\n" + JsonSerializer.Serialize(request))));
+
+    /// <summary>
+    /// The stored Ok answer for this transfer's id when the operation and every value match; null otherwise or when the
+    /// database fails. Lets the service answer a repeat before checks that may no longer pass (the payer moved on, the
+    /// region lost its verification) although the first attempt went through.
+    /// </summary>
+    public Task<MoneyResult?> EarlierAsync(TransferRequest r, CancellationToken ct) => EarlierAsync(r.TxnId, "transfer", r, ct);
+
+    /// <inheritdoc cref="EarlierAsync(TransferRequest, CancellationToken)"/>
+    public Task<MoneyResult?> EarlierAsync(PayoutRequest r, CancellationToken ct) => EarlierAsync(r.TxnId, "payout", r, ct);
+
+    /// <inheritdoc cref="EarlierAsync(TransferRequest, CancellationToken)"/>
+    public Task<MoneyResult?> EarlierAsync(ChargeRequest r, CancellationToken ct) => EarlierAsync(r.TxnId, "charge", r, ct);
+
+    private async Task<MoneyResult?> EarlierAsync(Guid txnId, string op, object request, CancellationToken ct)
+    {
+        try
+        {
+            await using var conn = await open(ct);
+            return await StoredAsync(conn, null, txnId, ct) is { } stored && stored.Fingerprint == Fingerprint(op, request) ? stored.Result : null;
+        }
+        catch (Exception e) when (e is MySqlException or TimeoutException or InvalidOperationException { Source: "MySqlConnector" })
+        {
+            return null;
+        }
     }
 
     private static async Task<(string Fingerprint, MoneyResult Result)?> StoredAsync(MySqlConnection conn, MySqlTransaction? tx, Guid txnId, CancellationToken ct)

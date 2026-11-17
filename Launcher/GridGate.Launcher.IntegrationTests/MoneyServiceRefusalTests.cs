@@ -28,7 +28,29 @@ public sealed class MoneyServiceRefusalTests(MoneyMariaDb maria) : IClassFixture
         ("transfer", new { txnId = Guid.NewGuid(), type = "pay_avatar", from = payer, to = payee, amount = 10, regionId = Here }),
         ("hold", new { txnId = Guid.NewGuid(), kind = "object", buyer = payer, seller = payee, amount = 10, regionId = Here, objectId = Guid.NewGuid(), objectName = "dress" }),
         ("charge", new { txnId = Guid.NewGuid(), type = "upload_fee", payer, amount = 3, regionId = Here }),
+        // Fee holds get every check a charge gets.
+        ("hold", new { txnId = Guid.NewGuid(), kind = "upload_fee", buyer = payer, amount = 3, regionId = Here }),
+        ("hold", new { txnId = Guid.NewGuid(), kind = "group_join_fee", buyer = payer, seller = payee, amount = 3, regionId = Here }),
     ];
+
+    [Fact]
+    public async Task A_fee_hold_for_a_payer_not_verified_in_this_keys_region_is_refused()
+    {
+        // Nobody is placed yet: no module has checked in and the service has A nowhere.
+        var rig = _rig = await MoneyServiceRig.StartAsync(maria, place: false);
+        foreach (var kind in new[] { "upload_fee", "classified_fee" })
+            Assert.Equal("unverified_avatar", CodeOf(await rig.Post("hold", new { txnId = Guid.NewGuid(), kind, buyer = WhoA(), amount = 3, regionId = Here })));
+
+        await rig.Health(Key);
+        await rig.Health(Key2);
+        await rig.Place(SessionA, Here);
+        // Placed at Here by p1: p2's key can't take a fee from A, in its own region or in A's.
+        Assert.Equal("wrong_region", CodeOf(await rig.Post("hold", new { txnId = Guid.NewGuid(), kind = "upload_fee", buyer = WhoA(), amount = 3, regionId = There }, Key2)));
+        Assert.Equal("wrong_region", CodeOf(await rig.Post("hold", new { txnId = Guid.NewGuid(), kind = "upload_fee", buyer = WhoA(), amount = 3, regionId = Here }, Key2)));
+
+        Assert.Equal(0, await rig.Db.Scalar("SELECT COUNT(*) FROM `money`.`holds`"));
+        await rig.AssertBooksSoundAsync();
+    }
 
     private static object Resident(Guid id) => new { agentId = id, home = "" };
 

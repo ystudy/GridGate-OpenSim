@@ -25,12 +25,15 @@ namespace GridGate.Region.Money;
 /// only while money is on.
 /// </summary>
 [Extension(Path = "/OpenSim/RegionModules", NodeName = "RegionModule", Id = "GridGateMoneyModule")]
-public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVisitorMoneyModule, IClassifiedFeeModule
+public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVisitorMoneyModule, IClassifiedFeeModule, IFeeHoldModule
 {
     public const string ModuleName = "GridGateMoneyModule";
     private static readonly ILog Log = LogManager.GetLogger(MethodBase.GetCurrentMethod()!.DeclaringType);
     private static readonly TimeSpan EconomyFresh = TimeSpan.FromSeconds(60);
-    private static readonly TimeSpan LandHoldLimit = TimeSpan.FromSeconds(3);
+    internal static readonly TimeSpan LandHoldLimit = TimeSpan.FromSeconds(1.5);
+    // A parcel's purchase mark this old belongs to a purchase that never finished.
+    private static readonly TimeSpan LandMarkStale = TimeSpan.FromMinutes(1);
+    private const string LandBusyText = "Someone is buying this parcel right now. Please try again in a moment.";
     private static readonly TimeSpan HealthEvery = TimeSpan.FromMinutes(3);
     // Until the service first answers: no fees are known (so none are offered free, R-8), and visitors and payouts are off.
     private static readonly EconomyInfo NoEconomy = new("C$", 0, 0, false, false, 1_000_000);
@@ -42,6 +45,7 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
     private readonly ConcurrentDictionary<UUID, string> _visitorHomes = new();
     // Land purchases between the hold (validate) and the settle (buy), by region and parcel.
     private readonly ConcurrentDictionary<(UUID Region, int Parcel), LandHold> _landHolds = new();
+    private readonly ParcelBuyLimit _buyLimit = new(TimeProvider.System);
     private readonly object _economyGate = new();
 
     private IMoneyService? _client;
@@ -51,7 +55,8 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
     private bool _economyRefreshing;
     private ITimer? _healthTimer;
 
-    private sealed record LandHold(UUID Agent, long HoldId, Payer Payer, MoneyWho Seller, DateTime At);
+    /// <summary>A parcel's purchase mark; <see cref="At"/> is a monotonic timestamp (<see cref="TimeProvider.GetTimestamp"/>).</summary>
+    private sealed record LandHold(UUID Agent, long HoldId, Payer Payer, MoneyWho Seller, long At);
 
     /// <summary>Whether the INI chose this module and gave it everything it needs.</summary>
     internal bool Enabled { get; private set; }
@@ -300,7 +305,9 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
 
     private void OnClientClosed(UUID agent, Scene scene)
     {
-        if (FindClient(agent) is null) _balances.TryRemove(agent, out _);
+        if (FindClient(agent) is not null) return;
+        _balances.TryRemove(agent, out _);
+        _buyLimit.Forget(agent.Guid);
     }
 
     private async Task PushBalanceAsync(IClientAPI c)
@@ -381,20 +388,41 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
             e.economyValidated = true;
             return;
         }
-        var key = (scene.RegionInfo.RegionID, e.parcelLocalID);
-        // One purchase of a parcel at a time. Validate and buy already run one after another on the region's packet thread,
-        // and the land module's own check refuses a parcel no longer for sale; this only guards against that changing.
-        if (_landHolds.TryGetValue(key, out var busy) && DateTime.UtcNow - busy.At < TimeSpan.FromMinutes(1))
+        if (!_buyLimit.TryTake(e.agentId.Guid))
         {
-            client.SendAlertMessage("Someone is buying this parcel right now. Please try again in a moment.");
+            client.SendAlertMessage(MoneyRules.LandTooFastText);
             return;
         }
+        var key = (scene.RegionInfo.RegionID, e.parcelLocalID);
         var payer = PayerOf(client);
         var seller = WhoOf(e.parcelOwnerID);
-        // This runs on the region's packet thread (ParcelBuy is handled in line), so the service gets a few seconds only.
+        // One purchase of a parcel at a time: the parcel is marked before the service is asked (HoldId 0, nothing held yet),
+        // so a second buyer who gets in while the first one waits is turned away. An entry over a minute old (by the
+        // monotonic clock, so a wall-clock jump can't age one) is a purchase that never finished, and is taken over.
+        var mine = new LandHold(e.agentId, 0, payer, seller, TimeProvider.System.GetTimestamp());
+        if (!_landHolds.TryAdd(key, mine))
+        {
+            if (!_landHolds.TryGetValue(key, out var busy) || TimeProvider.System.GetElapsedTime(busy.At) < LandMarkStale || !_landHolds.TryUpdate(key, mine, busy))
+            {
+                client.SendAlertMessage(LandBusyText);
+                return;
+            }
+        }
+        // This runs on the region's packet thread (ParcelBuy is handled in line), so the service gets a moment only.
         var hold = actions.HoldLandAsync(payer, seller, e.parcelPrice, e.parcelLocalID, LandHoldLimit).GetAwaiter().GetResult();
-        if (hold is not { } holdId || holdId == 0) return;
-        _landHolds[key] = new LandHold(e.agentId, holdId, payer, seller, DateTime.UtcNow);
+        if (hold is not { } holdId || holdId == 0)
+        {
+            _landHolds.TryRemove(KeyValuePair.Create(key, mine));
+            return;
+        }
+        // The mark was taken over while the service was asked: this purchase no longer has the parcel, so OnLandBuy would
+        // never settle its hold. It gives the coins back and doesn't go ahead.
+        if (!_landHolds.TryUpdate(key, mine with { HoldId = holdId }, mine))
+        {
+            Run(() => actions.SettleLandAsync(payer, seller, holdId, false));
+            client.SendAlertMessage(LandBusyText);
+            return;
+        }
         e.economyValidated = true;
         e.amountDebited = e.parcelPrice;
     }
@@ -402,8 +430,9 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
     private void OnLandBuy(Scene scene, EventManager.LandBuyArgs e)
     {
         var key = (scene.RegionInfo.RegionID, e.parcelLocalID);
-        if (!_landHolds.TryGetValue(key, out var hold) || hold.Agent != e.agentId) return;
-        _landHolds.TryRemove(key, out _);
+        if (!_landHolds.TryGetValue(key, out var hold) || hold.Agent != e.agentId || hold.HoldId == 0) return;
+        // Only this purchase's own mark is removed; its hold is settled either way.
+        _landHolds.TryRemove(KeyValuePair.Create(key, hold));
         var data = scene.LandChannel?.GetLandObject(e.parcelLocalID)?.LandData;
         var confirmed = data is not null && (e.groupOwned ? data.GroupID == e.groupId && data.IsGroupOwned : data.OwnerID == e.agentId && !data.IsGroupOwned);
         if (_actions.TryGetValue(scene.RegionInfo.RegionID, out var actions))
@@ -439,8 +468,7 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
         switch (type)
         {
             case MoneyTransactionType.GroupJoin:
-                var founder = FindClient(agentID)?.Scene is Scene s ? s.RequestModuleInterface<IGroupsModule>()?.GetGroupRecord(extraData)?.FounderID : null;
-                Charge(agentID, "group_join_fee", amount, founder is { } f && !f.IsZero() ? f.Guid : null);
+                Charge(agentID, "group_join_fee", amount, Founder(FindClient(agentID), extraData));
                 break;
             case MoneyTransactionType.ClassifiedCharge:
                 // The grid's fee, whatever listing price the viewer sent.
@@ -462,6 +490,99 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
             return;
         }
         actions.Charge(PayerOf(c), type, amount, payTo);
+    }
+
+    /// <summary>The founder of the group named <paramref name="groupName"/>, who a join fee pays; null for none known.</summary>
+    private static Guid? Founder(IClientAPI? client, string groupName) =>
+        client?.Scene is Scene s && s.RequestModuleInterface<IGroupsModule>()?.GetGroupRecord(groupName)?.FounderID is { } f && !f.IsZero() ? f.Guid : null;
+
+    // ---- IFeeHoldModule: a fee held before its action -----------------------------------------------------------------
+
+    private static readonly IFeeHold NothingDue = new NoFee();
+
+    /// <summary>
+    /// Holds a fee before OpenSim's action: <c>UploadCharge</c> as given, <c>GroupJoin</c> paying the founder of the
+    /// group named <paramref name="extraData"/> (as <see cref="ApplyCharge"/> does), <c>ClassifiedCharge</c> at the grid's
+    /// fee whatever <paramref name="amount"/> says. A service from before fee holds is asked as before: the fee is checked
+    /// now and charged once the action worked. Null when it can't be paid, or the payer isn't here.
+    /// </summary>
+    public IFeeHold? HoldFee(UUID agentID, int amount, MoneyTransactionType type, string extraData = "")
+    {
+        var fee = type switch
+        {
+            MoneyTransactionType.UploadCharge => "upload_fee",
+            MoneyTransactionType.GroupJoin => "group_join_fee",
+            MoneyTransactionType.ClassifiedCharge => "classified_fee",
+            _ => null,
+        };
+        if (fee is null)
+        {
+            Log.Debug($"[GRIDGATE MONEY]: Ignored a {type} fee of {amount} for {agentID}.");
+            return NothingDue;
+        }
+        // The classified fee is the grid's own, so it is asked about even when OpenSim passes nothing.
+        if (fee != "classified_fee" && amount <= 0) return NothingDue;
+        if (FindClient(agentID) is not { } c || ActionsFor(c) is not { } actions)
+        {
+            // The caller says this in its own words (too few coins), so the log says what really happened.
+            Log.Debug($"[GRIDGATE MONEY]: Held no {fee} of {amount} for {agentID}: not here");
+            return null;
+        }
+        var payer = PayerOf(c);
+        Guid? payTo = fee == "group_join_fee" && Founder(c, extraData) is { } founder && founder != agentID.Guid ? founder : null;
+
+        if (!actions.FeeHolds)
+        {
+            var covered = fee switch
+            {
+                "upload_fee" => actions.UploadCovered(payer, amount),
+                "classified_fee" => actions.ClassifiedCovered(payer),
+                _ => actions.Covered(payer, amount),
+            };
+            return covered ? new ChargeAfter(actions, payer, fee, amount, payTo) : null;
+        }
+        if (fee == "classified_fee") amount = actions.ClassifiedFee();
+        return actions.HoldFee(payer, fee, amount, payTo) switch
+        {
+            null => null,
+            0 => NothingDue,
+            { } holdId => new Held(actions, payer, fee, amount, payTo, holdId),
+        };
+    }
+
+    private sealed class NoFee : IFeeHold
+    {
+        public void Settle(bool succeeded)
+        {
+        }
+    }
+
+    /// <summary>A fee the service holds: completed or returned off the caller's thread, once.</summary>
+    private sealed class Held(MoneyActions actions, Payer payer, string fee, int amount, Guid? payTo, long holdId) : IFeeHold
+    {
+        private int _settled;
+
+        public void Settle(bool succeeded)
+        {
+            if (Interlocked.Exchange(ref _settled, 1) == 0)
+                Run(() => actions.SettleFeeAsync(payer, fee, amount, payTo, holdId, succeeded));
+        }
+    }
+
+    /// <summary>
+    /// A service from before fee holds: checked when taken, charged once the action worked, on the caller's thread as
+    /// OpenSim's own charge after an action always was.
+    /// </summary>
+    private sealed class ChargeAfter(MoneyActions actions, Payer payer, string fee, int amount, Guid? payTo) : IFeeHold
+    {
+        private int _settled;
+
+        public void Settle(bool succeeded)
+        {
+            if (Interlocked.Exchange(ref _settled, 1) != 0 || !succeeded) return;
+            if (fee == "classified_fee") actions.ChargeClassified(payer, amount);
+            else actions.Charge(payer, fee, amount, payTo);
+        }
     }
 
     /// <summary>The land module's parcel pass; the only money movement it asks for.</summary>
@@ -607,7 +728,7 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
 
         public void ObjectPaid(Guid partId, Guid payer, int amount) => module.OnObjectPaid?.Invoke(new UUID(partId), new UUID(payer), amount);
 
-        public Task Delay(TimeSpan t) => Task.Delay(t);
+        public Task Delay(TimeSpan t, CancellationToken ct) => Task.Delay(t, ct);
 
         public void Warn(string text) => Log.Warn("[GRIDGATE MONEY]: " + text);
 

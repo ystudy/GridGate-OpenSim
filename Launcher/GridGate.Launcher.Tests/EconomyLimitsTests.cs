@@ -1,0 +1,83 @@
+using System.Net;
+using GridGate.Launcher.Core.Database;
+using GridGate.Launcher.Economy;
+using Microsoft.Extensions.Time.Testing;
+using MySqlConnector;
+using Xunit;
+
+namespace GridGate.Launcher.Tests;
+
+/// <summary>What keeps the economy helper from flooding the shared database: lookups at once, calls per second, addresses tracked.</summary>
+public sealed class EconomyLimitsTests
+{
+    private FakeTimeProvider Clock { get; } = new(new DateTimeOffset(2026, 11, 16, 12, 0, 0, TimeSpan.Zero));
+
+    private static IPAddress Ip(int n) => IPAddress.Parse($"203.0.113.{n}");
+
+    [Fact]
+    public void A_ninth_lookup_at_once_is_refused()
+    {
+        var l = new EconomyLimits(Clock);
+        for (var i = 0; i < 8; i++) Assert.True(l.TryStartLookup());
+
+        Assert.False(l.TryStartLookup());
+        l.EndLookup();
+        Assert.True(l.TryStartLookup());
+    }
+
+    [Fact]
+    public void Calls_past_twenty_in_a_second_are_refused_across_addresses()
+    {
+        var l = new EconomyLimits(Clock);
+        for (var i = 1; i <= 20; i++) Assert.True(l.Allow(Ip(i)));
+
+        Assert.False(l.Allow(Ip(21)));
+        Clock.Advance(TimeSpan.FromSeconds(1));
+        Assert.True(l.Allow(Ip(21)));
+    }
+
+    [Fact]
+    public void A_call_refused_by_its_own_addresss_limit_takes_no_slot_in_the_second()
+    {
+        var l2 = new EconomyLimits(Clock, perSecond: 61);
+        for (var i = 0; i < EconomyLimits.PerMinute; i++) Assert.True(l2.Allow(Ip(1)));
+        for (var i = 0; i < 20; i++) Assert.False(l2.Allow(Ip(1)));
+
+        Assert.True(l2.Allow(Ip(2)));
+    }
+
+    [Fact]
+    public void A_full_table_refuses_a_new_address_but_still_counts_known_ones()
+    {
+        var l = new EconomyLimits(Clock, maxAddresses: 3, perSecond: 1000);
+        for (var i = 1; i <= 3; i++) Assert.True(l.Allow(Ip(i)));
+
+        Assert.False(l.Allow(Ip(4)));
+        Assert.True(l.Allow(Ip(1)));
+    }
+
+    [Fact]
+    public void A_full_table_takes_new_addresses_again_once_old_ones_age_out()
+    {
+        var l = new EconomyLimits(Clock, maxAddresses: 3, perSecond: 1000);
+        for (var i = 1; i <= 3; i++) Assert.True(l.Allow(Ip(i)));
+        Assert.False(l.Allow(Ip(4)));
+
+        Clock.Advance(TimeSpan.FromMinutes(1));
+
+        Assert.True(l.Allow(Ip(4)));
+    }
+
+    [Fact]
+    public void The_helpers_robust_connections_are_pooled_and_capped()
+    {
+        var settings = TestSettings.Create();
+        var b = new MySqlConnectionStringBuilder(MariaDbServer.ConnectionString(settings, "robust", "robustuser", "pw", 10, maxPool: 8));
+
+        Assert.True(b.Pooling);
+        Assert.Equal(8u, b.MaximumPoolSize);
+        Assert.Equal(0u, b.MinimumPoolSize);
+        Assert.Equal(60u, b.ConnectionIdleTimeout);
+        Assert.False(new MySqlConnectionStringBuilder(MariaDbServer.ConnectionString(settings, "robust", "robustuser", "pw", 10)).Pooling);
+    }
+}

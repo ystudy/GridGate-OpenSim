@@ -37,7 +37,8 @@ public sealed partial class MoneyLedger
         [EntryType.ClassifiedFee] = new(Wallets, Fees),
         [EntryType.GroupJoinFee] = new(Wallets, [.. Fees, .. Residents]),
         [EntryType.Hold] = new(Wallets, Holding, Hold: true),
-        [EntryType.HoldCompleted] = new(Holding, Wallets, Hold: true),
+        // A fee held before its action completes into Fees; the hold check below says which holds may.
+        [EntryType.HoldCompleted] = new(Holding, [.. Wallets, .. Fees], Hold: true),
         [EntryType.HoldReturned] = new(Holding, Wallets, Hold: true),
         [EntryType.Refund] = new(NotHolding, NotHolding, Staff: true, Reverses: true),
         [EntryType.WalletMerge] = new(Wallets, Wallets, Staff: true),
@@ -109,7 +110,8 @@ public sealed partial class MoneyLedger
     /// <summary>
     /// Holding holds exactly the open holds, and each hold still reads as the entries that opened and settled it: one
     /// <c>hold</c> entry from the buyer for its amount, and once settled, one entry paying that amount to the seller or back
-    /// to the buyer.
+    /// to the buyer. Only a fee's hold pays Fees, an upload or classified fee's hold pays nobody else, and a group join
+    /// fee's hold pays Fees or a resident other than the buyer.
     /// </summary>
     private static async Task HoldProblemsAsync(MySqlConnection conn, MySqlTransaction tx, List<string> problems, CancellationToken ct)
     {
@@ -121,6 +123,10 @@ public sealed partial class MoneyLedger
         await ReadLinesAsync(conn, tx, problems, $"""
             SELECT h.id FROM holds h
             WHERE h.state NOT IN ('open', 'completed', 'returned')
+               OR (h.kind IN ('{EntryType.UploadFee}', '{EntryType.ClassifiedFee}') AND h.seller_id <> {MoneySchema.FeesId})
+               OR (h.kind NOT IN ('{EntryType.UploadFee}', '{EntryType.ClassifiedFee}', '{EntryType.GroupJoinFee}') AND h.seller_id = {MoneySchema.FeesId})
+               OR (h.kind = '{EntryType.GroupJoinFee}' AND (h.seller_id = h.buyer_id
+                     OR (h.seller_id <> {MoneySchema.FeesId} AND NOT EXISTS (SELECT 1 FROM accounts a WHERE a.id = h.seller_id AND a.kind = 'Person'))))
                OR (SELECT COUNT(*) FROM entries e WHERE e.hold_id = h.id) <> IF(h.state = 'open', 1, 2)
                OR (SELECT COUNT(*) FROM entries e WHERE e.hold_id = h.id AND e.type = '{EntryType.Hold}'
                      AND e.from_id = h.buyer_id AND e.to_id = {MoneySchema.HoldingId} AND e.amount = h.amount) <> 1

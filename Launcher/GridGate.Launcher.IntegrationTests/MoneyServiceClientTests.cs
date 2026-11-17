@@ -84,6 +84,19 @@ public sealed class MoneyServiceClientTests(MoneyMariaDb maria) : IClassFixture<
     }
 
     [Fact]
+    public async Task An_unavailable_answer_from_the_service_is_not_lost()
+    {
+        await StartAsync();
+        _rig!.Mode = MoneyMode.Off; // coins off: the service itself answers unavailable
+        using var client = Client();
+
+        var answer = await client.TransferAsync(Guid.NewGuid(), "pay_avatar", ClientA, ClientB, 5, Here, null, null, Ct);
+
+        Assert.Equal("unavailable", answer.Code);
+        Assert.False(answer.Lost);
+    }
+
+    [Fact]
     public async Task Hold_complete_round_trip()
     {
         await StartAsync();
@@ -99,6 +112,39 @@ public sealed class MoneyServiceClientTests(MoneyMariaDb maria) : IClassFixture<
         Assert.True(done.Ok, done.Code);
         Assert.Equal(125, done.ToBalance);
         Assert.Null(done.Balance);
+    }
+
+    [Fact]
+    public async Task Client_reads_fee_holds_from_economy()
+    {
+        await StartAsync();
+        using var client = Client();
+
+        Assert.True((await client.EconomyAsync(Ct))!.FeeHolds);
+    }
+
+    [Fact]
+    public async Task A_fee_hold_without_a_seller_round_trip()
+    {
+        // The client sends no seller at all, which the service takes only for a fee.
+        await StartAsync();
+        using var client = Client();
+
+        var hold = await client.HoldAsync(Guid.NewGuid(), "upload_fee", ClientA, null, 3, Here, null, null, Ct);
+        Assert.True(hold.Ok, hold.Code);
+        Assert.Equal(97, hold.Balance);
+        var done = await client.CompleteAsync(Guid.NewGuid(), hold.HoldId!.Value, Ct);
+        Assert.True(done.Ok, done.Code);
+        Assert.Null(done.ToBalance);
+
+        var join = await client.HoldAsync(Guid.NewGuid(), "group_join_fee", ClientA, ClientB, 5, Here, null, null, Ct);
+        Assert.True(join.Ok, join.Code);
+        Assert.Equal(105, (await client.CompleteAsync(Guid.NewGuid(), join.HoldId!.Value, Ct)).ToBalance);
+        // A purchase with no seller is turned away (a 400), which the client reads as a final unavailable.
+        var purchase = await client.HoldAsync(Guid.NewGuid(), "object", ClientA, null, 3, Here, null, null, Ct);
+        Assert.Equal("unavailable", purchase.Code);
+        Assert.True(purchase.Final);
+        await _rig!.AssertBooksSoundAsync();
     }
 
     [Fact]

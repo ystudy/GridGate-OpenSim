@@ -41,8 +41,8 @@ public sealed class ModuleSceneTests
     }
 
     /// <summary>The viewer's ParcelBuy, as the client stack hands it to the scene.</summary>
-    private static void Buy(Land l, int price, bool forGroup = false) =>
-        l.Region.Scene.ProcessParcelBuy(Buyer, forGroup ? GroupId : UUID.Zero, true, forGroup, false, l.Parcel.LandData.LocalID,
+    private static void Buy(Land l, int price, bool forGroup = false, UUID? who = null) =>
+        l.Region.Scene.ProcessParcelBuy(who ?? Buyer, forGroup ? GroupId : UUID.Zero, true, forGroup, false, l.Parcel.LandData.LocalID,
             l.Parcel.LandData.Area, price, false);
 
     private static LandData Now(Land l) => l.Lmm.GetLandObject(l.Parcel.LandData.LocalID).LandData;
@@ -157,6 +157,112 @@ public sealed class ModuleSceneTests
 
         Assert.Equal(Buyer, Now(l).OwnerID);
         Assert.Empty(l.Region.Service.Calls);
+    }
+
+    [Fact]
+    public void A_sixth_land_buy_in_a_minute_is_refused_without_asking_the_service()
+    {
+        var l = LandForSale(100);
+        l.Region.Service.Queue("hold", Enumerable.Repeat(new MoneyAnswer("not_enough"), 5).ToArray());
+
+        for (var i = 0; i < 6; i++) Buy(l, 100);
+
+        Assert.Equal(5, l.Region.Service.Of("hold").Count());
+        l.Buyer.WaitForAlert(MoneyRules.LandTooFastText);
+    }
+
+    [Fact]
+    public async Task Two_buyers_of_one_parcel_at_once_hold_only_once()
+    {
+        var l = LandForSale(100);
+        var stranger = l.Region.Arrive(Stranger);
+        var release = new TaskCompletionSource();
+        l.Region.Service.Gate = m => m == "hold" ? release.Task : Task.CompletedTask;
+
+        var first = Task.Run(() => Buy(l, 100), TestContext.Current.CancellationToken);
+        l.Region.WaitFor("hold");
+        Buy(l, 100, who: Stranger);
+
+        Assert.Single(l.Region.Service.Of("hold"));
+        stranger.WaitForAlert("Someone is buying this parcel right now. Please try again in a moment.");
+        release.SetResult();
+        await first;
+    }
+
+    [Fact]
+    public void A_purchase_whose_parcel_mark_was_taken_over_meanwhile_returns_its_hold_and_moves_no_land()
+    {
+        var l = LandForSale(100);
+        // While the service is asked, another purchase takes the parcel's mark over (as one does when the mark looks a
+        // minute old): the module's entry for the parcel is no longer this purchase's.
+        l.Region.Service.Gate = m =>
+        {
+            if (m == "hold")
+            {
+                var marks = (System.Collections.IDictionary)typeof(GridGateMoneyModule)
+                    .GetField("_landHolds", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
+                    .GetValue(l.Region.Module)!;
+                var key = marks.Keys.Cast<object>().Single();
+                var mine = marks[key]!;
+                var theirs = mine.GetType().GetMethod("<Clone>$")!.Invoke(mine, null)!;
+                mine.GetType().GetProperty("Agent")!.SetValue(theirs, Stranger);
+                marks[key] = theirs;
+            }
+            return Task.CompletedTask;
+        };
+
+        Buy(l, 100);
+
+        Assert.Equal(7L, l.Region.WaitFor("return").Args[0]);
+        Assert.Empty(l.Region.Service.Of("complete"));
+        Assert.Equal(Seller, Now(l).OwnerID);
+        l.Buyer.WaitForAlert("Someone is buying this parcel right now. Please try again in a moment.");
+    }
+
+    [Fact]
+    public void A_land_hold_waits_at_most_one_and_a_half_seconds()
+    {
+        var l = LandForSale(100);
+        l.Region.Service.Gate = _ => new TaskCompletionSource().Task; // the service never answers
+
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        Buy(l, 100);
+        watch.Stop();
+
+        Assert.InRange(watch.Elapsed, TimeSpan.FromSeconds(1.4), TimeSpan.FromSeconds(2.5));
+        Assert.Equal(Seller, Now(l).OwnerID);
+    }
+
+    [Fact]
+    public void Buying_two_parcels_one_after_the_other_works()
+    {
+        var l = LandForSale(100);
+        l.Lmm.Subdivide(0, 0, 128, 256, Seller);
+        var first = l.Lmm.GetLandObject(10, 10);
+        var second = l.Lmm.GetLandObject(200, 10);
+        Assert.NotEqual(first.LandData.LocalID, second.LandData.LocalID);
+
+        Buy(l with { Parcel = first }, 100);
+        Buy(l with { Parcel = second }, 100);
+
+        Assert.Equal(2, l.Region.Service.Of("hold").Count());
+        l.Region.WaitFor("complete", c => (long)c.Args[0]! == 7L);
+        Assert.Equal(Buyer, l.Lmm.GetLandObject(10, 10).LandData.OwnerID);
+        Assert.Equal(Buyer, l.Lmm.GetLandObject(200, 10).LandData.OwnerID);
+    }
+
+    [Fact]
+    public void A_buyer_refused_for_coins_can_try_again_at_once()
+    {
+        var l = LandForSale(100);
+        l.Region.Service.Queue("hold", new MoneyAnswer("not_enough"), Rich with { HoldId = 7 });
+
+        Buy(l, 100);
+        Assert.Equal(Seller, Now(l).OwnerID);
+        Buy(l, 100);
+
+        Assert.Equal(2, l.Region.Service.Of("hold").Count());
+        Assert.Equal(Buyer, Now(l).OwnerID);
     }
 
     // --- paying through the viewer's MoneyTransferRequest ------------------------------------------------------------
@@ -480,6 +586,92 @@ public sealed class ModuleSceneTests
 
         region.Module.ApplyCharge(Buyer, 20, type);
 
+        Assert.Empty(region.Service.Calls);
+    }
+
+    // --- HoldFee: a fee held before its action -----------------------------------------------------------------------
+
+    [Fact]
+    public void HoldFee_for_a_classified_holds_the_grids_fee_not_the_viewers_price()
+    {
+        var region = Build(new EconomyInfo("C$", 0, 25, true, true, 1_000_000, FeeHolds: true));
+        region.Arrive(Buyer);
+
+        var fee = region.Module.HoldFee(Buyer, 0, MoneyTransactionType.ClassifiedCharge);
+
+        Assert.NotNull(fee);
+        var hold = Assert.Single(region.Service.Of("hold"));
+        Assert.Equal("classified_fee", hold.Args[0]);
+        Assert.Null(hold.Args[2]);
+        Assert.Equal(25L, hold.Args[3]);
+        Assert.Equal(region.Scene.RegionInfo.RegionID.Guid, hold.Args[4]);
+        fee.Settle(true);
+        Assert.Equal(7L, region.WaitFor("complete").Args[0]);
+        Assert.Empty(region.Service.Of("charge"));
+    }
+
+    [Fact]
+    public void HoldFee_for_a_group_join_pays_the_founder()
+    {
+        var region = Build(new EconomyInfo("C$", 0, 0, true, true, 1_000_000, FeeHolds: true));
+        region.Arrive(Buyer);
+        region.Scene.RegisterModuleInterface(OneGroup.Create("Club", Founder));
+
+        var fee = region.Module.HoldFee(Buyer, 20, MoneyTransactionType.GroupJoin, "Club");
+
+        var hold = Assert.Single(region.Service.Of("hold"));
+        Assert.Equal("group_join_fee", hold.Args[0]);
+        Assert.Equal(Founder.Guid, ((MoneyWho)hold.Args[2]!).AgentId);
+        Assert.Equal(20L, hold.Args[3]);
+        fee!.Settle(false);
+        region.WaitFor("return");
+        Assert.Empty(region.Service.Of("complete"));
+    }
+
+    [Fact]
+    public void A_fee_settles_once()
+    {
+        var region = Build(new EconomyInfo("C$", 10, 0, true, true, 1_000_000, FeeHolds: true));
+        region.Arrive(Buyer);
+
+        var fee = region.Module.HoldFee(Buyer, 10, MoneyTransactionType.UploadCharge)!;
+        fee.Settle(true);
+        fee.Settle(false);
+        fee.Settle(true);
+
+        region.WaitFor("complete");
+        Thread.Sleep(200);
+        Assert.Single(region.Service.Of("complete"));
+        Assert.Empty(region.Service.Of("return"));
+    }
+
+    [Fact]
+    public void Without_fee_holds_on_the_service_a_fee_is_checked_then_charged_after()
+    {
+        // A service from before fee holds: no flag in its economy answer.
+        var region = Build(new EconomyInfo("C$", 10, 0, true, true, 1_000_000));
+        region.Arrive(Buyer);
+        region.Service.Answer = _ => Rich;
+
+        var fee = region.Module.HoldFee(Buyer, 10, MoneyTransactionType.UploadCharge);
+        lock (region.Service.Order) Assert.Equal(new[] { "balance" }, region.Service.Order);
+        fee!.Settle(true);
+        var charge = region.WaitFor("charge");
+        Assert.Equal("upload_fee", charge.Args[0]);
+        Assert.Equal(10L, charge.Args[2]);
+
+        region.Module.HoldFee(Buyer, 10, MoneyTransactionType.UploadCharge)!.Settle(false);
+        Thread.Sleep(200);
+        Assert.Single(region.Service.Of("charge"));
+        Assert.Empty(region.Service.Of("hold"));
+    }
+
+    [Fact]
+    public void A_fee_for_someone_not_here_is_refused()
+    {
+        var region = Build(new EconomyInfo("C$", 10, 0, true, true, 1_000_000, FeeHolds: true));
+
+        Assert.Null(region.Module.HoldFee(Stranger, 10, MoneyTransactionType.UploadCharge));
         Assert.Empty(region.Service.Calls);
     }
 

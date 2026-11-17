@@ -52,7 +52,7 @@ internal sealed class FakeMoneyService : IMoneyService
     public Task<MoneyAnswer> ChargeAsync(Guid txn, string type, MoneyWho payer, long amount, Guid? payTo, Guid regionId, CancellationToken ct) =>
         Record("charge", txn, ct, type, payer, amount, payTo, regionId);
 
-    public Task<MoneyAnswer> HoldAsync(Guid txn, string kind, MoneyWho buyer, MoneyWho seller, long amount, Guid regionId, Guid? objectId, string? objectName,
+    public Task<MoneyAnswer> HoldAsync(Guid txn, string kind, MoneyWho buyer, MoneyWho? seller, long amount, Guid regionId, Guid? objectId, string? objectName,
         CancellationToken ct) => Record("hold", txn, ct, kind, buyer, seller, amount, regionId, objectId, objectName);
 
     public Task<MoneyAnswer> CompleteAsync(Guid txn, long holdId, CancellationToken ct) => Record("complete", txn, ct, holdId);
@@ -115,10 +115,13 @@ internal sealed class FakeView : IMoneyView
         lock (this) { Paid.Add((partId, payer, amount)); Order.Add("paid"); }
     }
 
-    public Task Delay(TimeSpan t)
+    /// <summary>When set, <see cref="Delay"/> really waits (and can be cancelled) instead of returning at once.</summary>
+    public bool Waits { get; set; }
+
+    public Task Delay(TimeSpan t, CancellationToken ct)
     {
         lock (this) Delays.Add(t);
-        return Task.CompletedTask;
+        return Waits ? Task.Delay(t, ct) : Task.CompletedTask;
     }
 
     public void Warn(string text)

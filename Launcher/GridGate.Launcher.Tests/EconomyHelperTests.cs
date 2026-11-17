@@ -6,6 +6,7 @@ using System.Text.RegularExpressions;
 using System.Xml.Linq;
 using GridGate.Launcher.Core.Money;
 using GridGate.Launcher.Core.Settings;
+using GridGate.Launcher.Economy;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Xunit;
@@ -24,15 +25,23 @@ public sealed class EconomyHelperTests
         public PresenceOutcome Outcome { get; set; } = PresenceOutcome.Ok;
         public List<(Guid, Guid)> Asked { get; } = [];
 
-        public Task<PresenceOutcome> HasSecureSessionAsync(Guid agentId, Guid secureSessionId, CancellationToken ct)
+        /// <summary>When set, a lookup waits for it before it answers.</summary>
+        public Task? Gate { get; set; }
+
+        /// <summary>When set, a lookup fails.</summary>
+        public bool Throw { get; set; }
+
+        public async Task<PresenceOutcome> HasSecureSessionAsync(Guid agentId, Guid secureSessionId, CancellationToken ct)
         {
             lock (Asked) Asked.Add((agentId, secureSessionId));
-            return Task.FromResult(Outcome);
+            if (Gate is { } gate) await gate;
+            if (Throw) throw new InvalidOperationException("database down");
+            return Outcome;
         }
     }
 
     private static LauncherFactory Make(FakeSessions sessions, MoneyMode mode = MoneyMode.Play, bool open = true, IReadOnlyList<string>? adminNetworks = null,
-        IPAddress? caller = null) =>
+        IPAddress? caller = null, bool lenientRate = false) =>
         new(s => s with
         {
             Security = adminNetworks is null ? s.Security : s.Security with { AdminNetworks = adminNetworks },
@@ -58,6 +67,11 @@ public sealed class EconomyHelperTests
             {
                 services.RemoveAll<ISecureSessionCheck>();
                 services.AddSingleton<ISecureSessionCheck>(sessions);
+                if (lenientRate)
+                {
+                    services.RemoveAll<EconomyLimits>();
+                    services.AddSingleton(new EconomyLimits(TimeProvider.System, perSecond: 1000));
+                }
                 if (open)
                 {
                     services.RemoveAll<MoneyGate>();
@@ -299,7 +313,7 @@ public sealed class EconomyHelperTests
     [Fact]
     public async Task Sixty_one_calls_hit_the_limit()
     {
-        await using var f = Make(new FakeSessions(), caller: IPAddress.Parse("203.0.113.9"));
+        await using var f = Make(new FakeSessions(), caller: IPAddress.Parse("203.0.113.9"), lenientRate: true);
         var c = Client(f);
         var body = Call("preflightBuyLandPrep", Who(more: [("currencyBuy", 0)]));
 
@@ -309,6 +323,45 @@ public sealed class EconomyHelperTests
 
         Assert.Equal("0", Member(last, "success"));
         Assert.Equal("Too many requests. Please wait a minute and try again.", Member(last, "errorMessage"));
+    }
+
+    [Fact]
+    public async Task A_ninth_lookup_at_once_is_told_too_many()
+    {
+        var release = new TaskCompletionSource();
+        var sessions = new FakeSessions { Gate = release.Task };
+        await using var f = Make(sessions);
+        var c = Client(f);
+        var body = Call("preflightBuyLandPrep", Who(more: [("currencyBuy", 0)]));
+        var first = Enumerable.Range(0, 8).Select(_ => Post(c, "/economy/landtool.php", body)).ToList();
+        while (true)
+        {
+            lock (sessions.Asked) if (sessions.Asked.Count == 8) break;
+            await Task.Delay(10, Ct);
+        }
+
+        var ninth = AssertFirestormSafe((await Post(c, "/economy/landtool.php", body)).Xml);
+
+        Assert.Equal("Too many requests. Please wait a minute and try again.", Member(ninth, "errorMessage"));
+        lock (sessions.Asked) Assert.Equal(8, sessions.Asked.Count);
+        release.SetResult();
+        foreach (var t in first) Assert.Equal("1", Member(AssertFirestormSafe((await t).Xml), "success"));
+    }
+
+    [Fact]
+    public async Task A_failed_lookup_frees_its_slot()
+    {
+        var sessions = new FakeSessions { Throw = true };
+        await using var f = Make(sessions);
+        var c = Client(f);
+        var body = Call("preflightBuyLandPrep", Who(more: [("currencyBuy", 0)]));
+
+        for (var i = 0; i < 5; i++) await Post(c, "/economy/landtool.php", body);
+        sessions.Throw = false;
+        sessions.Outcome = PresenceOutcome.Unavailable;
+        for (var i = 0; i < 5; i++) await Post(c, "/economy/landtool.php", body);
+
+        lock (sessions.Asked) Assert.Equal(10, sessions.Asked.Count);
     }
 
     [Fact]

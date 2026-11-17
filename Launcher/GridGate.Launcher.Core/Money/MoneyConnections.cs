@@ -16,4 +16,11 @@ public static class MoneyConnections
     /// <summary>The robust database as robustuser (Presence and UserAccounts).</summary>
     public static Func<CancellationToken, Task<MySqlConnection>> Robust(Func<LauncherSettings> settings) =>
         ct => GridDb.OpenRobustAsync(settings(), TimeoutSeconds, ct);
+
+    /// <summary>Most connections the economy helper's session lookups hold at once.</summary>
+    public const uint HelperPoolSize = 8;
+
+    /// <summary>The robust database as robustuser for the economy helper's session lookups: pooled and capped.</summary>
+    public static Func<CancellationToken, Task<MySqlConnection>> RobustLookups(Func<LauncherSettings> settings) =>
+        ct => GridDb.OpenRobustPooledAsync(settings(), TimeoutSeconds, HelperPoolSize, ct);
 }

@@ -766,26 +766,6 @@ namespace OpenSim.Region.CoreModules.Avatar.UserProfiles
             bool exists = list.Cast<OSDMap>().Where(map => map.ContainsKey("classifieduuid"))
               .Any(map => map["classifieduuid"].AsUUID().Equals(queryclassifiedID));
 
-            IMoneyModule money = null;
-            if (!exists)
-            {
-                money = s.RequestModuleInterface<IMoneyModule>();
-                if (money is not null)
-                {
-                    // GridGate: a module with its own fee is asked about that fee, never the price the viewer typed.
-                    bool covered = money is IClassifiedFeeModule fees
-                        ? fees.ClassifiedFeeCovered(remoteClient.AgentId)
-                        : money.AmountCovered(remoteClient.AgentId, queryclassifiedPrice);
-                    if (!covered)
-                    {
-                        remoteClient.SendAgentAlertMessage("You do not have enough money to create this classified.", false);
-                        if(uce is not null && uce.classifiedsLists is not null)
-                            remoteClient.SendAvatarClassifiedReply(remoteClient.AgentId, uce.classifiedsLists);
-                        return;
-                    }
-                }
-            }
-
             UserClassifiedAdd ad = new()
             {
                 ParcelName = land == null ? string.Empty : land.LandData.Name,
@@ -803,18 +783,46 @@ namespace OpenSim.Region.CoreModules.Avatar.UserProfiles
                 ParcelId = p.currentParcelUUID
             };
 
+            // GridGate: a new ad's fee is held before it is saved, then taken if it was saved or given back if not
+            // (FeeHolds: a money module without holds is checked now and charged after, as before). A module with its own
+            // fee is held at that fee, never the price the viewer typed. The ad is built above, before the hold, so only the
+            // save comes between the hold and its settling.
+            IFeeHold fee = null;
+            if (!exists)
+            {
+                IMoneyModule money = s.RequestModuleInterface<IMoneyModule>();
+                if (money is not null)
+                {
+                    fee = FeeHolds.Take(money, remoteClient.AgentId, money is IClassifiedFeeModule fees ? fees.ClassifiedFee : queryclassifiedPrice,
+                        MoneyTransactionType.ClassifiedCharge);
+                    if (fee is null)
+                    {
+                        remoteClient.SendAgentAlertMessage("You do not have enough money to create this classified.", false);
+                        if(uce is not null && uce.classifiedsLists is not null)
+                            remoteClient.SendAvatarClassifiedReply(remoteClient.AgentId, uce.classifiedsLists);
+                        return;
+                    }
+                }
+            }
+
             object Ad = ad;
-            if(!rpc.JsonRpcRequest(ref Ad, "classified_update", serverURI, UUID.Random().ToString()))
+            bool saved = false;
+            try
+            {
+                saved = rpc.JsonRpcRequest(ref Ad, "classified_update", serverURI, UUID.Random().ToString());
+            }
+            finally
+            {
+                // only charge if it worked
+                fee?.Settle(saved);
+            }
+            if(!saved)
             {
                 remoteClient.SendAgentAlertMessage("Error updating classified", false);
                 if(uce is not null && uce.classifiedsLists is not null)
                     remoteClient.SendAvatarClassifiedReply(remoteClient.AgentId, uce.classifiedsLists);
                 return;
             }
-
-            // only charge if it worked
-            money?.ApplyCharge(remoteClient.AgentId, money is IClassifiedFeeModule fee ? fee.ClassifiedFee : queryclassifiedPrice,
-                MoneyTransactionType.ClassifiedCharge);
 
             // just flush cache for now
             lock(m_profilesCache)

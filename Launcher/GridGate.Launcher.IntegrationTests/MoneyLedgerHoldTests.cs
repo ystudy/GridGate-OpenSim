@@ -185,4 +185,231 @@ public sealed class MoneyLedgerHoldTests(MoneyMariaDb maria) : IClassFixture<Mon
         Assert.Equal(Region, await ledger.HoldRegionAsync(hold.HoldId!.Value, Ct));
         Assert.Null(await ledger.HoldRegionAsync(12345, Ct));
     }
+
+    // --- Fee holds: an upload, classified or group join fee held before its action ----------------------------------
+
+    private static readonly Guid NoWallet = Guid.Parse("d0000000-0000-0000-0000-00000000000d");
+
+    private static HoldRequest Fee(string kind, long amount, AccountRef? payee = null) =>
+        new(Guid.NewGuid(), kind, AccountRef.Resident(A), payee, amount, Region, null, null, "p1");
+
+    private static async Task AssertSound(MoneyLedger ledger)
+    {
+        var check = await ledger.SelfCheckAsync(Ct);
+        Assert.True(check.Ok, string.Join(" ", check.Problems));
+    }
+
+    [Fact]
+    public async Task An_upload_fee_hold_completes_into_fees()
+    {
+        var (ledger, db, _) = await MoneyLedgerTransferTests.Setup(maria);
+        var fees = await Balance(db, MoneySchema.FeesId);
+
+        var h = await ledger.HoldAsync(Fee(EntryType.UploadFee, 10), Ct);
+        Assert.Equal(MoneyOutcome.Ok, h.Outcome);
+        var done = await ledger.CompleteHoldAsync(Guid.NewGuid(), h.HoldId!.Value, Ct);
+
+        Assert.Equal(MoneyOutcome.Ok, done.Outcome);
+        Assert.Null(done.ToBalance);
+        Assert.Equal(90, await Of(db, A));
+        Assert.Equal(fees + 10, await Balance(db, MoneySchema.FeesId));
+        Assert.Equal(0, await Balance(db, MoneySchema.HoldingId));
+        Assert.Equal(2, await db.Scalar($"SELECT COUNT(*) FROM `money`.`entries` WHERE hold_id = {h.HoldId} AND reason = 'upload_fee'"));
+        Assert.Equal(1, await db.Scalar($"SELECT COUNT(*) FROM `money`.`entries` WHERE hold_id = {h.HoldId} AND type = 'hold'"));
+        Assert.Equal(1, await db.Scalar(
+            $"SELECT COUNT(*) FROM `money`.`entries` WHERE hold_id = {h.HoldId} AND type = 'hold_completed' AND to_id = {MoneySchema.FeesId}"));
+        await AssertSound(ledger);
+    }
+
+    [Fact]
+    public async Task A_classified_fee_hold_completes_into_fees()
+    {
+        var (ledger, db, _) = await MoneyLedgerTransferTests.Setup(maria);
+        var fees = await Balance(db, MoneySchema.FeesId);
+
+        var h = await ledger.HoldAsync(Fee(EntryType.ClassifiedFee, 25), Ct);
+        var done = await ledger.CompleteHoldAsync(Guid.NewGuid(), h.HoldId!.Value, Ct);
+
+        Assert.Equal(MoneyOutcome.Ok, done.Outcome);
+        Assert.Equal(75, await Of(db, A));
+        Assert.Equal(fees + 25, await Balance(db, MoneySchema.FeesId));
+        Assert.Equal(2, await db.Scalar($"SELECT COUNT(*) FROM `money`.`entries` WHERE hold_id = {h.HoldId} AND reason = 'classified_fee'"));
+        await AssertSound(ledger);
+    }
+
+    [Fact]
+    public async Task A_group_join_fee_hold_completes_to_the_founder()
+    {
+        var (ledger, db, _) = await MoneyLedgerTransferTests.Setup(maria);
+        var fees = await Balance(db, MoneySchema.FeesId);
+
+        var h = await ledger.HoldAsync(Fee(EntryType.GroupJoinFee, 20, AccountRef.Resident(B)), Ct);
+        Assert.Equal(MoneyOutcome.Ok, h.Outcome);
+        var done = await ledger.CompleteHoldAsync(Guid.NewGuid(), h.HoldId!.Value, Ct);
+
+        Assert.Equal(MoneyOutcome.Ok, done.Outcome);
+        Assert.Equal(120, done.ToBalance);
+        Assert.Equal(80, await Of(db, A));
+        Assert.Equal(120, await Of(db, B));
+        Assert.Equal(fees, await Balance(db, MoneySchema.FeesId));
+        Assert.Equal(2, await db.Scalar($"SELECT COUNT(*) FROM `money`.`entries` WHERE hold_id = {h.HoldId} AND reason = 'group_join_fee'"));
+        await AssertSound(ledger);
+    }
+
+    [Fact]
+    public async Task A_group_join_fee_hold_for_a_founder_without_a_wallet_goes_to_fees()
+    {
+        var (ledger, db, _) = await MoneyLedgerTransferTests.Setup(maria);
+        var fees = await Balance(db, MoneySchema.FeesId);
+
+        var h = await ledger.HoldAsync(Fee(EntryType.GroupJoinFee, 20, AccountRef.Resident(NoWallet)), Ct);
+        Assert.Equal(MoneyOutcome.Ok, h.Outcome);
+        var done = await ledger.CompleteHoldAsync(Guid.NewGuid(), h.HoldId!.Value, Ct);
+
+        Assert.Equal(MoneyOutcome.Ok, done.Outcome);
+        Assert.Null(done.ToBalance);
+        Assert.Equal(fees + 20, await Balance(db, MoneySchema.FeesId));
+        Assert.Equal(0, await db.Scalar($"SELECT COUNT(*) FROM `money`.`accounts` WHERE agent_id = '{NoWallet}'"));
+        await AssertSound(ledger);
+    }
+
+    [Fact]
+    public async Task A_group_join_fee_hold_without_a_founder_goes_to_fees()
+    {
+        var (ledger, db, _) = await MoneyLedgerTransferTests.Setup(maria);
+        var fees = await Balance(db, MoneySchema.FeesId);
+
+        var h = await ledger.HoldAsync(Fee(EntryType.GroupJoinFee, 20), Ct);
+        Assert.Equal(MoneyOutcome.Ok, (await ledger.CompleteHoldAsync(Guid.NewGuid(), h.HoldId!.Value, Ct)).Outcome);
+
+        Assert.Equal(fees + 20, await Balance(db, MoneySchema.FeesId));
+        await AssertSound(ledger);
+    }
+
+    [Fact]
+    public async Task A_returned_fee_hold_gives_the_coins_back()
+    {
+        var (ledger, db, _) = await MoneyLedgerTransferTests.Setup(maria);
+        var fees = await Balance(db, MoneySchema.FeesId);
+        var h = await ledger.HoldAsync(Fee(EntryType.GroupJoinFee, 20, AccountRef.Resident(B)), Ct);
+
+        var back = await ledger.ReturnHoldAsync(Guid.NewGuid(), h.HoldId!.Value, Ct);
+
+        Assert.Equal(MoneyOutcome.Ok, back.Outcome);
+        Assert.Equal(100, back.ToBalance);
+        Assert.Equal(100, await Of(db, A));
+        Assert.Equal(100, await Of(db, B));
+        Assert.Equal(fees, await Balance(db, MoneySchema.FeesId));
+        await AssertSound(ledger);
+    }
+
+    [Fact]
+    public async Task An_expired_fee_hold_returns_to_the_payer()
+    {
+        var (ledger, db, time) = await MoneyLedgerTransferTests.Setup(maria);
+        await ledger.HoldAsync(Fee(EntryType.UploadFee, 10), Ct);
+
+        time.Advance(MoneyLedger.HoldLifetime + TimeSpan.FromSeconds(1));
+
+        Assert.Equal(1, await ledger.ReturnExpiredHoldsAsync(Ct));
+        Assert.Equal(100, await Of(db, A));
+        await AssertSound(ledger);
+    }
+
+    [Theory]
+    [InlineData(EntryType.UploadFee)]
+    [InlineData(EntryType.ClassifiedFee)]
+    public async Task An_upload_fee_hold_naming_a_payee_is_not_allowed(string kind)
+    {
+        // Upload and classified fees are the grid's: a region can't name a seller to pay them to.
+        var (ledger, db, _) = await MoneyLedgerTransferTests.Setup(maria);
+
+        Assert.Equal(MoneyOutcome.NotAllowed, (await ledger.HoldAsync(Fee(kind, 10, AccountRef.Resident(B)), Ct)).Outcome);
+
+        Assert.Equal(0, await db.Scalar("SELECT COUNT(*) FROM `money`.`holds`"));
+        await AssertSound(ledger);
+    }
+
+    [Fact]
+    public async Task A_group_join_fee_hold_naming_the_buyer_as_founder_pays_fees_as_a_charge_would()
+    {
+        // A charge sends a join fee whose founder is the payer to Fees; the hold that replaces it does the same.
+        var (ledger, db, _) = await MoneyLedgerTransferTests.Setup(maria);
+        var fees = await Balance(db, MoneySchema.FeesId);
+
+        var h = await ledger.HoldAsync(Fee(EntryType.GroupJoinFee, 10, AccountRef.Resident(A)), Ct);
+        Assert.Equal(MoneyOutcome.Ok, h.Outcome);
+        Assert.Equal(MoneyOutcome.Ok, (await ledger.CompleteHoldAsync(Guid.NewGuid(), h.HoldId!.Value, Ct)).Outcome);
+
+        Assert.Equal(90, await Of(db, A));
+        Assert.Equal(fees + 10, await Balance(db, MoneySchema.FeesId));
+        await AssertSound(ledger);
+    }
+
+    [Fact]
+    public async Task A_visitors_group_join_fee_hold_naming_a_resident_with_their_id_pays_fees_as_a_charge_would()
+    {
+        // A charge compares the founder with the payer by id alone, whatever the payer's home: so does the hold, so a
+        // visitor whose id is also a resident's can't pay that resident through a join fee.
+        var (ledger, db, _) = await MoneyLedgerTransferTests.Setup(maria);
+        await db.AddUser(MoneyLedgerTransferTests.V);
+        var visitor = new AccountRef(MoneyLedgerTransferTests.V, "http://other.example:8002");
+        var resident = AccountRef.Resident(MoneyLedgerTransferTests.V);
+        Assert.Equal(MoneyOutcome.Ok, (await ledger.GiveAsync(visitor, 50, new StaffAction("Owner", "welcome"), Ct)).Outcome);
+        var residentBefore = (await ledger.BalanceAsync(resident, Ct)).FromBalance;
+        var fees = await Balance(db, MoneySchema.FeesId);
+
+        var h = await ledger.HoldAsync(new HoldRequest(Guid.NewGuid(), EntryType.GroupJoinFee, visitor, resident, 10, Region, null, null, "p1"), Ct);
+        Assert.Equal(MoneyOutcome.Ok, h.Outcome);
+        Assert.Equal(MoneyOutcome.Ok, (await ledger.CompleteHoldAsync(Guid.NewGuid(), h.HoldId!.Value, Ct)).Outcome);
+
+        Assert.Equal(residentBefore, (await ledger.BalanceAsync(resident, Ct)).FromBalance);
+        Assert.Equal(fees + 10, await Balance(db, MoneySchema.FeesId));
+        await AssertSound(ledger);
+    }
+
+    [Fact]
+    public async Task A_group_join_fee_hold_to_a_visitor_is_not_allowed()
+    {
+        // A founder is a resident of this grid: a region can't route a join fee to a visitor's wallet.
+        var (ledger, db, _) = await MoneyLedgerTransferTests.Setup(maria);
+        var visitor = new AccountRef(MoneyLedgerTransferTests.V, "http://other.example:8002");
+        Assert.Equal(MoneyOutcome.Ok, (await ledger.GiveAsync(visitor, 1, new StaffAction("Owner", "welcome"), Ct)).Outcome);
+
+        Assert.Equal(MoneyOutcome.NotAllowed, (await ledger.HoldAsync(Fee(EntryType.GroupJoinFee, 10, visitor), Ct)).Outcome);
+
+        Assert.Equal(0, await db.Scalar("SELECT COUNT(*) FROM `money`.`holds`"));
+        await AssertSound(ledger);
+    }
+
+    [Theory]
+    [InlineData("object")]
+    [InlineData("land")]
+    public async Task An_object_hold_without_a_seller_is_refused(string kind)
+    {
+        var (ledger, db, _) = await MoneyLedgerTransferTests.Setup(maria);
+
+        Assert.NotEqual(MoneyOutcome.Ok, (await ledger.HoldAsync(Fee(kind, 10), Ct)).Outcome);
+
+        Assert.Equal(0, await db.Scalar("SELECT COUNT(*) FROM `money`.`holds`"));
+    }
+
+    [Fact]
+    public async Task A_fee_hold_follows_the_payment_rules()
+    {
+        // As a charge would: no more than the largest payment, nothing while payments are frozen, none from a frozen wallet.
+        var (ledger, db, _) = await MoneyLedgerTransferTests.Setup(maria);
+        Assert.Equal(MoneyOutcome.Ok, (await ledger.BalanceAsync(AccountRef.Resident(A), Ct)).Outcome); // A's wallet, with 100
+
+        Assert.Equal(MoneyOutcome.BadAmount, (await ledger.HoldAsync(Fee(EntryType.UploadFee, 0), Ct)).Outcome);
+        Assert.Equal(MoneyOutcome.BadAmount, (await ledger.HoldAsync(Fee(EntryType.UploadFee, 1_000_001), Ct)).Outcome);
+        Assert.Equal(MoneyOutcome.NotEnough, (await ledger.HoldAsync(Fee(EntryType.UploadFee, 101), Ct)).Outcome);
+        await ledger.SetFrozenAsync(true, "test", Ct);
+        Assert.Equal(MoneyOutcome.Frozen, (await ledger.HoldAsync(Fee(EntryType.UploadFee, 10), Ct)).Outcome);
+        await ledger.SetFrozenAsync(false, "test", Ct);
+        await db.Sql($"UPDATE `money`.`accounts` SET frozen = 1 WHERE agent_id = '{A}'");
+        Assert.Equal(MoneyOutcome.AccountFrozen, (await ledger.HoldAsync(Fee(EntryType.UploadFee, 10), Ct)).Outcome);
+
+        Assert.Equal(0, await db.Scalar("SELECT COUNT(*) FROM `money`.`holds`"));
+    }
 }

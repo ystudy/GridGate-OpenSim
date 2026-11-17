@@ -119,6 +119,8 @@ public sealed class EconomyHelperNoMoneyTests
                 services.AddSingleton(books);
                 services.RemoveAll<ISecureSessionCheck>();
                 services.AddSingleton<ISecureSessionCheck>(sessions);
+                services.RemoveAll<EconomyLimits>();
+                services.AddSingleton(new EconomyLimits(TimeProvider.System, perSecond: 1000));
                 if (open)
                 {
                     services.RemoveAll<MoneyGate>();

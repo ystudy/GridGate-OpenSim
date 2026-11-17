@@ -166,6 +166,21 @@ public sealed class MyCoinsPageTests
     }
 
     [Fact]
+    public async Task A_held_group_fee_reads_as_a_group_join_fee()
+    {
+        // A fee held before its action: the payer's hold and the founder's completed hold both say what it was, not a sale.
+        var books = new FakeBooks { Balance = 80 };
+        books.History.Add(new HistoryLine(12, DateTimeOffset.UtcNow, EntryType.HoldCompleted, null, 20, 120, null, EntryType.GroupJoinFee));
+        books.History.Add(new HistoryLine(11, DateTimeOffset.UtcNow, EntryType.Hold, null, -20, 80, null, EntryType.GroupJoinFee));
+        books.History.Add(new HistoryLine(10, DateTimeOffset.UtcNow, EntryType.Hold, null, -3, 100, null, EntryType.UploadFee));
+        await using var f = Make(books);
+
+        var whats = (await PageAsync(await GuestAsync(f))).QuerySelectorAll("#coins-history tbody tr .what").Select(w => w.TextContent.Trim()).ToList();
+
+        Assert.Equal(["Group joining fee", "Group joining fee", "Upload fee"], whats);
+    }
+
+    [Fact]
     public async Task Every_entry_type_has_words()
     {
         var books = new FakeBooks();

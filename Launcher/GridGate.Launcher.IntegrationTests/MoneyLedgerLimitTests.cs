@@ -37,6 +37,43 @@ public sealed class MoneyLedgerLimitTests(MoneyMariaDb maria) : IClassFixture<Mo
 
     private static async Task<MoneyOutcome> Outcome(Task<MoneyResult> call) => (await call).Outcome;
 
+    private static HoldRequest FeeHold(Guid payer, long amount, string kind = EntryType.UploadFee, string? key = P1) =>
+        new(Guid.NewGuid(), kind, AccountRef.Resident(payer), null, amount, Region, null, null, key);
+
+    [Fact]
+    public async Task A_fee_hold_counts_toward_the_daily_limits_once_as_a_charge_does()
+    {
+        var (ledger, _, _) = await MoneyLedgerTransferTests.Setup(maria);
+        await Fund(ledger, A, 20_000);
+
+        // Held and completed, it counts once: when held, not again when it completes.
+        var held = await ledger.HoldAsync(FeeHold(A, 6_000), Ct);
+        Assert.Equal(MoneyOutcome.Ok, held.Outcome);
+        Assert.Equal(MoneyOutcome.Ok, await Outcome(ledger.CompleteHoldAsync(Guid.NewGuid(), held.HoldId!.Value, Ct)));
+        Assert.Equal(6_000, (await ledger.PersonLimitsAsync(AccountRef.Resident(A), Ct))!.SpentToday);
+        Assert.Equal(6_000, (await ledger.LimitsAsync(LimitTarget.ForKey(P1), Ct))!.SpentToday);
+        // A returned one stops counting.
+        var back = await ledger.HoldAsync(FeeHold(A, 3_000, EntryType.ClassifiedFee), Ct);
+        Assert.Equal(MoneyOutcome.Ok, await Outcome(ledger.ReturnHoldAsync(Guid.NewGuid(), back.HoldId!.Value, Ct)));
+        Assert.Equal(MoneyOutcome.Ok, await Outcome(ledger.ChargeAsync(Fee(A, 4_000), Ct)));
+
+        Assert.Equal(MoneyOutcome.OverDailyLimit, await Outcome(ledger.HoldAsync(FeeHold(A, 1), Ct)));
+        Assert.Equal(MoneyOutcome.OverDailyLimit, await Outcome(ledger.HoldAsync(FeeHold(A, 1, EntryType.GroupJoinFee), Ct)));
+        Assert.Equal(10_000, (await ledger.PersonLimitsAsync(AccountRef.Resident(A), Ct))!.SpentToday);
+    }
+
+    [Fact]
+    public async Task A_fee_hold_over_the_keys_limit_is_refused()
+    {
+        var (ledger, _, _) = await MoneyLedgerTransferTests.Setup(maria, new MoneySettings(Mode: MoneyMode.Play, DailySpendLimit: 1_000_000));
+        await Fund(ledger, A, 200_000);
+        Assert.Equal(MoneyOutcome.Ok, await Outcome(ledger.HoldAsync(FeeHold(A, 100_000), Ct)));
+
+        Assert.Equal(MoneyOutcome.OverKeyLimit, await Outcome(ledger.HoldAsync(FeeHold(A, 1), Ct)));
+        Assert.Equal(MoneyOutcome.OverKeyLimit, await Outcome(ledger.ChargeAsync(Fee(A, 1), Ct)));
+        Assert.Equal(MoneyOutcome.Ok, await Outcome(ledger.HoldAsync(FeeHold(A, 1, key: P2), Ct)));
+    }
+
     [Fact]
     public async Task Person_over_10000_in_24h_is_over_daily_limit()
     {

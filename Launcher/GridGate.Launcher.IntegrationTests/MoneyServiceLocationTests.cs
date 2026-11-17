@@ -217,6 +217,112 @@ public sealed class MoneyServiceLocationTests(MoneyMariaDb maria) : IClassFixtur
         Assert.Equal("ok", CodeOf(await rig.Post("transfer", Body("transfer", WhoA(), There), Key2)));
     }
 
+    private static Task<long> BalanceOfA(MoneyServiceRig rig) => rig.Db.Scalar($"SELECT balance FROM `money`.`accounts` WHERE agent_id = '{A}'");
+
+    private static Task<long> EntriesOf(MoneyServiceRig rig, string type) => rig.Db.Scalar($"SELECT COUNT(*) FROM `money`.`entries` WHERE type = '{type}'");
+
+    private static object Charge(Guid txn) => new { txnId = txn, type = "upload_fee", payer = WhoA(), amount = 10, regionId = Here };
+
+    // A region's module sends a payment again, with the same transaction id, when it got no answer. By then the payer may
+    // have teleported or the region lost its verification: the repeat still gets the answer the payment had.
+
+    [Fact]
+    public async Task Repeated_transfer_after_the_payer_moved_returns_the_first_answer()
+    {
+        var rig = await StartAsync();
+        var body = Body("transfer", WhoA(), Here); // one fixed txnId
+
+        var first = await rig.Post("transfer", body);
+        await rig.MoveToThere(SessionA);
+        var again = await rig.Post("transfer", body);
+
+        Assert.Equal("ok", CodeOf(first));
+        Assert.Equal(first.Raw, again.Raw);
+        Assert.Equal(90, await BalanceOfA(rig)); // paid once
+        Assert.Equal(1, await EntriesOf(rig, EntryType.PayAvatar));
+    }
+
+    [Fact]
+    public async Task Repeated_charge_after_the_payer_moved_returns_the_first_answer()
+    {
+        var rig = await StartAsync();
+        var body = Charge(Guid.NewGuid());
+
+        var first = await rig.Post("charge", body);
+        await rig.MoveToThere(SessionA);
+        var again = await rig.Post("charge", body);
+
+        Assert.Equal("ok", CodeOf(first));
+        Assert.Equal(first.Raw, again.Raw);
+        Assert.Equal(90, await BalanceOfA(rig));
+        Assert.Equal(1, await EntriesOf(rig, EntryType.UploadFee));
+    }
+
+    [Fact]
+    public async Task Repeated_payout_after_the_region_went_unverified_returns_the_first_answer()
+    {
+        var rig = await StartAsync();
+        await rig.Ledger.SetPayoutsAllowedAsync(A, true, Ct);
+        var body = Payout(Here);
+
+        var first = await rig.Post("payout", body);
+        rig.VerifyClock.Advance(TimeSpan.FromMinutes(11));
+        var again = await rig.Post("payout", body);
+
+        Assert.Equal("ok", CodeOf(first));
+        Assert.Equal(first.Raw, again.Raw);
+        Assert.Equal(1, await EntriesOf(rig, EntryType.ScriptPayout));
+        Assert.Equal("unverified_region", CodeOf(await rig.Post("payout", Payout(Here)))); // a new payout still isn't allowed
+    }
+
+    [Fact]
+    public async Task A_reused_txn_with_another_amount_is_not_answered_from_the_store()
+    {
+        var rig = await StartAsync();
+        var txn = Guid.NewGuid();
+
+        var first = await rig.Post("transfer", new { txnId = txn, type = "pay_avatar", from = WhoA(), to = Resident(B), amount = 10, regionId = Here });
+        await rig.MoveToThere(SessionA);
+        var other = await rig.Post("transfer", new { txnId = txn, type = "pay_avatar", from = WhoA(), to = Resident(B), amount = 11, regionId = Here });
+
+        Assert.Equal("ok", CodeOf(first));
+        Assert.NotEqual("ok", CodeOf(other));
+        Assert.Equal(90, await BalanceOfA(rig));
+    }
+
+    [Fact]
+    public async Task Another_key_sending_the_same_txn_does_not_get_the_first_keys_answer()
+    {
+        var rig = await StartAsync();
+        var body = Body("transfer", WhoA(), Here);
+
+        var first = await rig.Post("transfer", body);
+        var other = await rig.Post("transfer", body, Key2);
+
+        Assert.Equal("ok", CodeOf(first));
+        Assert.Equal("wrong_region", CodeOf(other));
+        Assert.NotEqual(first.Raw, other.Raw);
+        Assert.Equal(90, await BalanceOfA(rig));
+        Assert.Equal(1, await EntriesOf(rig, EntryType.PayAvatar));
+    }
+
+    [Fact]
+    public async Task Books_stay_sound_after_repeats()
+    {
+        var rig = await StartAsync();
+        await rig.Ledger.SetPayoutsAllowedAsync(A, true, Ct);
+        var (transfer, charge, payout) = (Body("transfer", WhoA(), Here), Charge(Guid.NewGuid()), Payout(Here));
+        var first = new[] { await rig.Post("transfer", transfer), await rig.Post("charge", charge), await rig.Post("payout", payout) };
+        Assert.All(first, a => Assert.Equal("ok", CodeOf(a)));
+
+        await rig.MoveToThere(SessionA);
+        rig.VerifyClock.Advance(TimeSpan.FromMinutes(11));
+        var again = new[] { await rig.Post("transfer", transfer), await rig.Post("charge", charge), await rig.Post("payout", payout) };
+
+        Assert.Equal(first.Select(a => a.Raw), again.Select(a => a.Raw));
+        await rig.AssertBooksSoundAsync();
+    }
+
     [Fact]
     public async Task Handoff_and_arrival_work_while_money_is_off()
     {
