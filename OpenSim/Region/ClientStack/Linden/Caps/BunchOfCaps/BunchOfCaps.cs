@@ -630,11 +630,6 @@ namespace OpenSim.Region.ClientStack.Linden
                 "[BUNCH OF CAPS]: Uploaded asset {0} for inventory item {1}, inv type {2}, asset type {3}",
                 assetID, inventoryItem, inventoryType, assetType);
 
-            sbyte assType = 0;
-            sbyte inType = 0;
-
-            IClientAPI client = null;
-
             UUID owner_id = m_HostCapsObj.AgentID;
             UUID creatorID;
 
@@ -649,16 +644,56 @@ namespace OpenSim.Region.ClientStack.Linden
 
             string creatorIDstr = creatorID.ToString();
 
+            // GridGate: a paid upload's fee is held before anything is stored, then taken once its item is made or given back
+            // if the upload fails (FeeHolds: a money module without holds is checked now and charged after, as before). The
+            // item is then added at cost 0, so the fee isn't charged a second time.
+            IFeeHold fee = null;
             IMoneyModule mm = m_Scene.RequestModuleInterface<IMoneyModule>();
             if (mm != null)
             {
+                if (!istest && cost > 0)
+                {
+                    fee = FeeHolds.Take(mm, m_HostCapsObj.AgentID, cost, MoneyTransactionType.UploadCharge);
+                    if (fee == null)
+                    {
+                        error = "Insufficient funds.";
+                        return;
+                    }
+                }
                 // make sure client still has enougth credit
-                if (!mm.UploadCovered(m_HostCapsObj.AgentID, (int)cost))
+                else if (!mm.UploadCovered(m_HostCapsObj.AgentID, (int)cost))
                 {
                     error = "Insufficient funds.";
                     return;
                 }
             }
+
+            bool stored = false;
+            try
+            {
+                StoreUpload(assetName, assetDescription, assetID, inventoryItem, parentFolder, data, inventoryType, assetType,
+                    fee == null ? cost : 0, texturesFolder, nreqtextures, nreqmeshs, nreqinstances, istest, restrictPerms, creatorID,
+                    creatorIDstr, owner_id, ref nextOwnerMask, ref groupMask, ref everyoneMask, meshesSides, ref stored);
+            }
+            finally
+            {
+                fee?.Settle(stored);
+            }
+        }
+
+        /// <summary>
+        /// GridGate: the rest of <see cref="UploadCompleteHandler"/>, after the fee is held: stores the asset and makes its
+        /// item. <paramref name="stored"/> is set once the item is made.
+        /// </summary>
+        private void StoreUpload(string assetName, string assetDescription, UUID assetID, UUID inventoryItem, UUID parentFolder,
+            byte[] data, string inventoryType, string assetType, int cost, UUID texturesFolder, int nreqtextures, int nreqmeshs,
+            int nreqinstances, bool istest, bool restrictPerms, UUID creatorID, string creatorIDstr, UUID owner_id,
+            ref int nextOwnerMask, ref int groupMask, ref int everyoneMask, int[] meshesSides, ref bool stored)
+        {
+            sbyte assType = 0;
+            sbyte inType = 0;
+
+            IClientAPI client = null;
 
             // strings to types
             if (inventoryType == "sound")
@@ -1133,6 +1168,8 @@ namespace OpenSim.Region.ClientStack.Linden
 //                        client.SendAgentAlertMessage(str, true);
 //                    }
                 }
+                // GridGate: the item is made, so a held fee is taken.
+                stored = true;
             }
 
             lock (m_ModelCost)
