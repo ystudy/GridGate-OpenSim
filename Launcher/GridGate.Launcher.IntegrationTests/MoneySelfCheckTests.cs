@@ -25,6 +25,35 @@ public sealed class MoneySelfCheckTests(MoneyMariaDb maria) : IClassFixture<Mone
     private static HoldRequest Buy(long amount) =>
         new(Guid.NewGuid(), "object", AccountRef.Resident(A), AccountRef.Resident(B), amount, Region, Guid.NewGuid(), "dress");
 
+    private static HoldRequest FeeHold(string kind, AccountRef? payee) =>
+        new(Guid.NewGuid(), kind, AccountRef.Resident(A), payee, 3, Region, null, null);
+
+    [Theory]
+    [InlineData(EntryType.UploadFee)]
+    [InlineData(EntryType.ClassifiedFee)]
+    public async Task A_grid_fee_hold_rewritten_to_pay_a_wallet_is_found(string kind)
+    {
+        // Upload and classified fees are the grid's: a completed one that paid anyone but Fees was changed.
+        var (ledger, db, _) = await MoneyLedgerTransferTests.Setup(maria);
+        await ledger.TransferAsync(Pay(B, A, 1), Ct); // B has a wallet
+        var hold = await ledger.HoldAsync(FeeHold(kind, null), Ct);
+        await db.Sql($"UPDATE `money`.`holds` SET seller_id = {await IdOf(db, B)} WHERE id = {hold.HoldId}");
+        Assert.Equal(MoneyOutcome.Ok, (await ledger.CompleteHoldAsync(Guid.NewGuid(), hold.HoldId!.Value, Ct)).Outcome);
+
+        AssertFound(await ledger.SelfCheckAsync(Ct), $"Hold {hold.HoldId} doesn't match its entries");
+    }
+
+    [Fact]
+    public async Task A_purchase_hold_rewritten_to_pay_fees_is_found()
+    {
+        var (ledger, db, _) = await MoneyLedgerTransferTests.Setup(maria);
+        var hold = await ledger.HoldAsync(Buy(10), Ct);
+        await db.Sql($"UPDATE `money`.`holds` SET seller_id = {MoneySchema.FeesId} WHERE id = {hold.HoldId}");
+        Assert.Equal(MoneyOutcome.Ok, (await ledger.CompleteHoldAsync(Guid.NewGuid(), hold.HoldId!.Value, Ct)).Outcome);
+
+        AssertFound(await ledger.SelfCheckAsync(Ct), $"Hold {hold.HoldId} doesn't match its entries");
+    }
+
     private static Task<long> IdOf(MoneyTestDatabase db, Guid agent) => db.Scalar($"SELECT id FROM `money`.`accounts` WHERE agent_id = '{agent}'");
 
     private static Task AllowEntryTampering(MoneyTestDatabase db) =>
@@ -52,6 +81,13 @@ public sealed class MoneySelfCheckTests(MoneyMariaDb maria) : IClassFixture<Mone
         await ledger.RefundAsync(paid.EntryId!.Value, Staff, Ct);
         await ledger.ChargeAsync(new ChargeRequest(Guid.NewGuid(), EntryType.UploadFee, AccountRef.Resident(A), 10, null), Ct);
         await ledger.MoveFeesAsync(AccountRef.Resident(B), 5, Staff, Ct);
+        // Fees held before their action: one into Fees, one to a group's founder, one given back.
+        var upload = await ledger.HoldAsync(FeeHold(EntryType.UploadFee, null), Ct);
+        Assert.Equal(MoneyOutcome.Ok, (await ledger.CompleteHoldAsync(Guid.NewGuid(), upload.HoldId!.Value, Ct)).Outcome);
+        var join = await ledger.HoldAsync(FeeHold(EntryType.GroupJoinFee, AccountRef.Resident(B)), Ct);
+        Assert.Equal(MoneyOutcome.Ok, (await ledger.CompleteHoldAsync(Guid.NewGuid(), join.HoldId!.Value, Ct)).Outcome);
+        var ad = await ledger.HoldAsync(FeeHold(EntryType.ClassifiedFee, null), Ct);
+        Assert.Equal(MoneyOutcome.Ok, (await ledger.ReturnHoldAsync(Guid.NewGuid(), ad.HoldId!.Value, Ct)).Outcome);
         time.Advance(TimeSpan.FromDays(8));
         await ledger.TransferAsync(Pay(A, B, 1), Ct); // both get an allowance first
 

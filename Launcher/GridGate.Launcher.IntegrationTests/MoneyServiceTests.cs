@@ -581,6 +581,51 @@ public sealed class MoneyServiceTests(MoneyMariaDb maria) : IClassFixture<MoneyM
     }
 
     [Fact]
+    public async Task Economy_offers_fee_holds()
+    {
+        await StartAsync();
+
+        var (_, body, _) = await Post("economy", null);
+
+        Assert.True(body!["feeHolds"]!.GetValue<bool>());
+    }
+
+    [Fact]
+    public async Task A_fee_hold_without_a_seller_over_http()
+    {
+        var db = await StartAsync();
+        var fees = await db.Scalar($"SELECT balance FROM `money`.`accounts` WHERE id = {MoneySchema.FeesId}");
+
+        var (_, hold, raw) = await Post("hold", new { txnId = Guid.NewGuid(), kind = "classified_fee", buyer = WhoA(), amount = 25, regionId = Here });
+        Assert.True((string?)hold?["code"] == "ok", raw);
+        Assert.Equal(75, hold!["balance"]!.GetValue<long>());
+        Assert.False(hold.AsObject().ContainsKey("toBalance"));
+
+        var (_, done, _) = await Post("hold/complete", new { txnId = Guid.NewGuid(), holdId = hold["holdId"]!.GetValue<long>() });
+
+        Assert.Equal("ok", (string?)done!["code"]);
+        Assert.False(done.AsObject().ContainsKey("toBalance"));
+        Assert.Equal(fees + 25, await db.Scalar($"SELECT balance FROM `money`.`accounts` WHERE id = {MoneySchema.FeesId}"));
+    }
+
+    [Theory]
+    [InlineData("object")]
+    [InlineData("land")]
+    public async Task An_object_hold_without_a_seller_is_a_bad_request(string kind)
+    {
+        var db = await StartAsync();
+
+        var (status, body, _) = await Post("hold", new
+        {
+            txnId = Guid.NewGuid(), kind, buyer = WhoA(), amount = 25, regionId = Here, objectId = Guid.NewGuid(), objectName = "dress",
+        });
+
+        Assert.Equal(HttpStatusCode.BadRequest, status);
+        Assert.Equal("bad_request", (string?)body!["code"]);
+        Assert.Equal(0, await db.Scalar("SELECT COUNT(*) FROM `money`.`holds`"));
+    }
+
+    [Fact]
     public async Task Database_down_returns_unavailable_code()
     {
         await StartAsync(dbOverride: s => s with { MariaDbPort = MoneyMariaDb.FreePort() });

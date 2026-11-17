@@ -41,7 +41,9 @@ internal static class MoneyApi
 
     // Answers.
     internal sealed record Answer(string Code, long? Balance = null, long? ToBalance = null, long? EntryId = null, long? HoldId = null);
-    internal sealed record EconomyAnswer(string Code, string CurrencySymbol, long UploadFee, long ClassifiedFee, bool VisitorWallets, bool ScriptPayouts, long MaxPayment);
+    /// <summary><see cref="FeeHolds"/>: <c>/hold</c> takes the fee kinds, so a module can hold a fee before its action.</summary>
+    internal sealed record EconomyAnswer(string Code, string CurrencySymbol, long UploadFee, long ClassifiedFee, bool VisitorWallets, bool ScriptPayouts, long MaxPayment,
+        bool FeeHolds);
     internal sealed record HealthBody(int? Protocol, Guid[]? Regions);
     internal sealed record HealthAnswer(bool Ok, int Regions);
     internal sealed record PairBody(string? Host, int? FirstPort, string? MachineId, string? Nonce, string? Proof);
@@ -91,7 +93,8 @@ internal static class MoneyApi
         Post(app, "/money/v1/economy", c, (_, _, _) =>
         {
             var m = c.Settings().Money;
-            return Task.FromResult<object>(new EconomyAnswer("ok", m.CurrencySymbol, m.UploadFee, m.ClassifiedFee, m.EffectiveVisitors != VisitorMoney.Off, m.ScriptPayouts, m.MaxPayment));
+            return Task.FromResult<object>(new EconomyAnswer("ok", m.CurrencySymbol, m.UploadFee, m.ClassifiedFee, m.EffectiveVisitors != VisitorMoney.Off, m.ScriptPayouts, m.MaxPayment,
+                FeeHolds: true));
         });
         // Reading a balance moves nothing: the avatar must be logged in and placed in one of the key's regions, verified or
         // not, so a region can show someone their balance while money is paused for them.
@@ -134,11 +137,14 @@ internal static class MoneyApi
             if (await c.Ledger.EarlierAsync(request, ct) is { } earlier) return Of(earlier);
             return await WithPayer(c, payer, grant, region, ct) is { } refusal ? Code(refusal) : Of(await Watched(c, grant, request.Payer.AgentId, await c.Ledger.ChargeAsync(request, ct)));
         });
+        // A purchase names its seller. A fee held before its action (an upload, a classified, a group join) gets the same
+        // checks as a charge of it; only a join fee may name someone, the group's founder.
         Post(app, "/money/v1/hold", c, async (http, grant, ct) =>
         {
             var b = await Read<HoldBody>(http, ct);
-            var (buyer, region) = (Need(b.Buyer), Need(b.RegionId));
-            var request = new HoldRequest(Scoped(grant, b.TxnId), Need(b.Kind), Account(buyer), Account(Need(b.Seller)), Need(b.Amount), region, b.ObjectId, b.ObjectName, grant.KeyId);
+            var (buyer, region, kind) = (Need(b.Buyer), Need(b.RegionId), Need(b.Kind));
+            AccountRef? seller = b.Seller is { } s ? Account(s) : MoneyLedger.IsFeeKind(kind) ? null : throw new BadRequest();
+            var request = new HoldRequest(Scoped(grant, b.TxnId), kind, Account(buyer), seller, Need(b.Amount), region, b.ObjectId, b.ObjectName, grant.KeyId);
             // Holding's balance (ToBalance) is nobody's balance: it never leaves the service (plan 1 deferred finding).
             return await WithPayer(c, buyer, grant, region, ct) is { } refusal
                 ? Code(refusal)

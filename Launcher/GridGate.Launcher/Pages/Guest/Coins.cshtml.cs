@@ -116,11 +116,17 @@ public sealed class CoinsModel(IMoneyBooks books, Func<LauncherSettings> setting
 
     /// <summary>
     /// What a line was, in words. A completed hold is the seller's side: a sale, of land when the hold was for land. The
-    /// buyer's own hold line stays for good, so its words never say it is still waiting.
+    /// buyer's own hold line stays for good, so its words never say it is still waiting. A fee held before its action reads
+    /// as that fee on both sides.
     /// </summary>
     private string What(HistoryLine line)
     {
-        var type = line.Type == EntryType.HoldCompleted && line.Reason == EntryType.LandSale ? EntryType.LandSale : line.Type;
+        var type = line.Type switch
+        {
+            EntryType.Hold or EntryType.HoldCompleted when line.Reason is { } fee && MoneyLedger.IsFeeKind(fee) => fee,
+            EntryType.HoldCompleted when line.Reason == EntryType.LandSale => EntryType.LandSale,
+            _ => line.Type,
+        };
         string words = t["MyCoins.Type." + type];
         return string.IsNullOrWhiteSpace(line.ObjectName) ? words : t["MyCoins.WhatWithObject", words, line.ObjectName];
     }
