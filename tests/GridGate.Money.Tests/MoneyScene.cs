@@ -111,7 +111,9 @@ internal sealed class MoneyScene
     private void WaitForEconomy(EconomyInfo economy)
     {
         var deadline = DateTime.UtcNow.AddSeconds(15);
-        while (Module.UploadCharge != economy.UploadFee || ((IClassifiedFeeModule)Module).ClassifiedFee != economy.ClassifiedFee)
+        var known = typeof(GridGateMoneyModule).GetField("_economy", BindingFlags.NonPublic | BindingFlags.Instance)
+                    ?? throw new InvalidOperationException("GridGateMoneyModule no longer keeps the economy in _economy.");
+        while (!Equals(known.GetValue(Module), economy))
         {
             Assert.True(DateTime.UtcNow < deadline, "The module never read the economy settings.");
             Thread.Sleep(10);

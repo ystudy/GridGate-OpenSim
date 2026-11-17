@@ -25,7 +25,7 @@ namespace GridGate.Region.Money;
 /// only while money is on.
 /// </summary>
 [Extension(Path = "/OpenSim/RegionModules", NodeName = "RegionModule", Id = "GridGateMoneyModule")]
-public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVisitorMoneyModule, IClassifiedFeeModule
+public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVisitorMoneyModule, IClassifiedFeeModule, IFeeHoldModule
 {
     public const string ModuleName = "GridGateMoneyModule";
     private static readonly ILog Log = LogManager.GetLogger(MethodBase.GetCurrentMethod()!.DeclaringType);
@@ -439,8 +439,7 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
         switch (type)
         {
             case MoneyTransactionType.GroupJoin:
-                var founder = FindClient(agentID)?.Scene is Scene s ? s.RequestModuleInterface<IGroupsModule>()?.GetGroupRecord(extraData)?.FounderID : null;
-                Charge(agentID, "group_join_fee", amount, founder is { } f && !f.IsZero() ? f.Guid : null);
+                Charge(agentID, "group_join_fee", amount, Founder(FindClient(agentID), extraData));
                 break;
             case MoneyTransactionType.ClassifiedCharge:
                 // The grid's fee, whatever listing price the viewer sent.
@@ -462,6 +461,94 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
             return;
         }
         actions.Charge(PayerOf(c), type, amount, payTo);
+    }
+
+    /// <summary>The founder of the group named <paramref name="groupName"/>, who a join fee pays; null for none known.</summary>
+    private static Guid? Founder(IClientAPI? client, string groupName) =>
+        client?.Scene is Scene s && s.RequestModuleInterface<IGroupsModule>()?.GetGroupRecord(groupName)?.FounderID is { } f && !f.IsZero() ? f.Guid : null;
+
+    // ---- IFeeHoldModule: a fee held before its action -----------------------------------------------------------------
+
+    private static readonly IFeeHold NothingDue = new NoFee();
+
+    /// <summary>
+    /// Holds a fee before OpenSim's action: <c>UploadCharge</c> as given, <c>GroupJoin</c> paying the founder of the
+    /// group named <paramref name="extraData"/> (as <see cref="ApplyCharge"/> does), <c>ClassifiedCharge</c> at the grid's
+    /// fee whatever <paramref name="amount"/> says. A service from before fee holds is asked as before: the fee is checked
+    /// now and charged once the action worked. Null when it can't be paid, or the payer isn't here.
+    /// </summary>
+    public IFeeHold? HoldFee(UUID agentID, int amount, MoneyTransactionType type, string extraData = "")
+    {
+        var fee = type switch
+        {
+            MoneyTransactionType.UploadCharge => "upload_fee",
+            MoneyTransactionType.GroupJoin => "group_join_fee",
+            MoneyTransactionType.ClassifiedCharge => "classified_fee",
+            _ => null,
+        };
+        if (fee is null)
+        {
+            Log.Debug($"[GRIDGATE MONEY]: Ignored a {type} fee of {amount} for {agentID}.");
+            return NothingDue;
+        }
+        // The classified fee is the grid's own, so it is asked about even when OpenSim passes nothing.
+        if (fee != "classified_fee" && amount <= 0) return NothingDue;
+        if (FindClient(agentID) is not { } c || ActionsFor(c) is not { } actions) return null;
+        var payer = PayerOf(c);
+        Guid? payTo = fee == "group_join_fee" && Founder(c, extraData) is { } founder && founder != agentID.Guid ? founder : null;
+
+        if (!actions.FeeHolds)
+        {
+            var covered = fee switch
+            {
+                "upload_fee" => actions.UploadCovered(payer, amount),
+                "classified_fee" => actions.ClassifiedCovered(payer),
+                _ => actions.Covered(payer, amount),
+            };
+            return covered ? new ChargeAfter(actions, payer, fee, amount, payTo) : null;
+        }
+        if (fee == "classified_fee") amount = actions.ClassifiedFee();
+        return actions.HoldFee(payer, fee, amount, payTo) switch
+        {
+            null => null,
+            0 => NothingDue,
+            { } holdId => new Held(actions, payer, fee, amount, payTo, holdId),
+        };
+    }
+
+    private sealed class NoFee : IFeeHold
+    {
+        public void Settle(bool succeeded)
+        {
+        }
+    }
+
+    /// <summary>A fee the service holds: completed or returned off the caller's thread, once.</summary>
+    private sealed class Held(MoneyActions actions, Payer payer, string fee, int amount, Guid? payTo, long holdId) : IFeeHold
+    {
+        private int _settled;
+
+        public void Settle(bool succeeded)
+        {
+            if (Interlocked.Exchange(ref _settled, 1) == 0)
+                Run(() => actions.SettleFeeAsync(payer, fee, amount, payTo, holdId, succeeded));
+        }
+    }
+
+    /// <summary>
+    /// A service from before fee holds: checked when taken, charged once the action worked, on the caller's thread as
+    /// OpenSim's own charge after an action always was.
+    /// </summary>
+    private sealed class ChargeAfter(MoneyActions actions, Payer payer, string fee, int amount, Guid? payTo) : IFeeHold
+    {
+        private int _settled;
+
+        public void Settle(bool succeeded)
+        {
+            if (Interlocked.Exchange(ref _settled, 1) != 0 || !succeeded) return;
+            if (fee == "classified_fee") actions.ChargeClassified(payer, amount);
+            else actions.Charge(payer, fee, amount, payTo);
+        }
     }
 
     /// <summary>The land module's parcel pass; the only money movement it asks for.</summary>

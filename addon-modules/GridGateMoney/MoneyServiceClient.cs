@@ -49,8 +49,12 @@ public sealed record MoneyAnswer(string Code, long? Balance = null, long? ToBala
     public static MoneyAnswer Rejected { get; } = new(UnavailableCode) { Final = true };
 }
 
-/// <summary>The grid's money settings, as the service gives them to regions.</summary>
-public sealed record EconomyInfo(string CurrencySymbol, long UploadFee, long ClassifiedFee, bool VisitorWallets, bool ScriptPayouts, long MaxPayment);
+/// <summary>
+/// The grid's money settings, as the service gives them to regions. <see cref="FeeHolds"/>: the service can hold a fee
+/// before its action; one from before that says nothing, read as false.
+/// </summary>
+public sealed record EconomyInfo(string CurrencySymbol, long UploadFee, long ClassifiedFee, bool VisitorWallets, bool ScriptPayouts, long MaxPayment,
+    bool FeeHolds = false);
 
 /// <summary>The money service, as the region module calls it (money design §7.2). Implementations never throw for a failed call.</summary>
 public interface IMoneyService
@@ -64,7 +68,11 @@ public interface IMoneyService
 
     Task<MoneyAnswer> ChargeAsync(Guid txn, string type, MoneyWho payer, long amount, Guid? payTo, Guid regionId, CancellationToken ct);
 
-    Task<MoneyAnswer> HoldAsync(Guid txn, string kind, MoneyWho buyer, MoneyWho seller, long amount, Guid regionId, Guid? objectId, string? objectName,
+    /// <summary>
+    /// A purchase's hold (kind <c>object</c> or <c>land</c>, paying <paramref name="seller"/>), or a fee held before its
+    /// action: <c>upload_fee</c> and <c>classified_fee</c> name no seller, <c>group_join_fee</c> the group's founder or none.
+    /// </summary>
+    Task<MoneyAnswer> HoldAsync(Guid txn, string kind, MoneyWho buyer, MoneyWho? seller, long amount, Guid regionId, Guid? objectId, string? objectName,
         CancellationToken ct);
 
     Task<MoneyAnswer> CompleteAsync(Guid txn, long holdId, CancellationToken ct);
@@ -153,9 +161,10 @@ public sealed class MoneyServiceClient : IMoneyService, IDisposable
     public Task<MoneyAnswer> ChargeAsync(Guid txn, string type, MoneyWho payer, long amount, Guid? payTo, Guid regionId, CancellationToken ct) =>
         Post("charge", new ChargeBody(txn, type, payer, amount, payTo, regionId), ct);
 
-    public Task<MoneyAnswer> HoldAsync(Guid txn, string kind, MoneyWho buyer, MoneyWho seller, long amount, Guid regionId, Guid? objectId,
+    /// <summary>No seller is sent as none at all.</summary>
+    public Task<MoneyAnswer> HoldAsync(Guid txn, string kind, MoneyWho buyer, MoneyWho? seller, long amount, Guid regionId, Guid? objectId,
         string? objectName, CancellationToken ct) =>
-        Post("hold", new HoldBody(txn, kind, buyer, Payee(seller), amount, regionId, objectId, objectName), ct);
+        Post("hold", new HoldBody(txn, kind, buyer, seller is null ? null : Payee(seller), amount, regionId, objectId, objectName), ct);
 
     public Task<MoneyAnswer> CompleteAsync(Guid txn, long holdId, CancellationToken ct) => Post("hold/complete", new SettleBody(txn, holdId), ct);
 
@@ -165,7 +174,7 @@ public sealed class MoneyServiceClient : IMoneyService, IDisposable
     {
         var (wire, _) = await Send<EconomyWire>("economy", new { }, Timeout, ct).ConfigureAwait(false);
         return wire is { Code: "ok", CurrencySymbol: { } symbol }
-            ? new EconomyInfo(symbol, wire.UploadFee, wire.ClassifiedFee, wire.VisitorWallets, wire.ScriptPayouts, wire.MaxPayment)
+            ? new EconomyInfo(symbol, wire.UploadFee, wire.ClassifiedFee, wire.VisitorWallets, wire.ScriptPayouts, wire.MaxPayment, wire.FeeHolds)
             : null;
     }
 
@@ -241,7 +250,7 @@ public sealed class MoneyServiceClient : IMoneyService, IDisposable
 
     private sealed record ChargeBody(Guid TxnId, string Type, MoneyWho Payer, long Amount, Guid? PayTo, Guid RegionId);
 
-    private sealed record HoldBody(Guid TxnId, string Kind, MoneyWho Buyer, MoneyWho Seller, long Amount, Guid RegionId, Guid? ObjectId, string? ObjectName);
+    private sealed record HoldBody(Guid TxnId, string Kind, MoneyWho Buyer, MoneyWho? Seller, long Amount, Guid RegionId, Guid? ObjectId, string? ObjectName);
 
     private sealed record SettleBody(Guid TxnId, long HoldId);
 
@@ -256,5 +265,5 @@ public sealed class MoneyServiceClient : IMoneyService, IDisposable
     private sealed record ArrivedBody(Guid Id, Guid SessionId, Guid AgentId, Guid RegionId);
 
     private sealed record EconomyWire(string? Code, string? CurrencySymbol, long UploadFee, long ClassifiedFee, bool VisitorWallets, bool ScriptPayouts,
-        long MaxPayment);
+        long MaxPayment, bool FeeHolds);
 }

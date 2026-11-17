@@ -614,6 +614,124 @@ public sealed class MoneyActionsTests
         Assert.Equal(MoneyRules.CheckingText, Assert.Single(_view.Told).Text);
     }
 
+    // --- fees held before their action ---------------------------------------------------------------------------------
+
+    [Fact]
+    public void Fee_holds_follow_the_service()
+    {
+        Assert.False(_actions.FeeHolds);
+        _economy = _economy with { FeeHolds = true };
+        Assert.True(_actions.FeeHolds);
+    }
+
+    [Fact]
+    public async Task Fee_is_held_then_completed_when_the_action_succeeds()
+    {
+        _economy = _economy with { FeeHolds = true };
+        _service.Queue("hold", new MoneyAnswer("ok", 80, null, 1, 7));
+
+        Assert.Equal(7L, _actions.HoldFee(P, "group_join_fee", 20, Them));
+
+        var hold = Assert.Single(_service.Of("hold"));
+        Assert.Equal("group_join_fee", hold.Args[0]);
+        Assert.Equal(P.Who, hold.Args[1]);
+        Assert.Equal(Them, ((MoneyWho)hold.Args[2]!).AgentId);
+        Assert.Null(((MoneyWho)hold.Args[2]!).SessionId);
+        Assert.Equal(20L, hold.Args[3]);
+        Assert.Equal(Region, hold.Args[4]);
+        Assert.Equal((Me, 80L, (BalanceNote?)new BalanceNote(Type("GroupJoin"), Me, Them, 20, "")), Assert.Single(_view.Pushed));
+        _service.Queue("complete", new MoneyAnswer("ok", null, 120, 2, 7));
+
+        await _actions.SettleFeeAsync(P, "group_join_fee", 20, Them, 7, succeeded: true);
+
+        Assert.Equal(7L, Assert.Single(_service.Of("complete")).Args[0]);
+        Assert.Empty(_service.Of("return"));
+        Assert.Contains(_view.Pushed, x => x.Agent == Them && x.Balance == 120);
+    }
+
+    [Fact]
+    public async Task Fee_is_returned_when_the_action_fails()
+    {
+        _economy = _economy with { FeeHolds = true };
+        _service.Queue("return", new MoneyAnswer("ok", null, 100, 2, 7));
+
+        await _actions.SettleFeeAsync(P, "upload_fee", 10, null, 7, succeeded: false);
+
+        Assert.Equal(7L, Assert.Single(_service.Of("return")).Args[0]);
+        Assert.Empty(_service.Of("complete"));
+        Assert.Equal((Me, 100L, (BalanceNote?)null), Assert.Single(_view.Pushed));
+    }
+
+    [Fact]
+    public async Task A_fee_settle_is_retried_with_one_transaction_id()
+    {
+        _economy = _economy with { FeeHolds = true };
+        _service.Queue("complete", MoneyAnswer.NoAnswer, new MoneyAnswer("ok", null, null, 2, 7));
+
+        await _actions.SettleFeeAsync(P, "upload_fee", 10, null, 7, succeeded: true);
+
+        var calls = _service.Of("complete").ToList();
+        Assert.Equal(2, calls.Count);
+        Assert.Equal(calls[0].Txn, calls[1].Txn);
+        Assert.Empty(_view.Pushed); // completed into Fees: nobody's balance to show
+    }
+
+    [Fact]
+    public void Upload_and_classified_fees_are_held_for_the_grid()
+    {
+        _economy = _economy with { FeeHolds = true };
+
+        Assert.Equal(7L, _actions.HoldFee(P, "upload_fee", 10, null));
+        Assert.Equal(7L, _actions.HoldFee(P, "classified_fee", 25, null));
+
+        Assert.All(_service.Of("hold"), h => Assert.Null(h.Args[2]));
+        Assert.Equal(["upload_fee", "classified_fee"], _service.Of("hold").Select(h => (string)h.Args[0]!));
+    }
+
+    [Fact]
+    public void Too_few_coins_for_a_fee_holds_nothing_and_leaves_the_words_to_the_caller()
+    {
+        _economy = _economy with { FeeHolds = true };
+        _service.Queue("hold", new MoneyAnswer("not_enough"));
+
+        Assert.Null(_actions.HoldFee(P, "classified_fee", 25, null));
+
+        Assert.Empty(_view.Told);
+        Assert.Empty(_view.Pushed);
+    }
+
+    [Fact]
+    public void Another_refusal_for_a_fee_is_told()
+    {
+        _economy = _economy with { FeeHolds = true };
+        _service.Queue("hold", new MoneyAnswer("unverified_region"));
+
+        Assert.Null(_actions.HoldFee(P, "upload_fee", 10, null));
+
+        Assert.Equal((Me, MoneyRules.Message("unverified_region")), Assert.Single(_view.Told));
+    }
+
+    [Fact]
+    public void A_free_fee_holds_nothing()
+    {
+        _economy = _economy with { FeeHolds = true };
+
+        Assert.Equal(0L, _actions.HoldFee(P, "upload_fee", 0, null));
+
+        Assert.Empty(_service.Calls);
+    }
+
+    [Fact]
+    public void Before_the_first_economy_answer_no_fee_is_held()
+    {
+        var actions = new MoneyActions(_service, Region, () => null, _view);
+
+        Assert.Null(actions.HoldFee(P, "upload_fee", 10, null));
+
+        Assert.Equal((Me, MoneyRules.NoEconomyText), Assert.Single(_view.Told));
+        Assert.Empty(_service.Calls);
+    }
+
     [Fact]
     public void Actions_type_lives_in_the_module()
     {

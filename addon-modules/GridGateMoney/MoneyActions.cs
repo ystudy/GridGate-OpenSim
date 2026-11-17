@@ -295,6 +295,45 @@ internal sealed class MoneyActions(IMoneyService service, Guid regionId, Func<Ec
             view.PushBalance(p.AgentId, after, new BalanceNote(ChargeType(type), p.AgentId, payTo ?? Guid.Empty, amount, ""));
     }
 
+    /// <summary>Whether the service can hold a fee before its action (a service from before that can't).</summary>
+    public bool FeeHolds => economy()?.FeeHolds == true;
+
+    /// <summary>
+    /// Holds a fee (<c>upload_fee</c>, <c>classified_fee</c>, or <c>group_join_fee</c> paying <paramref name="payTo"/>, the
+    /// group's founder) before its action, waiting on the caller's thread as <see cref="Covered"/> does. The hold id; 0 when
+    /// nothing is due; null when it can't be paid, after telling the payer why, except for too few coins, which the
+    /// caller says in its own words. Before the service's first economy answer nothing is held.
+    /// </summary>
+    public long? HoldFee(Payer p, string type, int amount, Guid? payTo)
+    {
+        if (!FeesKnown(p)) return null;
+        if (amount <= 0) return 0;
+        var founder = payTo is { } f ? new MoneyWho(f, "") : null;
+        var hold = Wait(service.HoldAsync(Guid.NewGuid(), type, p.Who, founder, amount, regionId, null, null, CancellationToken.None));
+        if (!hold.Ok || hold.HoldId is not { } holdId)
+        {
+            // A hold the service did place after all, without an answer, is returned to the payer when it expires.
+            if (hold.Code != "not_enough") view.Tell(p.AgentId, MoneyRules.Message(hold.Ok ? MoneyAnswer.UnavailableCode : hold.Code));
+            return null;
+        }
+        if (hold.Balance is { } after)
+            view.PushBalance(p.AgentId, after, new BalanceNote(ChargeType(type), p.AgentId, payTo ?? Guid.Empty, amount, ""));
+        return holdId;
+    }
+
+    /// <summary>
+    /// After the fee's action: completes the hold when it <paramref name="succeeded"/> (a founder sees their new balance),
+    /// otherwise returns the fee (the payer sees theirs). Retried with one transaction id while the service is unavailable.
+    /// </summary>
+    public async Task SettleFeeAsync(Payer p, string type, int amount, Guid? payTo, long holdId, bool succeeded)
+    {
+        var answer = await SettleAsync(holdId, succeeded).ConfigureAwait(false);
+        // Completed into Fees, the answer has no balance: Fees is nobody's.
+        if (!answer.Ok || answer.ToBalance is not { } after) return;
+        if (!succeeded) view.PushBalance(p.AgentId, after, null);
+        else if (payTo is { } founder) view.PushBalance(founder, after, new BalanceNote(ChargeType(type), p.AgentId, founder, amount, ""));
+    }
+
     /// <summary>
     /// The classified ad fee: always the grid's own setting. OpenSim passes the listing price the viewer typed
     /// (<c>UserProfileModule</c>), which would let a resident pick their own fee (found in the live checks).

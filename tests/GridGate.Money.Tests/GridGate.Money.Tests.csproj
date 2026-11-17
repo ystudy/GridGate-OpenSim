@@ -24,6 +24,8 @@
       <Private>True</Private>
     </ProjectReference>
     <ProjectReference Include="../OpenSim.Tests.Common/OpenSim.Tests.Common.csproj" />
+    <!-- OpenSim's groups module V2, for the group join fee through its own code. -->
+    <ProjectReference Include="$(GgRoot)OpenSim/Addons/Groups/OpenSim.Addons.Groups.csproj" />
   </ItemGroup>
 
   <ItemGroup>

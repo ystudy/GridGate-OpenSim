@@ -483,6 +483,92 @@ public sealed class ModuleSceneTests
         Assert.Empty(region.Service.Calls);
     }
 
+    // --- HoldFee: a fee held before its action -----------------------------------------------------------------------
+
+    [Fact]
+    public void HoldFee_for_a_classified_holds_the_grids_fee_not_the_viewers_price()
+    {
+        var region = Build(new EconomyInfo("C$", 0, 25, true, true, 1_000_000, FeeHolds: true));
+        region.Arrive(Buyer);
+
+        var fee = region.Module.HoldFee(Buyer, 0, MoneyTransactionType.ClassifiedCharge);
+
+        Assert.NotNull(fee);
+        var hold = Assert.Single(region.Service.Of("hold"));
+        Assert.Equal("classified_fee", hold.Args[0]);
+        Assert.Null(hold.Args[2]);
+        Assert.Equal(25L, hold.Args[3]);
+        Assert.Equal(region.Scene.RegionInfo.RegionID.Guid, hold.Args[4]);
+        fee.Settle(true);
+        Assert.Equal(7L, region.WaitFor("complete").Args[0]);
+        Assert.Empty(region.Service.Of("charge"));
+    }
+
+    [Fact]
+    public void HoldFee_for_a_group_join_pays_the_founder()
+    {
+        var region = Build(new EconomyInfo("C$", 0, 0, true, true, 1_000_000, FeeHolds: true));
+        region.Arrive(Buyer);
+        region.Scene.RegisterModuleInterface(OneGroup.Create("Club", Founder));
+
+        var fee = region.Module.HoldFee(Buyer, 20, MoneyTransactionType.GroupJoin, "Club");
+
+        var hold = Assert.Single(region.Service.Of("hold"));
+        Assert.Equal("group_join_fee", hold.Args[0]);
+        Assert.Equal(Founder.Guid, ((MoneyWho)hold.Args[2]!).AgentId);
+        Assert.Equal(20L, hold.Args[3]);
+        fee!.Settle(false);
+        region.WaitFor("return");
+        Assert.Empty(region.Service.Of("complete"));
+    }
+
+    [Fact]
+    public void A_fee_settles_once()
+    {
+        var region = Build(new EconomyInfo("C$", 10, 0, true, true, 1_000_000, FeeHolds: true));
+        region.Arrive(Buyer);
+
+        var fee = region.Module.HoldFee(Buyer, 10, MoneyTransactionType.UploadCharge)!;
+        fee.Settle(true);
+        fee.Settle(false);
+        fee.Settle(true);
+
+        region.WaitFor("complete");
+        Thread.Sleep(200);
+        Assert.Single(region.Service.Of("complete"));
+        Assert.Empty(region.Service.Of("return"));
+    }
+
+    [Fact]
+    public void Without_fee_holds_on_the_service_a_fee_is_checked_then_charged_after()
+    {
+        // A service from before fee holds: no flag in its economy answer.
+        var region = Build(new EconomyInfo("C$", 10, 0, true, true, 1_000_000));
+        region.Arrive(Buyer);
+        region.Service.Answer = _ => Rich;
+
+        var fee = region.Module.HoldFee(Buyer, 10, MoneyTransactionType.UploadCharge);
+        lock (region.Service.Order) Assert.Equal(new[] { "balance" }, region.Service.Order);
+        fee!.Settle(true);
+        var charge = region.WaitFor("charge");
+        Assert.Equal("upload_fee", charge.Args[0]);
+        Assert.Equal(10L, charge.Args[2]);
+
+        region.Module.HoldFee(Buyer, 10, MoneyTransactionType.UploadCharge)!.Settle(false);
+        Thread.Sleep(200);
+        Assert.Single(region.Service.Of("charge"));
+        Assert.Empty(region.Service.Of("hold"));
+    }
+
+    [Fact]
+    public void A_fee_for_someone_not_here_is_refused()
+    {
+        var region = Build(new EconomyInfo("C$", 10, 0, true, true, 1_000_000, FeeHolds: true));
+
+        Assert.Null(region.Module.HoldFee(Stranger, 10, MoneyTransactionType.UploadCharge));
+        Assert.Empty(region.Service.Calls);
+    }
+
     // --- Info(): whether a contents sale has anything to sell --------------------------------------------------------
 
     private static (MoneyScene Region, RecordingClient Buyer, SceneObjectGroup Box) ContentsForSale(params bool[] transferable)
