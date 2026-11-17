@@ -53,7 +53,8 @@
             {
                 if (residentName is not null)
                 {
-                    <a id="resident-link" class="btn btn-sm btn-outline-secondary site-account" href="/guest" icon="person">@residentName</a>
+                    @* No site-account class: that one is uppercase, and an avatar's name is shown as written. *@
+                    <a id="resident-link" class="btn btn-sm btn-outline-secondary" href="/guest" icon="person">@residentName</a>
                     @* Signing out is a POST with the antiforgery token, never a link (SignOutModel). *@
                     <form id="sign-out-form" class="d-inline" method="post" action="/guest/sign-out" asp-antiforgery="true">
                         <button type="submit" class="btn btn-sm btn-outline-secondary site-account" icon="sign-out">@T["Guest.SignOut"]</button>

@@ -146,6 +146,52 @@ public sealed class PublicLookTests
         Assert.Null(page.QuerySelector("#register-link"));
     }
 
+    // The top bar's Sign out works from every public page, not only the front page: the token a page makes is for whichever
+    // user that page saw (on /support and /signup the staff scheme's anonymous user, on /home and /guest the resident).
+    [Theory]
+    [InlineData("/home")]
+    [InlineData("/support")]
+    [InlineData("/signup")]
+    [InlineData("/guest")]
+    public async Task Top_bar_sign_out_works_from_every_public_page(string path)
+    {
+        await using var f = Factory();
+        var client = Client(f);
+        (await client.GetAsync("/__test/guest-signin", Ct)).Dispose();
+        var token = (await PageAsync(client, path)).QuerySelector("form#sign-out-form input[name=__RequestVerificationToken]")!.GetAttribute("value")!;
+
+        using var r = await client.PostAsync("/guest/sign-out", new FormUrlEncodedContent(new Dictionary<string, string> { ["__RequestVerificationToken"] = token }), Ct);
+
+        Assert.Equal(HttpStatusCode.Redirect, r.StatusCode);
+        Assert.Equal("/", r.Headers.Location?.OriginalString);
+        Assert.Null((await PageAsync(client, "/home")).QuerySelector("#resident-link")); // signed out
+    }
+
+    [Fact]
+    public async Task Sign_out_still_needs_its_token()
+    {
+        await using var f = Factory();
+        var client = Client(f);
+        (await client.GetAsync("/__test/guest-signin", Ct)).Dispose();
+
+        using var r = await client.PostAsync("/guest/sign-out", new FormUrlEncodedContent(new Dictionary<string, string>()), Ct);
+
+        Assert.Equal(HttpStatusCode.BadRequest, r.StatusCode);
+        Assert.NotNull((await PageAsync(client, "/home")).QuerySelector("#resident-link")); // still signed in
+    }
+
+    [Fact]
+    public async Task Resident_name_keeps_its_own_case()
+    {
+        await using var f = Factory();
+        var client = Client(f);
+        (await client.GetAsync("/__test/guest-signin", Ct)).Dispose();
+
+        var name = (await PageAsync(client, "/home")).QuerySelector("#resident-link")!;
+
+        Assert.DoesNotContain("site-account", name.ClassList); // .site-account is uppercase: a name is shown as written
+    }
+
     [Fact]
     public async Task Staff_with_resident_cookie_sees_only_back_to_staff()
     {
