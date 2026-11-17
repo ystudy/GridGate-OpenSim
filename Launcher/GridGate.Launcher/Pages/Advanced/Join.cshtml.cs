@@ -1,3 +1,4 @@
+using GridGate.Launcher.Core;
 using GridGate.Launcher.Core.Grid;
 using GridGate.Launcher.Core.Logs;
 using GridGate.Launcher.Core.OpenSim;
@@ -22,6 +23,12 @@ public sealed class JoinModel(IGridController grid, Func<LauncherSettings> setti
 
     [BindProperty] public string? Address { get; set; }
 
+    /// <summary>The owner's password on the new grid, checked with that grid before the re-point is kept. Never shown back, logged or saved.</summary>
+    [BindProperty] public string? Password { get; set; }
+
+    /// <summary>True when the settings name an estate owner, whose password on the new grid the confirm view asks for.</summary>
+    public bool AsksPassword => settings().Setup.Owner is not null;
+
     /// <summary>The join information the first post read, shown with "Join this grid"; null shows the address form.</summary>
     public JoinedGrid? Found { get; private set; }
 
@@ -44,6 +51,7 @@ public sealed class JoinModel(IGridController grid, Func<LauncherSettings> setti
     public async Task<IActionResult> OnPostAsync()
     {
         if (Closed() is { } closed) return closed;
+        Password = null;
         (Found, Error) = await JoinForm.ReadAsync(join, Address, HttpContext.RequestAborted);
         if (Found is not null) Address = JoinForm.AddressOf(Found);
         return Page();
@@ -56,10 +64,12 @@ public sealed class JoinModel(IGridController grid, Func<LauncherSettings> setti
     {
         if (Closed() is { } closed) return closed;
         var ct = HttpContext.RequestAborted;
+        var password = Password;
+        Password = null;
         var (read, error) = await JoinForm.ReadAsync(join, Address, ct);
         if (read is null)
         {
-            audit.Write(User, Ip, "grid-join", Address, "refused");
+            audit.Write(User, Ip, "grid-join", LogText.Clean(Address, 200), "refused");
             Error = error;
             return Page();
         }
@@ -68,12 +78,27 @@ public sealed class JoinModel(IGridController grid, Func<LauncherSettings> setti
         // new grid (which saves the new id). If that fails, or one of our regions would overlap a region on the new
         // grid's map, the old join, grid name and owner are put back.
         var before = settings();
+        if (before.Setup.Owner is not null && string.IsNullOrWhiteSpace(password))
+        {
+            audit.Write(User, Ip, "grid-join", JoinForm.AddressOf(read), "refused");
+            Error = $"Type your password on {read.GridName}.";
+            Found = read;
+            Address = JoinForm.AddressOf(read);
+            return Page();
+        }
         grid.UpdateSettings(s => JoinForm.Apply(s, read), writeConfig: true);
         if (before.Setup.Owner is { } owner)
         {
             try
             {
-                await grid.SetEstateOwnerAsync(owner.FirstName, owner.LastName, ct);
+                var account = await grid.SetEstateOwnerAsync(owner.FirstName, owner.LastName, ct);
+                // Only the owner's own password on the new grid keeps the move: the robust client asks the grid the settings now name.
+                if (!await robust.AuthenticateAsync(account.PrincipalId, password!, ct))
+                    return Refuse(before, read, $"That isn't the password of {account.FirstName} {account.LastName} on {read.GridName}. Nothing was changed.");
+            }
+            catch (Exception e) when (e is HttpRequestException || (e is TaskCanceledException && !ct.IsCancellationRequested))
+            {
+                return Refuse(before, read, GridAssetUnreachableException.MessageFor(read.Host, read.PublicPort));
             }
             catch (Exception e) when (e is ArgumentException or GridUnreachableException)
             {

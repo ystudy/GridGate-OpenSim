@@ -339,10 +339,21 @@ public sealed class RegionServerPagesTests
 
     // ---- Advanced: join ----
 
+    private const string NewPassword = "new-grid-pw1";
+    private static readonly Guid NewOwnerId = Guid.Parse("50000000-0000-0000-0000-000000000009");
+
+    /// <summary>The estate owner has an account with <see cref="NewPassword"/> on the new grid, and looking the owner up finds it.</summary>
+    private static void SeedNewGridOwner(LauncherFactory f)
+    {
+        f.Robust.Add("Estate", "Owner", 0, NewPassword, NewOwnerId);
+        f.Grid.EstateOwnerId = NewOwnerId;
+    }
+
     [Fact]
     public async Task Join_page_confirm_saves_the_new_join_and_rewrites_the_config()
     {
         await using var f = Factory(OwnerPlan.RegionServer);
+        SeedNewGridOwner(f);
         f.Join.Result = Avalon("Elsewhere") with { Host = "192.168.1.9", LoginUri = "http://192.168.1.9:8002/", Hypergrid = true };
         using var client = await SignedInAsync(f, "owner");
 
@@ -351,7 +362,7 @@ public sealed class RegionServerPagesTests
         Assert.Contains("Elsewhere", doc.QuerySelector("main")!.TextContent);
         Assert.Equal("192.168.1.5", f.Store.LoadOrCreate().Join!.Host); // nothing saved by the first read
 
-        using var confirm = await PostAsync(client, "/advanced/join?handler=Confirm", new() { ["Address"] = "192.168.1.9" }, tokenFrom: "/advanced/join");
+        using var confirm = await PostAsync(client, "/advanced/join?handler=Confirm", new() { ["Address"] = "192.168.1.9", ["Password"] = NewPassword }, tokenFrom: "/advanced/join");
         Assert.Equal(HttpStatusCode.OK, confirm.StatusCode);
 
         var s = f.Store.LoadOrCreate();
@@ -365,10 +376,11 @@ public sealed class RegionServerPagesTests
     public async Task Join_page_keeps_the_old_join_when_the_new_address_does_not_answer()
     {
         await using var f = Factory(OwnerPlan.RegionServer);
+        SeedNewGridOwner(f);
         f.Join.Result = null;
         using var client = await SignedInAsync(f, "owner");
 
-        using var resp = await PostAsync(client, "/advanced/join?handler=Confirm", new() { ["Address"] = "192.168.1.9" }, tokenFrom: "/advanced/join");
+        using var resp = await PostAsync(client, "/advanced/join?handler=Confirm", new() { ["Address"] = "192.168.1.9", ["Password"] = NewPassword }, tokenFrom: "/advanced/join");
 
         Assert.Contains("Nothing answered", MainText(await resp.Content.ReadAsStringAsync(Ct)));
         Assert.Equal("192.168.1.5", f.Store.LoadOrCreate().Join!.Host);
@@ -391,10 +403,11 @@ public sealed class RegionServerPagesTests
     public async Task Join_page_confirm_moves_the_estate_owner_to_the_new_grids_account()
     {
         await using var f = Factory(OwnerPlan.RegionServer);
+        SeedNewGridOwner(f);
         f.Join.Result = Avalon("Elsewhere") with { Host = "192.168.1.9", LoginUri = "http://192.168.1.9:8002/" };
         using var client = await SignedInAsync(f, "owner");
 
-        (await PostAsync(client, "/advanced/join?handler=Confirm", new() { ["Address"] = "192.168.1.9" }, tokenFrom: "/advanced/join")).Dispose();
+        (await PostAsync(client, "/advanced/join?handler=Confirm", new() { ["Address"] = "192.168.1.9", ["Password"] = NewPassword }, tokenFrom: "/advanced/join")).Dispose();
 
         var s = f.Store.LoadOrCreate();
         Assert.Equal("192.168.1.9", s.Join!.Host);
@@ -406,11 +419,12 @@ public sealed class RegionServerPagesTests
     public async Task Join_page_confirm_puts_the_old_join_back_when_the_owner_is_not_on_the_new_grid()
     {
         await using var f = Factory(OwnerPlan.RegionServer);
+        SeedNewGridOwner(f);
         f.Join.Result = Avalon("Elsewhere") with { Host = "192.168.1.9", LoginUri = "http://192.168.1.9:8002/" };
         f.Grid.EstateOwnerError = new ArgumentException("There's no avatar called Estate Owner on Elsewhere.");
         using var client = await SignedInAsync(f, "owner");
 
-        using var resp = await PostAsync(client, "/advanced/join?handler=Confirm", new() { ["Address"] = "192.168.1.9" }, tokenFrom: "/advanced/join");
+        using var resp = await PostAsync(client, "/advanced/join?handler=Confirm", new() { ["Address"] = "192.168.1.9", ["Password"] = NewPassword }, tokenFrom: "/advanced/join");
         var html = await resp.Content.ReadAsStringAsync(Ct);
 
         Assert.Contains("There's no avatar called Estate Owner on Elsewhere. Create your avatar on that grid first, then try again.", MainText(html));
@@ -419,6 +433,110 @@ public sealed class RegionServerPagesTests
         Assert.Equal("192.168.1.5", s.Join!.Host);
         Assert.Equal("Avalon", s.GridName);
         Assert.Equal(OwnerId, s.Setup.Owner!.PrincipalId);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("  ")]
+    public async Task Join_page_confirm_needs_the_owners_password_on_the_new_grid(string? password)
+    {
+        await using var f = Factory(OwnerPlan.RegionServer);
+        SeedNewGridOwner(f);
+        f.Join.Result = Elsewhere();
+        using var client = await SignedInAsync(f, "owner");
+        var fields = new Dictionary<string, string> { ["Address"] = "192.168.1.9" };
+        if (password is not null) fields["Password"] = password;
+        var writes = f.Grid.UpdateWriteConfig.Count;
+
+        using var resp = await PostAsync(client, "/advanced/join?handler=Confirm", fields, tokenFrom: "/advanced/join");
+        var html = await resp.Content.ReadAsStringAsync(Ct);
+
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+        Assert.Contains("Type your password on Elsewhere.", MainText(html));
+        Assert.Contains(new HtmlParser().ParseDocument(html).QuerySelectorAll("button"), b => b.TextContent.Trim() == "Join this grid");
+        Assert.Equal("192.168.1.5", f.Store.LoadOrCreate().Join!.Host);
+        Assert.Equal(writes, f.Grid.UpdateWriteConfig.Count);
+        Assert.DoesNotContain("SetEstateOwner", f.Grid.Snapshot());
+    }
+
+    [Fact]
+    public async Task Join_page_confirm_with_a_wrong_password_puts_everything_back()
+    {
+        var pairing = new Core.Money.ServerPairing("192.168.1.5", new string('A', 64), "k", DateTimeOffset.UtcNow);
+        await using var f = Factory(OwnerPlan.RegionServer, s => s with { Money = new Core.Money.MoneySettings(Pairing: pairing, Gloebit: SavedApp) });
+        SeedNewGridOwner(f);
+        f.Join.Result = Elsewhere();
+        using var client = await SignedInAsync(f, "owner");
+
+        using var resp = await PostAsync(client, "/advanced/join?handler=Confirm",
+            new() { ["Address"] = "192.168.1.9", ["Password"] = "not-the-password" }, tokenFrom: "/advanced/join");
+        var html = await resp.Content.ReadAsStringAsync(Ct);
+
+        Assert.Contains("That isn't the password of Estate Owner on Elsewhere. Nothing was changed.", MainText(html));
+        Assert.DoesNotContain("not-the-password", html);
+        var s = f.Store.LoadOrCreate();
+        Assert.Equal("192.168.1.5", s.Join!.Host);
+        Assert.Equal("Avalon", s.GridName);
+        Assert.Equal(OwnerId, s.Setup.Owner!.PrincipalId);
+        Assert.Equal(pairing, s.Money.Pairing);
+        Assert.Equal(SavedApp, s.Money.Gloebit);
+        Assert.True(f.Grid.UpdateWriteConfig.Last());
+        Assert.Equal("refused", AuditLines(f).Last(l => l.GetProperty("action").GetString() == "grid-join").GetProperty("result").GetString());
+    }
+
+    [Fact]
+    public async Task Join_page_confirm_when_the_new_grid_does_not_answer_the_password_check()
+    {
+        await using var f = Factory(OwnerPlan.RegionServer);
+        SeedNewGridOwner(f);
+        f.Join.Result = Elsewhere();
+        f.Grid.OnSetEstateOwner = () => f.Robust.Down = true; // the grid answers the owner lookup, then goes away
+        using var client = await SignedInAsync(f, "owner");
+
+        using var resp = await PostAsync(client, "/advanced/join?handler=Confirm",
+            new() { ["Address"] = "192.168.1.9", ["Password"] = NewPassword }, tokenFrom: "/advanced/join");
+        var html = await resp.Content.ReadAsStringAsync(Ct);
+
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+        Assert.Contains(GridAssetUnreachableException.MessageFor("192.168.1.9", Elsewhere().PublicPort), MainText(html));
+        var s = f.Store.LoadOrCreate();
+        Assert.Equal("192.168.1.5", s.Join!.Host);
+        Assert.Equal(OwnerId, s.Setup.Owner!.PrincipalId);
+        Assert.True(f.Grid.UpdateWriteConfig.Last());
+    }
+
+    [Fact]
+    public async Task Join_page_found_view_asks_for_the_password_and_never_shows_it_back()
+    {
+        await using var f = Factory(OwnerPlan.RegionServer);
+        SeedNewGridOwner(f);
+        f.Join.Result = Elsewhere();
+        using var client = await SignedInAsync(f, "owner");
+
+        using var resp = await PostAsync(client, "/advanced/join", new() { ["Address"] = "192.168.1.9", ["Password"] = NewPassword });
+        var html = await resp.Content.ReadAsStringAsync(Ct);
+
+        var input = new HtmlParser().ParseDocument(html).QuerySelector("input[name=Password][type=password]");
+        Assert.NotNull(input);
+        Assert.Null(input!.GetAttribute("value"));
+        Assert.Equal("current-password", input.GetAttribute("autocomplete"));
+        Assert.Contains("Your avatar's password on Elsewhere", MainText(html));
+        Assert.DoesNotContain(NewPassword, html);
+    }
+
+    [Fact]
+    public async Task Join_page_confirm_never_shows_the_password_back()
+    {
+        await using var f = Factory(OwnerPlan.RegionServer);
+        SeedNewGridOwner(f);
+        f.Join.Result = Elsewhere();
+        f.Grid.EstateOwnerError = new ArgumentException("There's no avatar called Estate Owner on Elsewhere.");
+        using var client = await SignedInAsync(f, "owner");
+
+        using var resp = await PostAsync(client, "/advanced/join?handler=Confirm",
+            new() { ["Address"] = "192.168.1.9", ["Password"] = NewPassword }, tokenFrom: "/advanced/join");
+
+        Assert.DoesNotContain(NewPassword, await resp.Content.ReadAsStringAsync(Ct));
     }
 
     private static readonly GloebitSettings SavedApp = new("sandbox", "0b9e3c2a-1111-4c5d-8e9f-0123456789ab", "7d3f9a10-2222-4b6c-9d8e-fedcba987654", "Owner");
@@ -436,6 +554,7 @@ public sealed class RegionServerPagesTests
     public async Task Join_page_is_the_owners_only()
     {
         await using var f = Factory(OwnerPlan.RegionServer);
+        SeedNewGridOwner(f);
         f.Join.Result = Elsewhere();
         using var owner = await SignedInAsync(f, "owner");
         var page = await owner.GetStringAsync("/advanced/join", Ct);
@@ -455,10 +574,11 @@ public sealed class RegionServerPagesTests
     public async Task Join_page_confirm_to_another_host_clears_the_saved_gloebit_app()
     {
         await using var f = Factory(OwnerPlan.RegionServer, s => s with { Money = s.Money with { Gloebit = SavedApp } });
+        SeedNewGridOwner(f);
         f.Join.Result = Elsewhere();
         using var client = await SignedInAsync(f, "owner");
 
-        (await PostAsync(client, "/advanced/join?handler=Confirm", new() { ["Address"] = "192.168.1.9" }, tokenFrom: "/advanced/join")).Dispose();
+        (await PostAsync(client, "/advanced/join?handler=Confirm", new() { ["Address"] = "192.168.1.9", ["Password"] = NewPassword }, tokenFrom: "/advanced/join")).Dispose();
 
         Assert.Equal("192.168.1.9", f.Store.LoadOrCreate().Join!.Host);
         Assert.Null(f.Store.LoadOrCreate().Money.Gloebit);
@@ -468,11 +588,12 @@ public sealed class RegionServerPagesTests
     public async Task Join_page_refused_re_point_keeps_the_saved_gloebit_app()
     {
         await using var f = Factory(OwnerPlan.RegionServer, s => s with { Money = s.Money with { Gloebit = SavedApp } });
+        SeedNewGridOwner(f);
         f.Join.Result = Elsewhere();
         f.Grid.EstateOwnerError = new ArgumentException("There's no avatar called Estate Owner on Elsewhere.");
         using var client = await SignedInAsync(f, "owner");
 
-        (await PostAsync(client, "/advanced/join?handler=Confirm", new() { ["Address"] = "192.168.1.9" }, tokenFrom: "/advanced/join")).Dispose();
+        (await PostAsync(client, "/advanced/join?handler=Confirm", new() { ["Address"] = "192.168.1.9", ["Password"] = NewPassword }, tokenFrom: "/advanced/join")).Dispose();
 
         var s = f.Store.LoadOrCreate();
         Assert.Equal("192.168.1.5", s.Join!.Host);
@@ -483,12 +604,13 @@ public sealed class RegionServerPagesTests
     public async Task Join_page_confirm_writes_an_audit_line()
     {
         await using var f = Factory(OwnerPlan.RegionServer);
+        SeedNewGridOwner(f);
         f.Join.Result = Elsewhere();
         using var client = await SignedInAsync(f, "owner");
 
-        (await PostAsync(client, "/advanced/join?handler=Confirm", new() { ["Address"] = "192.168.1.9" }, tokenFrom: "/advanced/join")).Dispose();
+        (await PostAsync(client, "/advanced/join?handler=Confirm", new() { ["Address"] = "192.168.1.9", ["Password"] = NewPassword }, tokenFrom: "/advanced/join")).Dispose();
         f.Grid.EstateOwnerError = new ArgumentException("There's no avatar called Estate Owner on Elsewhere.");
-        (await PostAsync(client, "/advanced/join?handler=Confirm", new() { ["Address"] = "192.168.1.9" }, tokenFrom: "/advanced/join")).Dispose();
+        (await PostAsync(client, "/advanced/join?handler=Confirm", new() { ["Address"] = "192.168.1.9", ["Password"] = NewPassword }, tokenFrom: "/advanced/join")).Dispose();
 
         var joins = AuditLines(f).Where(l => l.GetProperty("action").GetString() == "grid-join").ToList();
         Assert.Equal(2, joins.Count);
@@ -512,12 +634,13 @@ public sealed class RegionServerPagesTests
     public async Task Join_page_confirm_is_refused_when_a_region_would_overlap_one_on_the_new_grid()
     {
         await using var f = WithHome();
+        SeedNewGridOwner(f);
         f.Join.Result = Elsewhere();
         f.Robust.MapRegions.Add(new MapRegion(HomeId, "Home", 1000, 1000, 1)); // ours: never in the way
         f.Robust.MapRegions.Add(new MapRegion(Guid.NewGuid(), "Hub", 1000, 1000, 1));
         using var client = await SignedInAsync(f, "owner");
 
-        using var resp = await PostAsync(client, "/advanced/join?handler=Confirm", new() { ["Address"] = "192.168.1.9" }, tokenFrom: "/advanced/join");
+        using var resp = await PostAsync(client, "/advanced/join?handler=Confirm", new() { ["Address"] = "192.168.1.9", ["Password"] = NewPassword }, tokenFrom: "/advanced/join");
 
         Assert.Contains("Your region Home would overlap Hub on Elsewhere. Move it first (Regions page), then try again.",
             MainText(await resp.Content.ReadAsStringAsync(Ct)));
@@ -537,11 +660,12 @@ public sealed class RegionServerPagesTests
             Regions = [new RegionSettings("Home", "Home", HomeId, UdpPort: 9000)],
             Money = new Core.Money.MoneySettings(Pairing: pairing),
         });
+        SeedNewGridOwner(f);
         f.Join.Result = Elsewhere();
         f.Robust.MapRegions.Add(new MapRegion(Guid.NewGuid(), "Hub", 1000, 1000, 1));
         using var client = await SignedInAsync(f, "owner");
 
-        using var resp = await PostAsync(client, "/advanced/join?handler=Confirm", new() { ["Address"] = "192.168.1.9" }, tokenFrom: "/advanced/join");
+        using var resp = await PostAsync(client, "/advanced/join?handler=Confirm", new() { ["Address"] = "192.168.1.9", ["Password"] = NewPassword }, tokenFrom: "/advanced/join");
 
         Assert.Contains("would overlap Hub", MainText(await resp.Content.ReadAsStringAsync(Ct)));
         Assert.Equal(pairing, f.Store.LoadOrCreate().Money.Pairing);
@@ -551,12 +675,13 @@ public sealed class RegionServerPagesTests
     public async Task Join_page_confirm_is_saved_when_no_region_overlaps()
     {
         await using var f = WithHome();
+        SeedNewGridOwner(f);
         f.Join.Result = Elsewhere();
         f.Robust.MapRegions.Add(new MapRegion(HomeId, "Home", 1000, 1000, 1));
         f.Robust.MapRegions.Add(new MapRegion(Guid.NewGuid(), "Hub", 1001, 1000, 1));
         using var client = await SignedInAsync(f, "owner");
 
-        using var resp = await PostAsync(client, "/advanced/join?handler=Confirm", new() { ["Address"] = "192.168.1.9" }, tokenFrom: "/advanced/join");
+        using var resp = await PostAsync(client, "/advanced/join?handler=Confirm", new() { ["Address"] = "192.168.1.9", ["Password"] = NewPassword }, tokenFrom: "/advanced/join");
 
         var text = MainText(await resp.Content.ReadAsStringAsync(Ct));
         Assert.Contains("Saved.", text);
@@ -570,10 +695,11 @@ public sealed class RegionServerPagesTests
     public async Task Join_page_confirm_warns_when_region_ports_overlap_the_new_grids()
     {
         await using var f = WithHome(regionPort: 8005);
+        SeedNewGridOwner(f);
         f.Join.Result = Elsewhere(8004, 8006);
         using var client = await SignedInAsync(f, "owner");
 
-        using var resp = await PostAsync(client, "/advanced/join?handler=Confirm", new() { ["Address"] = "192.168.1.9" }, tokenFrom: "/advanced/join");
+        using var resp = await PostAsync(client, "/advanced/join?handler=Confirm", new() { ["Address"] = "192.168.1.9", ["Password"] = NewPassword }, tokenFrom: "/advanced/join");
 
         var text = MainText(await resp.Content.ReadAsStringAsync(Ct));
         Assert.Contains("Saved.", text);
@@ -586,6 +712,7 @@ public sealed class RegionServerPagesTests
     public async Task Join_page_confirm_view_says_the_regions_keep_their_land()
     {
         await using var f = Factory(OwnerPlan.RegionServer);
+        SeedNewGridOwner(f);
         f.Join.Result = Elsewhere();
         using var client = await SignedInAsync(f, "owner");
 

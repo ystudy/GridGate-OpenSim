@@ -56,4 +56,5 @@ public static class JoinForm
 /// <param name="Found">The join information the first read gave.</param>
 /// <param name="Address">The address, as the owner would type it, posted back with "Join this grid" or "Change the address".</param>
 /// <param name="Repoint">True on Advanced settings, where a finished Region Server moves its regions to another grid.</param>
-public sealed record JoinFoundModel(JoinedGrid Found, string Address, bool Repoint = false);
+/// <param name="AskPassword">True when the confirm form asks for the estate owner's password on the new grid (Advanced, with an owner saved).</param>
+public sealed record JoinFoundModel(JoinedGrid Found, string Address, bool Repoint = false, bool AskPassword = false);

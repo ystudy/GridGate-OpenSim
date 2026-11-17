@@ -25,6 +25,12 @@
     }
     <form method="post">
         <input type="hidden" name="Address" value="@Model.Address">
+        @if (Model.AskPassword)
+        {
+            <label class="form-label" for="Password">Your avatar's password on @Model.Found.GridName</label>
+            <input class="form-control mb-2" type="password" id="Password" name="Password" autocomplete="current-password" required>
+            <span class="hint form-text d-block mb-3">GridGate checks it with that grid before anything changes. After the move you sign in with it.</span>
+        }
         <button type="submit" class="btn btn-primary" asp-page-handler="Confirm">Join this grid</button>
         <button type="submit" class="btn btn-outline-secondary" asp-page-handler="Change">Change the address</button>
     </form>

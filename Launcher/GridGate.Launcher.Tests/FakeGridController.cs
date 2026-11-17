@@ -407,13 +407,20 @@ internal sealed class FakeGridController : IGridController
     /// <summary>The account's own spelling of the name <see cref="SetEstateOwnerAsync"/> finds; the typed name when null.</summary>
     public (string First, string Last)? EstateOwnerFound { get; set; }
 
+    /// <summary>What <see cref="SetEstateOwnerAsync"/> does besides recording, once the account is found.</summary>
+    public Action? OnSetEstateOwner { get; set; }
+
+    /// <summary>The principal id of the account <see cref="SetEstateOwnerAsync"/> finds; a new one when null.</summary>
+    public Guid? EstateOwnerId { get; set; }
+
     /// <summary>Like the controller: saves Setup.OwnerCreated and Setup.Owner through <see cref="UpdateSettings"/>.</summary>
     public Task<RobustAccount> SetEstateOwnerAsync(string first, string last, CancellationToken ct)
     {
         Record("SetEstateOwner " + first + " " + last);
         if (EstateOwnerError is { } e) throw e;
+        OnSetEstateOwner?.Invoke();
         (first, last) = EstateOwnerFound ?? (first, last);
-        var account = new RobustAccount(Guid.NewGuid(), first, last, 0, "");
+        var account = new RobustAccount(EstateOwnerId ?? Guid.NewGuid(), first, last, 0, "");
         UpdateSettings(l => l with { Setup = l.Setup with { OwnerCreated = true, Owner = new OwnerInfo(first, last, account.PrincipalId) } });
         return Task.FromResult(account);
     }
