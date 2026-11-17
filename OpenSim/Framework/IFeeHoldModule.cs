@@ -22,7 +22,11 @@ namespace OpenSim.Framework
     /// <summary>GridGate: a fee held before its action.</summary>
     public interface IFeeHold
     {
-        /// <summary>Once: true takes the fee, false gives it back. Doesn't wait for the money service.</summary>
+        /// <summary>
+        /// Once: true takes the fee, false gives it back. A fee the money service holds is settled without waiting for
+        /// it; one only checked when taken (a money module or money service without holds) is charged here, on the
+        /// caller's thread, as OpenSim always charged after an action.
+        /// </summary>
         void Settle(bool succeeded);
     }
 
