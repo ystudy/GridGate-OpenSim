@@ -133,6 +133,8 @@ internal static class MoneyApi
         {
             var b = await Read<ChargeBody>(http, ct);
             var (payer, region) = (Need(b.Payer), Need(b.RegionId));
+            // A charge carries no region, so neither does its repeat check: the key is the unit of trust, and a same-key
+            // repeat sent from another of its regions is answered from the store.
             var request = new ChargeRequest(Scoped(grant, b.TxnId), Need(b.Type), Account(payer), Need(b.Amount), b.PayTo, grant.KeyId);
             if (await c.Ledger.EarlierAsync(request, ct) is { } earlier) return Of(earlier);
             return await WithPayer(c, payer, grant, region, ct) is { } refusal ? Code(refusal) : Of(await Watched(c, grant, request.Payer.AgentId, await c.Ledger.ChargeAsync(request, ct)));

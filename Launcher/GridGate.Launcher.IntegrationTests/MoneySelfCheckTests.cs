@@ -43,6 +43,23 @@ public sealed class MoneySelfCheckTests(MoneyMariaDb maria) : IClassFixture<Mone
         AssertFound(await ledger.SelfCheckAsync(Ct), $"Hold {hold.HoldId} doesn't match its entries");
     }
 
+    [Theory]
+    [InlineData("buyer")]
+    [InlineData("visitor")]
+    public async Task A_group_join_fee_hold_rewritten_to_pay_the_buyer_or_a_visitor_is_found(string payee)
+    {
+        // A join fee pays Fees or a resident founder other than the buyer: a completed one that paid anyone else was changed.
+        var (ledger, db, _) = await MoneyLedgerTransferTests.Setup(maria);
+        var visitor = new AccountRef(MoneyLedgerTransferTests.V, "http://other.example:8002");
+        Assert.Equal(MoneyOutcome.Ok, (await ledger.GiveAsync(visitor, 1, Staff, Ct)).Outcome);
+        var hold = await ledger.HoldAsync(FeeHold(EntryType.GroupJoinFee, null), Ct);
+        var seller = payee == "buyer" ? await IdOf(db, A) : await IdOf(db, MoneyLedgerTransferTests.V);
+        await db.Sql($"UPDATE `money`.`holds` SET seller_id = {seller} WHERE id = {hold.HoldId}");
+        Assert.Equal(MoneyOutcome.Ok, (await ledger.CompleteHoldAsync(Guid.NewGuid(), hold.HoldId!.Value, Ct)).Outcome);
+
+        AssertFound(await ledger.SelfCheckAsync(Ct), $"Hold {hold.HoldId} doesn't match its entries");
+    }
+
     [Fact]
     public async Task A_purchase_hold_rewritten_to_pay_fees_is_found()
     {

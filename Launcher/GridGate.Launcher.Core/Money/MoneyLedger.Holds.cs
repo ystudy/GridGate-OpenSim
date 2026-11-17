@@ -6,8 +6,8 @@ namespace GridGate.Launcher.Core.Money;
 /// A purchase's hold (money design §7.2): the buyer's coins wait in Holding until delivery succeeds or fails. Kinds
 /// <c>object</c> and <c>land</c> pay their <see cref="Seller"/>. A fee held before its action pays Fees:
 /// <see cref="EntryType.UploadFee"/> and <see cref="EntryType.ClassifiedFee"/> name no seller; a
-/// <see cref="EntryType.GroupJoinFee"/> may name the group's founder, a resident who isn't the buyer, and pays them when
-/// they have a wallet.
+/// <see cref="EntryType.GroupJoinFee"/> may name the group's founder, a resident, and pays them when they have a wallet
+/// and aren't the buyer (by id, as a charge compares them).
 /// </summary>
 public sealed record HoldRequest(
     Guid TxnId,
@@ -47,10 +47,10 @@ public sealed partial class MoneyLedger
         var fee = IsFeeKind(r.Kind);
         if (!AmountOk(r.Amount) || !fee && r.Kind is not ("object" or "land")) return Task.FromResult(MoneyResult.Of(MoneyOutcome.BadAmount));
         // A purchase pays its seller. An upload or classified fee names nobody: it is the grid's. A join fee may name the
-        // group's founder, a resident of this grid other than the buyer.
+        // group's founder, a resident of this grid.
         var payeeOk = r.Seller is not { } named
             ? fee
-            : !Same(r.Buyer, named) && (!fee || r.Kind == EntryType.GroupJoinFee && NormalHome(named.Home).Length == 0);
+            : fee ? r.Kind == EntryType.GroupJoinFee && NormalHome(named.Home).Length == 0 : !Same(r.Buyer, named);
         if (!payeeOk) return Task.FromResult(MoneyResult.Of(MoneyOutcome.NotAllowed));
         return Idempotent(r.TxnId, "hold", r, async (conn, tx) =>
         {
@@ -67,9 +67,11 @@ public sealed partial class MoneyLedger
             }
             else
             {
-                // As a charge pays it: a founder without a wallet here leaves the join fee to the grid.
+                // As a charge pays it: a founder who is the buyer (by id, whatever the buyer's home) or has no wallet here
+                // leaves the join fee to the grid.
                 payeeId = MoneySchema.FeesId;
-                if (r.Seller is { } founder && (await ResolveAsync(conn, tx, AccountRef.Resident(founder.AgentId), ct)).Account is { } founderAccount)
+                if (r.Seller is { } founder && founder.AgentId != r.Buyer.AgentId
+                    && (await ResolveAsync(conn, tx, AccountRef.Resident(founder.AgentId), ct)).Account is { } founderAccount)
                     payeeId = founderAccount.Id;
             }
 

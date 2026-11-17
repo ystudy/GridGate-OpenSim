@@ -331,13 +331,40 @@ public sealed class MoneyLedgerHoldTests(MoneyMariaDb maria) : IClassFixture<Mon
     }
 
     [Fact]
-    public async Task A_group_join_fee_hold_naming_the_buyer_as_founder_is_not_allowed()
+    public async Task A_group_join_fee_hold_naming_the_buyer_as_founder_pays_fees_as_a_charge_would()
     {
+        // A charge sends a join fee whose founder is the payer to Fees; the hold that replaces it does the same.
         var (ledger, db, _) = await MoneyLedgerTransferTests.Setup(maria);
+        var fees = await Balance(db, MoneySchema.FeesId);
 
-        Assert.Equal(MoneyOutcome.NotAllowed, (await ledger.HoldAsync(Fee(EntryType.GroupJoinFee, 10, AccountRef.Resident(A)), Ct)).Outcome);
+        var h = await ledger.HoldAsync(Fee(EntryType.GroupJoinFee, 10, AccountRef.Resident(A)), Ct);
+        Assert.Equal(MoneyOutcome.Ok, h.Outcome);
+        Assert.Equal(MoneyOutcome.Ok, (await ledger.CompleteHoldAsync(Guid.NewGuid(), h.HoldId!.Value, Ct)).Outcome);
 
-        Assert.Equal(0, await db.Scalar("SELECT COUNT(*) FROM `money`.`holds`"));
+        Assert.Equal(90, await Of(db, A));
+        Assert.Equal(fees + 10, await Balance(db, MoneySchema.FeesId));
+        await AssertSound(ledger);
+    }
+
+    [Fact]
+    public async Task A_visitors_group_join_fee_hold_naming_a_resident_with_their_id_pays_fees_as_a_charge_would()
+    {
+        // A charge compares the founder with the payer by id alone, whatever the payer's home: so does the hold, so a
+        // visitor whose id is also a resident's can't pay that resident through a join fee.
+        var (ledger, db, _) = await MoneyLedgerTransferTests.Setup(maria);
+        await db.AddUser(MoneyLedgerTransferTests.V);
+        var visitor = new AccountRef(MoneyLedgerTransferTests.V, "http://other.example:8002");
+        var resident = AccountRef.Resident(MoneyLedgerTransferTests.V);
+        Assert.Equal(MoneyOutcome.Ok, (await ledger.GiveAsync(visitor, 50, new StaffAction("Owner", "welcome"), Ct)).Outcome);
+        var residentBefore = (await ledger.BalanceAsync(resident, Ct)).FromBalance;
+        var fees = await Balance(db, MoneySchema.FeesId);
+
+        var h = await ledger.HoldAsync(new HoldRequest(Guid.NewGuid(), EntryType.GroupJoinFee, visitor, resident, 10, Region, null, null, "p1"), Ct);
+        Assert.Equal(MoneyOutcome.Ok, h.Outcome);
+        Assert.Equal(MoneyOutcome.Ok, (await ledger.CompleteHoldAsync(Guid.NewGuid(), h.HoldId!.Value, Ct)).Outcome);
+
+        Assert.Equal(residentBefore, (await ledger.BalanceAsync(resident, Ct)).FromBalance);
+        Assert.Equal(fees + 10, await Balance(db, MoneySchema.FeesId));
         await AssertSound(ledger);
     }
 
