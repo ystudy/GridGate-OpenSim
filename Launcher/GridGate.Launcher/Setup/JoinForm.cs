@@ -41,14 +41,15 @@ public static class JoinForm
 
     /// <summary>
     /// The settings after joining <paramref name="read"/>: the join itself, and the grid's name as this computer's. A money
-    /// pairing with another Grid Asset Server is dropped: its key works only there (money plan 3).
+    /// pairing with another Grid Asset Server is dropped: its key works only there (money plan 3). A Gloebit app is saved
+    /// for one grid: it is dropped when the host differs from the one joined before (with no earlier join there is no grid to differ from).
     /// </summary>
-    public static LauncherSettings Apply(LauncherSettings s, JoinedGrid read) => s with
+    public static LauncherSettings Apply(LauncherSettings s, JoinedGrid read)
     {
-        Join = read,
-        GridName = read.GridName,
-        Money = s.Money.Pairing is { } p && !string.Equals(p.GridHost, read.Host, StringComparison.OrdinalIgnoreCase) ? s.Money with { Pairing = null } : s.Money,
-    };
+        var money = s.Money.Pairing is { } p && !string.Equals(p.GridHost, read.Host, StringComparison.OrdinalIgnoreCase) ? s.Money with { Pairing = null } : s.Money;
+        if (s.Join is { } old && !string.Equals(old.Host, read.Host, StringComparison.OrdinalIgnoreCase)) money = money with { Gloebit = null };
+        return s with { Join = read, GridName = read.GridName, Money = money };
+    }
 }
 
 /// <summary>What Pages/Shared/_JoinFound.cshtml shows: the join information read, and the address to read again on confirm.</summary>

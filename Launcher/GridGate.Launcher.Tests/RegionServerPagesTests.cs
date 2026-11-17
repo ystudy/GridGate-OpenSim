@@ -3,6 +3,7 @@ using System.Text.Json;
 using AngleSharp.Html.Parser;
 using GridGate.Launcher.Core;
 using GridGate.Launcher.Core.Grid;
+using GridGate.Launcher.Core.Money;
 using GridGate.Launcher.Core.OpenSim;
 using GridGate.Launcher.Core.Plans;
 using GridGate.Launcher.Core.Processes;
@@ -73,10 +74,10 @@ public sealed class RegionServerPagesTests
         Before = TestAuth.Apply,
     };
 
-    private static async Task<HttpClient> SignedInAsync(LauncherFactory f)
+    private static async Task<HttpClient> SignedInAsync(LauncherFactory f, string? role = null)
     {
         var client = f.CreateClient(new() { AllowAutoRedirect = false });
-        (await client.GetAsync("/__test/signin", Ct)).Dispose();
+        (await client.GetAsync(role is null ? "/__test/signin" : "/__test/signin?role=" + role, Ct)).Dispose();
         return client;
     }
 
@@ -333,7 +334,7 @@ public sealed class RegionServerPagesTests
     {
         await using var f = Factory(OwnerPlan.RegionServer);
         f.Join.Result = Avalon("Elsewhere") with { Host = "192.168.1.9", LoginUri = "http://192.168.1.9:8002/", Hypergrid = true };
-        using var client = await SignedInAsync(f);
+        using var client = await SignedInAsync(f, "owner");
 
         using var first = await PostAsync(client, "/advanced/join", new() { ["Address"] = "192.168.1.9" });
         var doc = new HtmlParser().ParseDocument(await first.Content.ReadAsStringAsync(Ct));
@@ -355,7 +356,7 @@ public sealed class RegionServerPagesTests
     {
         await using var f = Factory(OwnerPlan.RegionServer);
         f.Join.Result = null;
-        using var client = await SignedInAsync(f);
+        using var client = await SignedInAsync(f, "owner");
 
         using var resp = await PostAsync(client, "/advanced/join?handler=Confirm", new() { ["Address"] = "192.168.1.9" }, tokenFrom: "/advanced/join");
 
@@ -369,7 +370,7 @@ public sealed class RegionServerPagesTests
     public async Task Join_page_redirects_to_advanced_on_another_plan(OwnerPlan plan)
     {
         await using var f = Factory(plan);
-        using var client = await SignedInAsync(f);
+        using var client = await SignedInAsync(f, "owner");
 
         using var get = await client.GetAsync("/advanced/join", Ct);
         Assert.Equal(HttpStatusCode.Redirect, get.StatusCode);
@@ -381,7 +382,7 @@ public sealed class RegionServerPagesTests
     {
         await using var f = Factory(OwnerPlan.RegionServer);
         f.Join.Result = Avalon("Elsewhere") with { Host = "192.168.1.9", LoginUri = "http://192.168.1.9:8002/" };
-        using var client = await SignedInAsync(f);
+        using var client = await SignedInAsync(f, "owner");
 
         (await PostAsync(client, "/advanced/join?handler=Confirm", new() { ["Address"] = "192.168.1.9" }, tokenFrom: "/advanced/join")).Dispose();
 
@@ -397,7 +398,7 @@ public sealed class RegionServerPagesTests
         await using var f = Factory(OwnerPlan.RegionServer);
         f.Join.Result = Avalon("Elsewhere") with { Host = "192.168.1.9", LoginUri = "http://192.168.1.9:8002/" };
         f.Grid.EstateOwnerError = new ArgumentException("There's no avatar called Estate Owner on Elsewhere.");
-        using var client = await SignedInAsync(f);
+        using var client = await SignedInAsync(f, "owner");
 
         using var resp = await PostAsync(client, "/advanced/join?handler=Confirm", new() { ["Address"] = "192.168.1.9" }, tokenFrom: "/advanced/join");
         var html = await resp.Content.ReadAsStringAsync(Ct);
@@ -408,6 +409,81 @@ public sealed class RegionServerPagesTests
         Assert.Equal("192.168.1.5", s.Join!.Host);
         Assert.Equal("Avalon", s.GridName);
         Assert.Equal(OwnerId, s.Setup.Owner!.PrincipalId);
+    }
+
+    private static readonly GloebitSettings SavedApp = new("sandbox", "0b9e3c2a-1111-4c5d-8e9f-0123456789ab", "7d3f9a10-2222-4b6c-9d8e-fedcba987654", "Owner");
+
+    private static List<System.Text.Json.JsonElement> AuditLines(LauncherFactory f)
+    {
+        var path = Path.Combine(f.Paths.Logs, "audit.log");
+        if (!File.Exists(path)) return [];
+        using var s = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        return new StreamReader(s).ReadToEnd().Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Select(l => System.Text.Json.JsonDocument.Parse(l).RootElement.Clone()).ToList();
+    }
+
+    [Fact]
+    public async Task Join_page_is_the_owners_only()
+    {
+        await using var f = Factory(OwnerPlan.RegionServer);
+        f.Join.Result = Elsewhere();
+        using var owner = await SignedInAsync(f, "owner");
+        var page = await owner.GetStringAsync("/advanced/join", Ct);
+        var token = new HtmlParser().ParseDocument(page).QuerySelector("input[name=__RequestVerificationToken]")!.GetAttribute("value")!;
+        using var admin = await SignedInAsync(f, "admin");
+
+        using var get = await admin.GetAsync("/advanced/join", Ct);
+        using var post = await admin.PostAsync("/advanced/join?handler=Confirm",
+            new FormUrlEncodedContent(new Dictionary<string, string> { ["Address"] = "192.168.1.9", ["__RequestVerificationToken"] = token }), Ct);
+
+        Assert.Equal(HttpStatusCode.Forbidden, get.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, post.StatusCode);
+        Assert.Equal("192.168.1.5", f.Store.LoadOrCreate().Join!.Host);
+    }
+
+    [Fact]
+    public async Task Join_page_confirm_to_another_host_clears_the_saved_gloebit_app()
+    {
+        await using var f = Factory(OwnerPlan.RegionServer, s => s with { Money = s.Money with { Gloebit = SavedApp } });
+        f.Join.Result = Elsewhere();
+        using var client = await SignedInAsync(f, "owner");
+
+        (await PostAsync(client, "/advanced/join?handler=Confirm", new() { ["Address"] = "192.168.1.9" }, tokenFrom: "/advanced/join")).Dispose();
+
+        Assert.Equal("192.168.1.9", f.Store.LoadOrCreate().Join!.Host);
+        Assert.Null(f.Store.LoadOrCreate().Money.Gloebit);
+    }
+
+    [Fact]
+    public async Task Join_page_refused_re_point_keeps_the_saved_gloebit_app()
+    {
+        await using var f = Factory(OwnerPlan.RegionServer, s => s with { Money = s.Money with { Gloebit = SavedApp } });
+        f.Join.Result = Elsewhere();
+        f.Grid.EstateOwnerError = new ArgumentException("There's no avatar called Estate Owner on Elsewhere.");
+        using var client = await SignedInAsync(f, "owner");
+
+        (await PostAsync(client, "/advanced/join?handler=Confirm", new() { ["Address"] = "192.168.1.9" }, tokenFrom: "/advanced/join")).Dispose();
+
+        var s = f.Store.LoadOrCreate();
+        Assert.Equal("192.168.1.5", s.Join!.Host);
+        Assert.Equal(SavedApp, s.Money.Gloebit);
+    }
+
+    [Fact]
+    public async Task Join_page_confirm_writes_an_audit_line()
+    {
+        await using var f = Factory(OwnerPlan.RegionServer);
+        f.Join.Result = Elsewhere();
+        using var client = await SignedInAsync(f, "owner");
+
+        (await PostAsync(client, "/advanced/join?handler=Confirm", new() { ["Address"] = "192.168.1.9" }, tokenFrom: "/advanced/join")).Dispose();
+        f.Grid.EstateOwnerError = new ArgumentException("There's no avatar called Estate Owner on Elsewhere.");
+        (await PostAsync(client, "/advanced/join?handler=Confirm", new() { ["Address"] = "192.168.1.9" }, tokenFrom: "/advanced/join")).Dispose();
+
+        var joins = AuditLines(f).Where(l => l.GetProperty("action").GetString() == "grid-join").ToList();
+        Assert.Equal(2, joins.Count);
+        Assert.All(joins, l => Assert.Equal("192.168.1.9", l.GetProperty("target").GetString()));
+        Assert.Equal(["ok", "refused"], joins.Select(l => l.GetProperty("result").GetString()));
     }
 
     private static readonly Guid HomeId = Guid.Parse("40000000-0000-0000-0000-000000000001");
@@ -429,7 +505,7 @@ public sealed class RegionServerPagesTests
         f.Join.Result = Elsewhere();
         f.Robust.MapRegions.Add(new MapRegion(HomeId, "Home", 1000, 1000, 1)); // ours: never in the way
         f.Robust.MapRegions.Add(new MapRegion(Guid.NewGuid(), "Hub", 1000, 1000, 1));
-        using var client = await SignedInAsync(f);
+        using var client = await SignedInAsync(f, "owner");
 
         using var resp = await PostAsync(client, "/advanced/join?handler=Confirm", new() { ["Address"] = "192.168.1.9" }, tokenFrom: "/advanced/join");
 
@@ -453,7 +529,7 @@ public sealed class RegionServerPagesTests
         });
         f.Join.Result = Elsewhere();
         f.Robust.MapRegions.Add(new MapRegion(Guid.NewGuid(), "Hub", 1000, 1000, 1));
-        using var client = await SignedInAsync(f);
+        using var client = await SignedInAsync(f, "owner");
 
         using var resp = await PostAsync(client, "/advanced/join?handler=Confirm", new() { ["Address"] = "192.168.1.9" }, tokenFrom: "/advanced/join");
 
@@ -468,7 +544,7 @@ public sealed class RegionServerPagesTests
         f.Join.Result = Elsewhere();
         f.Robust.MapRegions.Add(new MapRegion(HomeId, "Home", 1000, 1000, 1));
         f.Robust.MapRegions.Add(new MapRegion(Guid.NewGuid(), "Hub", 1001, 1000, 1));
-        using var client = await SignedInAsync(f);
+        using var client = await SignedInAsync(f, "owner");
 
         using var resp = await PostAsync(client, "/advanced/join?handler=Confirm", new() { ["Address"] = "192.168.1.9" }, tokenFrom: "/advanced/join");
 
@@ -485,7 +561,7 @@ public sealed class RegionServerPagesTests
     {
         await using var f = WithHome(regionPort: 8005);
         f.Join.Result = Elsewhere(8004, 8006);
-        using var client = await SignedInAsync(f);
+        using var client = await SignedInAsync(f, "owner");
 
         using var resp = await PostAsync(client, "/advanced/join?handler=Confirm", new() { ["Address"] = "192.168.1.9" }, tokenFrom: "/advanced/join");
 
@@ -501,7 +577,7 @@ public sealed class RegionServerPagesTests
     {
         await using var f = Factory(OwnerPlan.RegionServer);
         f.Join.Result = Elsewhere();
-        using var client = await SignedInAsync(f);
+        using var client = await SignedInAsync(f, "owner");
 
         using var resp = await PostAsync(client, "/advanced/join", new() { ["Address"] = "192.168.1.9" });
 

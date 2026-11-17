@@ -1,7 +1,9 @@
 using GridGate.Launcher.Core.Grid;
+using GridGate.Launcher.Core.Logs;
 using GridGate.Launcher.Core.OpenSim;
 using GridGate.Launcher.Core.Plans;
 using GridGate.Launcher.Core.Settings;
+using GridGate.Launcher.Security;
 using GridGate.Launcher.Setup;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
@@ -9,13 +11,15 @@ using Microsoft.AspNetCore.Mvc.RazorPages;
 namespace GridGate.Launcher.Pages.Advanced;
 
 /// <summary>
-/// A finished Region Server's Grid Asset Server: the same read, show and confirm as the setup join step
+/// A finished Region Server's Grid Asset Server, which only the owner re-points (every confirm is in the audit log): the same read, show and confirm as the setup join step
 /// (<see cref="JoinForm"/>), but the confirm rewrites the INIs and asks for a restart. Any other plan, or a setup not
 /// finished, goes back to Advanced settings. Nothing is saved while the address or the read fails; the new join is put
 /// back when the estate owner isn't on the new grid or one of our regions would overlap a region on its map.
 /// </summary>
-public sealed class JoinModel(IGridController grid, Func<LauncherSettings> settings, IGridJoinClient join, IRobustClient robust) : PageModel
+public sealed class JoinModel(IGridController grid, Func<LauncherSettings> settings, IGridJoinClient join, IRobustClient robust, AuditLog audit) : PageModel
 {
+    private string? Ip => HttpContext.Connection.RemoteIpAddress?.ToString();
+
     [BindProperty] public string? Address { get; set; }
 
     /// <summary>The join information the first post read, shown with "Join this grid"; null shows the address form.</summary>
@@ -55,6 +59,7 @@ public sealed class JoinModel(IGridController grid, Func<LauncherSettings> setti
         var (read, error) = await JoinForm.ReadAsync(join, Address, ct);
         if (read is null)
         {
+            audit.Write(User, Ip, "grid-join", Address, "refused");
             Error = error;
             return Page();
         }
@@ -96,6 +101,7 @@ public sealed class JoinModel(IGridController grid, Func<LauncherSettings> setti
                     $"Your region {region.Name} would overlap {check.OverlapsWith} on {read.GridName}. Move it first (Regions page), then try again.");
         }
 
+        audit.Write(User, Ip, "grid-join", JoinForm.AddressOf(read));
         Current = JoinForm.AddressOf(read);
         SavedNotes = PortWarning(saved, read) is { } warning ? [warning] : [];
         return Page();
@@ -111,16 +117,18 @@ public sealed class JoinModel(IGridController grid, Func<LauncherSettings> setti
               + "change this computer's first region port in Settings → Network."
             : null;
 
-    /// <summary>Puts back the join, grid name and estate owner saved <paramref name="before"/>, and shows the confirm view with <paramref name="error"/>.</summary>
+    /// <summary>Puts back the join, grid name, estate owner, money pairing and Gloebit app saved <paramref name="before"/>, and shows the confirm view with <paramref name="error"/>.</summary>
     private PageResult Refuse(LauncherSettings before, JoinedGrid read, string error)
     {
+        audit.Write(User, Ip, "grid-join", JoinForm.AddressOf(read), "refused");
         grid.UpdateSettings(s => s with
         {
             Join = before.Join,
             GridName = before.GridName,
             Setup = s.Setup with { OwnerCreated = before.Setup.OwnerCreated, Owner = before.Setup.Owner },
             // Joining dropped a money pairing with the old Grid Asset Server; a refused re-point keeps it.
-            Money = s.Money with { Pairing = before.Money.Pairing },
+            // The Gloebit app belongs to the old grid and is put back with it.
+            Money = s.Money with { Pairing = before.Money.Pairing, Gloebit = before.Money.Gloebit },
         }, writeConfig: true);
         Error = error;
         Found = read;
