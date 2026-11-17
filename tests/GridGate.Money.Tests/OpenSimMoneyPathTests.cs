@@ -424,7 +424,8 @@ public sealed class OpenSimMoneyPathTests
     private const string V2 = "Groups Module V2", Flotsam = "GroupsModule";
     private static readonly UUID InviteId = TestHelpers.ParseTail(0x400);
 
-    private sealed record GroupsRig(MoneyScene Region, IGroupsModule Groups, GroupsService Service, RecordingClient Joiner);
+    private sealed record GroupsRig(MoneyScene Region, IGroupsModule Groups, GroupsService Service, RecordingClient Joiner,
+        ConcurrentQueue<GridInstantMessage> Sent);
 
     /// <summary>
     /// A region with OpenSim's own groups module (<see cref="V2"/> or <see cref="Flotsam"/>, chosen as the INI does) over a
@@ -437,16 +438,61 @@ public sealed class OpenSimMoneyPathTests
         groups.Set("Enabled", "true");
         groups.Set("Module", module);
         var service = new GroupsService();
+        var sent = new ConcurrentQueue<GridInstantMessage>();
         IGroupsModule groupsModule = module == V2 ? new V2GroupsModule() : new FlotsamGroupsModule();
         var region = Build(new EconomyInfo("C$", 0, 0, true, true, 1_000_000, feeHolds), config: config, beforeMoney: scene =>
         {
             if (module == V2) scene.RegisterModuleInterface(Stand.Create<V2Connector>(service.Order, service.Answer));
             else scene.RegisterModuleInterface(Stand.Create<FlotsamConnector>(service.Order, service.Answer));
-            scene.RegisterModuleInterface(Stand.Create<IMessageTransferModule>(new ConcurrentQueue<string>(), (_, _) => (false, null)));
-            SceneHelpers.SetupSceneModules(scene, config, groupsModule);
+            scene.RegisterModuleInterface(Stand.Create<IMessageTransferModule>(new ConcurrentQueue<string>(), (m, args) =>
+            {
+                if (m.Name == nameof(IMessageTransferModule.SendInstantMessage)) sent.Enqueue((GridInstantMessage)args[0]!);
+                return (false, null);
+            }));
+            SceneHelpers.SetupSceneModules(scene, config, new UserManagementModule(), groupsModule);
         });
         region.Service.Answer = _ => Balance(balance);
-        return new GroupsRig(region, groupsModule, service, region.Arrive(Buyer));
+        return new GroupsRig(region, groupsModule, service, region.Arrive(Buyer), sent);
+    }
+
+    /// <summary>The joiner invites <see cref="MoneyScene.Stranger"/> (not in the region) to "Club"; the invitation sent.</summary>
+    private static GridInstantMessage Invite(GroupsRig g)
+    {
+        g.Groups.InviteGroupRequest(g.Joiner, GroupId, Stranger, GroupsService.InviteRole);
+        var sent = Assert.Single(g.Sent);
+        Assert.Equal((byte)InstantMessageDialog.GroupInvitation, sent.dialog);
+        return sent;
+    }
+
+    [Theory]
+    [InlineData(V2)]
+    [InlineData(Flotsam)]
+    public void An_invitation_to_a_paid_group_says_the_fee_and_sends_it_to_the_viewer(string module)
+    {
+        var g = GroupsRegion(module);
+
+        var sent = Invite(g);
+
+        Assert.DoesNotContain("no cost", sent.message, StringComparison.Ordinal);
+        Assert.Contains($"There is a fee of {JoinFee} to join this group.", sent.message, StringComparison.Ordinal);
+        // What viewers read: the fee as a 4-byte signed number, high byte first, then the role the invitation gives.
+        Assert.Equal(20, sent.binaryBucket.Length);
+        Assert.Equal(new byte[] { 0, 0, 0, JoinFee }, sent.binaryBucket[..4]);
+        Assert.Equal(GroupsService.InviteRole, new UUID(sent.binaryBucket, 4));
+    }
+
+    [Theory]
+    [InlineData(V2)]
+    [InlineData(Flotsam)]
+    public void An_invitation_to_a_free_group_still_says_there_is_no_cost(string module)
+    {
+        var g = GroupsRegion(module);
+        g.Service.Fee = 0;
+
+        var sent = Invite(g);
+
+        Assert.EndsWith("There is no cost to join this group.", sent.message, StringComparison.Ordinal);
+        Assert.Equal(new byte[20], sent.binaryBucket);
     }
 
     /// <summary>The viewer accepting an invitation to "Club", as an instant message.</summary>
@@ -726,6 +772,12 @@ internal sealed class GroupsService
 
     public IEnumerable<UUID> Members => MembersById.Keys;
 
+    /// <summary>The role an invitation to "Club" gives.</summary>
+    public static readonly UUID InviteRole = TestHelpers.ParseTail(0x401);
+
+    /// <summary>What joining "Club" costs.</summary>
+    public int Fee { get; set; } = 20;
+
     /// <summary>When set, the service adds nobody: the V2 connector says no, Flotsam's adds no membership.</summary>
     public bool Refuse { get; set; }
 
@@ -748,17 +800,19 @@ internal sealed class GroupsService
         {
             case "GetGroupRecord":
                 return (true, Id(args[1]) == MoneyScene.GroupId || args[2] as string == "Club"
-                    ? Make(method.ReturnType, ("GroupID", MoneyScene.GroupId), ("GroupName", "Club"), ("MembershipFee", 20), ("FounderID", MoneyScene.Founder))
+                    ? Make(method.ReturnType, ("GroupID", MoneyScene.GroupId), ("GroupName", "Club"), ("MembershipFee", Fee), ("FounderID", MoneyScene.Founder))
                     : null);
             case "AddAgentToGroup":
                 if (!Refuse) MembersById[Id(args[1])] = true;
                 if (method.ReturnType != typeof(bool)) return (true, null);
                 args[5] = Refuse ? "refused" : "";
                 return (true, !Refuse);
+            case "AddAgentToGroupInvite":
+                return (true, method.ReturnType == typeof(bool) ? true : null);
             case "GetAgentGroupMembership":
                 return (true, MembersById.ContainsKey(Id(args[1])) ? Make(method.ReturnType, ("GroupID", MoneyScene.GroupId), ("GroupName", "Club")) : null);
             case "GetAgentToGroupInvite":
-                return (true, Make(method.ReturnType, ("GroupID", MoneyScene.GroupId), ("RoleID", UUID.Zero), ("AgentID", MoneyScene.Buyer), ("InviteID", Id(args[1]))));
+                return (true, Make(method.ReturnType, ("GroupID", MoneyScene.GroupId), ("RoleID", InviteRole), ("AgentID", MoneyScene.Buyer), ("InviteID", Id(args[1]))));
             default:
                 return (false, null);
         }
