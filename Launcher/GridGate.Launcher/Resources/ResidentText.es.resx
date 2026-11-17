@@ -15,6 +15,7 @@
   <data name="Layout.MenuHome" xml:space="preserve"><value>Inicio</value></data>
   <data name="Layout.MenuConnect" xml:space="preserve"><value>Cómo conectarse</value></data>
   <data name="Layout.MenuResetPassword" xml:space="preserve"><value>Restablecer contraseña</value></data>
+  <data name="Layout.Copyright" xml:space="preserve"><value>© {0}. Todos los derechos reservados.</value></data>
   <data name="Common.SignIn" xml:space="preserve"><value>Iniciar sesión</value></data>
   <data name="SignIn.Intro" xml:space="preserve"><value>Use el nombre y la contraseña de su avatar.</value></data>
   <data name="Common.AvatarName" xml:space="preserve"><value>Nombre del avatar</value></data>

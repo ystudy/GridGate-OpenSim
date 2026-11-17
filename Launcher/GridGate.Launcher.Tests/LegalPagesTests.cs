@@ -132,7 +132,8 @@ public sealed class LegalPagesTests
         Assert.Empty(page.QuerySelectorAll("main article script"));
         Assert.Contains("<script>alert(2)</script>", page.QuerySelector("main article")!.TextContent);
         Assert.Equal("Terms - Avalon", page.Title);
-        Assert.Empty(page.QuerySelectorAll("header nav a")); // none of the staff side
+        Assert.All(page.QuerySelectorAll("header nav a"), a => // none of the staff side: only the public menu's pages
+            Assert.Contains(a.GetAttribute("href"), new[] { "/home", "/guest/connect", "/support", "/guest/forgot-password" }));
     }
 
     [Theory]
@@ -239,7 +240,7 @@ public sealed class LegalPagesTests
 
         var page = new HtmlParser().ParseDocument(await r.Content.ReadAsStringAsync(Ct));
         Assert.Equal(["/terms", "/privacy", "/cookies", "/contact"], page.QuerySelectorAll("footer nav a").Select(a => a.GetAttribute("href")));
-        Assert.Equal("Staff sign in", page.QuerySelector("header a[href='/login']")!.TextContent.Trim());
+        Assert.Equal("Staff sign in", page.QuerySelector("footer a#staff-link[href='/login']")!.TextContent.Trim());
     }
 
     [Fact]

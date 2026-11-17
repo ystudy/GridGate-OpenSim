@@ -62,7 +62,11 @@
                 else
                 {
                     <a id="login-link" class="btn btn-sm btn-outline-secondary site-account" href="/guest/sign-in" icon="sign-in">@T["Common.SignIn"]</a>
-                    <a id="register-link" class="btn btn-sm btn-primary site-account" href="/signup" icon="plus">@T["Layout.Register"]</a>
+                    @* Only while sign-up is open: a closed grid links no one to /signup (as the sign-in page). *@
+                    if (GridGate.Launcher.Core.Guests.SignUpRules.IsOpen(Settings()))
+                    {
+                        <a id="register-link" class="btn btn-sm btn-primary site-account" href="/signup" icon="plus">@T["Layout.Register"]</a>
+                    }
                 }
                 @await RenderSectionAsync("HeaderActions", required: false)
             }
@@ -86,10 +90,19 @@
 <main class="container py-4">
     @RenderBody()
 </main>
-@* The legal pages the operator has written, then anything a page puts in a "Footer" section. *@
-<footer class="container pb-4">
-    <partial name="_LegalLinks" />
-    @await RenderSectionAsync("Footer", required: false)
+@* The footer: the legal pages the operator has written, the copyright line, the staff door (not for staff already signed in),
+   then anything a page puts in a "Footer" section. *@
+<footer id="site-footer" class="site-footer">
+    <div class="container">
+        <partial name="_LegalLinks" />
+        <p id="site-copyright" class="site-copyright">@T["Layout.Copyright", gridName]</p>
+        @if (!isStaff)
+        {
+            @* Not a button, so its icon is written here (ButtonIcons decorates .btn only). *@
+            <a id="staff-link" class="site-staff-link" href="/login">@Html.Raw(GridGate.Launcher.Navigation.ButtonIcons.Svg("shield"))@T["Home.StaffSignIn"]</a>
+        }
+        @await RenderSectionAsync("Footer", required: false)
+    </div>
 </footer>
 <script src="/js/copy.js"></script>
 <script src="/js/language.js"></script>

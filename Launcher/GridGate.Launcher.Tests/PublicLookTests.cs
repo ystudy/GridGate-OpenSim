@@ -67,9 +67,6 @@ public sealed class PublicLookTests
         var login = page.QuerySelector("header a#login-link")!;
         Assert.Equal("/guest/sign-in", login.GetAttribute("href"));
         Assert.Equal("Sign in", login.TextContent.Trim());
-        var register = page.QuerySelector("header a#register-link")!;
-        Assert.Equal("/signup", register.GetAttribute("href"));
-        Assert.Equal("Register", register.TextContent.Trim());
         Assert.NotNull(page.QuerySelector("header details#site-menu > summary"));
         Assert.Equal(["/home", "/guest/connect", "/support", "/guest/forgot-password"],
             page.QuerySelectorAll("header details#site-menu nav a").Select(a => a.GetAttribute("href")));
@@ -78,6 +75,19 @@ public sealed class PublicLookTests
         Assert.Null(page.QuerySelector("img#site-logo"));
         Assert.Equal("/home", page.QuerySelector("header a#site-home")!.GetAttribute("href"));
         Assert.Equal("Avalon", page.QuerySelector("header a#site-home .grid-name")!.TextContent.Trim());
+    }
+
+    [Fact]
+    public async Task Register_shows_only_while_sign_up_is_open()
+    {
+        await using (var open = SignUpsTests.Factory())
+            Assert.Equal("Register", (await PageAsync(Client(open.F), "/home")).QuerySelector("header a#register-link[href='/signup']")!.TextContent.Trim());
+        await using (var closed = SignUpsTests.Factory(open: false))
+        {
+            var page = await PageAsync(Client(closed.F), "/home");
+            Assert.Null(page.QuerySelector("header a#register-link"));
+            Assert.NotNull(page.QuerySelector("header a#login-link")); // signing in still works
+        }
     }
 
     [Fact]
@@ -162,6 +172,31 @@ public sealed class PublicLookTests
 
         Assert.Equal(HttpStatusCode.MethodNotAllowed, r.StatusCode);
         Assert.NotNull((await PageAsync(client, "/home")).QuerySelector("#resident-link")); // still signed in
+    }
+
+    // ---- Task 3: the footer ----
+
+    [Fact]
+    public async Task Footer_has_legal_copyright_and_staff_sign_in()
+    {
+        await using var f = Factory();
+        var client = Client(f);
+        foreach (var path in new[] { "/home", "/signup", "/support" })
+        {
+            var page = await PageAsync(client, path);
+            Assert.Equal("© Avalon. All rights reserved.", page.QuerySelector("footer#site-footer p#site-copyright")!.TextContent.Trim());
+            Assert.Equal("/login", page.QuerySelector("footer#site-footer a#staff-link")!.GetAttribute("href"));
+            Assert.Null(page.QuerySelector("header #staff-link"));
+        }
+    }
+
+    [Fact]
+    public async Task Footer_hides_staff_sign_in_for_staff()
+    {
+        await using var f = Factory();
+        var page = await PageAsync(await StaffAsync(f, "admin"), "/home");
+        Assert.Null(page.QuerySelector("#staff-link"));
+        Assert.NotNull(page.QuerySelector("footer#site-footer p#site-copyright"));
     }
 
     // ---- Task 1: the always-dark public stylesheet ----

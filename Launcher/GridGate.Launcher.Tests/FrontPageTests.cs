@@ -57,7 +57,7 @@ public sealed class FrontPageTests
         Assert.Contains("Avalon", page.QuerySelector("main")!.TextContent);
         Assert.Equal("/guest/sign-in", page.QuerySelector("main form#front-sign-in")!.GetAttribute("action"));
         Assert.Equal("Create an account", page.QuerySelector("main a[href='/signup']")!.TextContent.Trim());
-        var staff = page.QuerySelector("header .guest-actions a#staff-link[href='/login']")!;
+        var staff = page.QuerySelector("footer a#staff-link[href='/login']")!;
         Assert.Equal("Staff sign in", staff.TextContent.Trim());
         Assert.All(page.QuerySelectorAll("header nav a"), a => // no staff navigation: only the public menu's pages
             Assert.Contains(a.GetAttribute("href"), new[] { "/home", "/guest/connect", "/support", "/guest/forgot-password" }));

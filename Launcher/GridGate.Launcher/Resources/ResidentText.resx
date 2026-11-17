@@ -14,6 +14,7 @@
   <data name="Layout.MenuHome" xml:space="preserve"><value>Home</value></data>
   <data name="Layout.MenuConnect" xml:space="preserve"><value>How to connect</value></data>
   <data name="Layout.MenuResetPassword" xml:space="preserve"><value>Reset password</value></data>
+  <data name="Layout.Copyright" xml:space="preserve"><value>© {0}. All rights reserved.</value></data>
   <data name="Common.SignIn" xml:space="preserve"><value>Sign in</value></data>
   <data name="SignIn.Intro" xml:space="preserve"><value>Use the name and password of your avatar.</value></data>
   <data name="Common.AvatarName" xml:space="preserve"><value>Avatar name</value></data>

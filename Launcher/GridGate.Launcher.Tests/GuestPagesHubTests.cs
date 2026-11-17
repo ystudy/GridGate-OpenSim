@@ -137,7 +137,7 @@ public sealed class GuestPagesHubTests
     {
         await using var f = Factory();
         var front = await PageAsync(f.CreateClient(new() { AllowAutoRedirect = false }), "/home");
-        Assert.NotNull(front.QuerySelector("header a#staff-link"));
+        Assert.NotNull(front.QuerySelector("footer a#staff-link"));
         Assert.Null(front.QuerySelector("#staff-side-link"));
     }
 
