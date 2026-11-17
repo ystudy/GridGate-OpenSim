@@ -439,7 +439,8 @@ builder.Services.AddSingleton(sp => new MoneyLocations(MoneyConnections.Money(sp
 // The money pages' view of regions and where people are; tests swap it.
 builder.Services.AddSingleton<IMoneyRegions>(sp => new MoneyRegions(sp.GetRequiredService<RegionVerification>(), sp.GetRequiredService<RegionPins>(),
     sp.GetRequiredService<MoneyLocations>()));
-builder.Services.AddSingleton<ISecureSessionCheck>(sp => sp.GetRequiredService<PresenceCheck>());
+// The economy helper has its own pooled, capped Robust connections, so many callers can't flood the shared database.
+builder.Services.AddSingleton<ISecureSessionCheck>(sp => new PresenceCheck(MoneyConnections.RobustLookups(sp.GetRequiredService<Func<LauncherSettings>>())));
 builder.Services.AddSingleton(sp => new EconomyLimits(sp.GetRequiredService<TimeProvider>()));
 builder.Services.AddSingleton<EconomyHelper>();
 builder.Services.AddSingleton(sp => new PresenceCheck(MoneyConnections.Robust(sp.GetRequiredService<Func<LauncherSettings>>())));
