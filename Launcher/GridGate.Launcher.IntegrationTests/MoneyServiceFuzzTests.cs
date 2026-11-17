@@ -236,9 +236,11 @@ public sealed class MoneyServiceFuzzTests(MoneyMariaDb maria) : IClassFixture<Mo
         var rig = _rig = await MoneyServiceRig.StartAsync(maria);
         var big = new JsonObject { ["agentId"] = A.ToString(), ["home"] = new string('z', (int)GridGate.Launcher.Money.MoneyServiceHost.MaxBodyBytes) }.ToJsonString();
 
-        // economy and health read no body.
-        foreach (var path in Templates().Keys.Where(p => p is not ("economy" or "health")).Append("pair"))
+        // economy and health use nothing from their body, and still read it: an answer sent with most of a big body unread
+        // left the connection to close under the next request.
+        foreach (var path in Templates().Keys.Append("pair"))
             Assert.Equal(HttpStatusCode.RequestEntityTooLarge, (await rig.Post(path, big, key: path == "pair" ? null : Key)).Status);
+        Assert.Equal("ok", CodeOf(await rig.Post("balance", WhoA())));
         Assert.DoesNotContain(rig.Logs, l => l.Contains("failed with"));
     }
 

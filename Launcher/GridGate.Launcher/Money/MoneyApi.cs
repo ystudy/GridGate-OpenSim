@@ -397,8 +397,28 @@ internal static class MoneyApi
 
     private static async Task WriteAsync(HttpContext http, object answer, CancellationToken ct)
     {
+        if (!await ReadToEndAsync(http, ct)) return;
         http.Response.ContentType = "application/json";
         await JsonSerializer.SerializeAsync(http.Response.Body, answer, answer.GetType(), Json, ct);
+    }
+
+    /// <summary>
+    /// Reads whatever of the body the endpoint left, so an answer never goes out with part of the body still unread: Kestrel
+    /// would then close the connection while discarding the rest, and the client's next request on it would fail. False,
+    /// with the 413 set, when the body is over <see cref="MoneyServiceHost.MaxBodyBytes"/>.
+    /// </summary>
+    private static async Task<bool> ReadToEndAsync(HttpContext http, CancellationToken ct)
+    {
+        try
+        {
+            await http.Request.Body.CopyToAsync(Stream.Null, ct);
+            return true;
+        }
+        catch (BadHttpRequestException e)
+        {
+            http.Response.StatusCode = e.StatusCode;
+            return false;
+        }
     }
 
     private static async Task<T> Read<T>(HttpContext http, CancellationToken ct) where T : class =>
