@@ -16,9 +16,12 @@ public sealed class RegionHosts(Func<CancellationToken, Task<MySqlConnection>> o
         try
         {
             await using var conn = await openRobust(ct);
-            // The port range narrows the rows; IsAt alone decides, so the database's own text comparison never does.
+            // The database narrows the rows: its comparison of serverIP ignores case (and accents and trailing spaces too), so
+            // it keeps the rows IsAt accepts, and some more. IsAt alone decides. A row the database left out could only make
+            // coverage narrower, never let an event count where the server doesn't cover the region.
             await using var cmd = new MySqlCommand(
-                "SELECT uuid, serverIP, serverPort FROM regions WHERE serverPort >= @from AND serverPort < @to", conn);
+                "SELECT uuid, serverIP, serverPort FROM regions WHERE serverIP = @host AND serverPort >= @from AND serverPort < @to", conn);
+            cmd.Parameters.AddWithValue("@host", host);
             cmd.Parameters.AddWithValue("@from", fromPort);
             cmd.Parameters.AddWithValue("@to", toPort);
             await using var r = await cmd.ExecuteReaderAsync(ct);
@@ -42,18 +45,6 @@ public sealed class RegionHosts(Func<CancellationToken, Task<MySqlConnection>> o
     public static bool IsAt(string? regionHost, long? regionPort, string host, int fromPort, int toPort) =>
         regionHost is not null && regionPort is { } port && string.Equals(regionHost, host, StringComparison.OrdinalIgnoreCase)
         && port >= fromPort && port < toPort;
-
-    /// <summary>
-    /// Where Robust lists <paramref name="regionId"/> now, over <paramref name="robust"/>: its <c>serverIP</c> and
-    /// <c>serverPort</c>, or nulls when it isn't listed. A database failure is thrown as is.
-    /// </summary>
-    public static async Task<(string? Host, long? Port)> AddressOfAsync(MySqlConnection robust, Guid regionId, CancellationToken ct)
-    {
-        await using var cmd = new MySqlCommand("SELECT serverIP, serverPort FROM regions WHERE uuid = @r", robust);
-        cmd.Parameters.AddWithValue("@r", regionId.ToString());
-        await using var r = await cmd.ExecuteReaderAsync(ct);
-        return await r.ReadAsync(ct) ? (Text(r, 0), Port(r, 1)) : (null, null);
-    }
 
     private static string? Text(MySqlDataReader r, int i) => r.IsDBNull(i) ? null : r.GetValue(i).ToString();
 

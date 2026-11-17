@@ -73,6 +73,10 @@ public sealed class HandoffTimingTests
         public Guid IdA => A.RegionInfo.RegionID.Guid;
         public Guid IdB => B.RegionInfo.RegionID.Guid;
 
+        /// <summary>Where region B is reached: its ExternalHostName and UDP port, as Robust would list it.</summary>
+        public string HostB => B.RegionInfo.ExternalHostName;
+        public int PortB => B.RegionInfo.InternalEndPoint.Port;
+
         /// <summary>The place reports other than health, in the order the service got them, once all are sent.</summary>
         public List<Call> Moves()
         {
@@ -132,7 +136,8 @@ public sealed class HandoffTimingTests
         // letting the avatar go afterwards sends nothing more.
         var moves = two.Moves();
         Assert.Equal(new[] { "arrived", "handoff", "arrived" }, moves.Select(c => c.Method));
-        Assert.Equal(new object?[] { session, two.IdA, two.IdB, "teleport" }, moves[1].Args);
+        // With the address and UDP port the avatar was sent to, as OpenSim found the destination.
+        Assert.Equal(new object?[] { session, two.IdA, two.IdB, "teleport", two.HostB, two.PortB }, moves[1].Args);
         Assert.Equal(new object?[] { session, UserId.Guid, two.IdB }, moves[2].Args);
     }
 
@@ -158,7 +163,8 @@ public sealed class HandoffTimingTests
 
         var moves = two.Moves();
         Assert.Equal(new[] { "arrived", "handoff", "arrived" }, moves.Select(c => c.Method));
-        Assert.Equal(new object?[] { tc.SessionId.Guid, two.IdA, two.IdB, "crossing" }, moves[1].Args);
+        // With the address and UDP port the avatar crossed to, as OpenSim found the region next door.
+        Assert.Equal(new object?[] { tc.SessionId.Guid, two.IdA, two.IdB, "crossing", two.HostB, two.PortB }, moves[1].Args);
         Assert.Equal(two.IdB, moves[2].Args[2]);
     }
 
@@ -199,6 +205,7 @@ public sealed class HandoffTimingTests
         Assert.Equal(0, handoffsAtRoot); // B isn't this program's: only A letting the avatar go hands it off
         var moves = two.Moves();
         Assert.Equal(new[] { "arrived", "handoff" }, moves.Select(c => c.Method));
-        Assert.Equal(new object?[] { session, two.IdA, two.IdB, "teleport" }, moves[1].Args);
+        // With the address and UDP port the avatar was sent to, as OpenSim found the destination.
+        Assert.Equal(new object?[] { session, two.IdA, two.IdB, "teleport", two.HostB, two.PortB }, moves[1].Args);
     }
 }

@@ -90,8 +90,13 @@ public sealed class MoneyLocationsTests(MoneyMariaDb maria) : IClassFixture<Mone
     private Task<ArrivalResult> Arrive(RegionKeyGrant grant, Guid region, Guid? session = null, Guid? agent = null) =>
         Settle(_locations.ArrivedAsync(grant, session ?? SessionU, agent ?? U, region, Ct));
 
-    private Task<PlaceOutcome> Handoff(RegionKeyGrant grant, Guid from, Guid to, HandoffKind kind = HandoffKind.Teleport, Guid? id = null, Guid? session = null) =>
-        _locations.HandoffAsync(grant, id ?? Guid.NewGuid(), session ?? SessionU, from, to, kind, Ct);
+    /// <summary>The paired server's address and R3's port: where a region sends an avatar going to R3.</summary>
+    private static readonly (string Host, int Port) AtPaired = ("192.168.1.20", 9000);
+
+    /// <summary>A handoff sent to <paramref name="at"/>, the address the sending region used; with none, as an older module sends.</summary>
+    private Task<PlaceOutcome> Handoff(RegionKeyGrant grant, Guid from, Guid to, HandoffKind kind = HandoffKind.Teleport, Guid? id = null, Guid? session = null,
+        (string Host, int Port)? at = null) =>
+        _locations.HandoffAsync(grant, id ?? Guid.NewGuid(), session ?? SessionU, from, to, kind, at?.Host, at?.Port, Ct);
 
     /// <summary>U logs in at R1 and arrives there: verified at R1.</summary>
     private async Task LoggedInAtR1()
@@ -871,7 +876,7 @@ public sealed class MoneyLocationsTests(MoneyMariaDb maria) : IClassFixture<Mone
         await _db.AddSessionStart(SessionU, U, R3, "login"); // U logs in at R3 while the old server runs it
         await _db.AddSessionStart(SessionV, V, R1, "login");
         Assert.Equal(PlaceOutcome.Ok, (await Arrive(P1, R1, SessionV, V)).Outcome);
-        Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, R3, session: SessionV)); // V is on the way to R3
+        Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, R3, session: SessionV, at: AtPaired)); // V is on the way to R3
         await _db.AddRegion(R3, Other.ServerHost!);
 
         await _pins.ApproveMoveAsync(R3, OtherId, Ct);
@@ -888,44 +893,64 @@ public sealed class MoneyLocationsTests(MoneyMariaDb maria) : IClassFixture<Mone
         await _db.AddPresence(V, R1, handed, Guid.NewGuid());
         await _db.AddSessionStart(handed, V, R1, "login");
         Assert.Equal(PlaceOutcome.Ok, (await Arrive(P1, R1, handed, V)).Outcome);
-        Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, R3, session: handed));
+        Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, R3, session: handed, at: (Other.ServerHost!, 9000)));
         Assert.Equal(PlaceOutcome.Ok, (await Arrive(Other, R3, handed, V)).Outcome);
     }
 
     [Fact]
-    public async Task A_handoff_keeps_the_address_Robust_lists_its_destination_at()
+    public async Task A_handoff_keeps_the_address_the_sending_region_used()
+    {
+        // Robust lists R3 at the paired server, but the region that sent U there used another address (its cache was older,
+        // or R3 was registered again since): that is where U went, and the handoff keeps it.
+        await StartAsync();
+        await LoggedInAtR1();
+
+        Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, R3, at: ("192.168.1.77", 9010)));
+
+        Assert.Equal("192.168.1.77", await _db.Text($"SELECT to_host FROM `money`.`handoffs` WHERE to_region = '{R3}'"));
+        Assert.Equal(9010, await _db.Scalar($"SELECT to_port FROM `money`.`handoffs` WHERE to_region = '{R3}'"));
+        Assert.Equal(PlaceOutcome.PlacedUnverified, (await Arrive(Paired, R3)).Outcome);
+    }
+
+    [Fact]
+    public async Task A_handoff_to_the_paired_servers_address_verifies_there()
     {
         await StartAsync();
         await LoggedInAtR1();
 
-        Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, R3));
+        Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, R3, at: AtPaired));
 
-        Assert.Equal(Paired.ServerHost, await _db.Text($"SELECT to_host FROM `money`.`handoffs` WHERE to_region = '{R3}'"));
-        Assert.Equal(9000, await _db.Scalar($"SELECT to_port FROM `money`.`handoffs` WHERE to_region = '{R3}'"));
+        Assert.Equal(PlaceOutcome.Ok, (await Arrive(Paired, R3)).Outcome);
     }
 
     [Fact]
-    public async Task An_old_start_with_no_address_counts_for_no_paired_key_but_still_for_a_local_one()
+    public async Task A_handoff_with_no_address_counts_for_no_paired_key_but_still_for_a_local_one()
     {
-        // Starts an older Robust wrote carry no address: nothing says they went to a paired server.
+        // An older module sends no address: nothing says the avatar went to a paired server.
         await StartAsync();
-        await _db.AddSessionStart(SessionU, U, R3, "login", withAddress: false);
-        await _db.AddSessionStart(SessionV, V, R1, "login", withAddress: false);
-
-        Assert.Equal(PlaceOutcome.PlacedUnverified, (await Arrive(Paired, R3)).Outcome);
+        await LoggedInAtR1();
+        await _db.AddSessionStart(SessionV, V, R1, "login");
         Assert.Equal(PlaceOutcome.Ok, (await Arrive(P1, R1, SessionV, V)).Outcome);
+
+        Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, R3));
+        Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, R2, session: SessionV));
+
+        Assert.Equal(PlaceOutcome.PlacedUnverified, (await Arrive(Paired, R3)).Outcome);
+        Assert.Equal(PlaceOutcome.Ok, (await Arrive(P2, R2, SessionV, V)).Outcome);
     }
 
-    [Fact]
-    public async Task A_handoff_to_a_region_Robust_did_not_list_counts_for_no_paired_key()
+    [Theory]
+    [InlineData("", 9000)]
+    [InlineData("192.168.1.20", -1)]
+    [InlineData("192.168.1.20", 65536)]
+    public async Task A_handoff_with_an_impossible_address_keeps_none(string host, int port)
     {
         await StartAsync();
         await LoggedInAtR1();
-        await _db.Sql($"DELETE FROM `robust`.`regions` WHERE uuid = '{R3}'");
-        Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, R3));
-        await _db.AddRegion(R3, Paired.ServerHost!);
 
-        Assert.Equal(PlaceOutcome.PlacedUnverified, (await Arrive(Paired, R3)).Outcome);
+        Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, R3, at: (host, port)));
+
+        Assert.Equal(1, await _db.Scalar("SELECT COUNT(*) FROM `money`.`handoffs` WHERE to_host IS NULL AND to_port IS NULL"));
     }
 
     [Fact]

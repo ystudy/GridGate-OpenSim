@@ -80,8 +80,9 @@ internal sealed class FakeMoneyService : IMoneyService
     public Task<MoneyAnswer> HealthAsync(int protocol, IReadOnlyList<Guid> regions, CancellationToken ct) =>
         Place("health", Guid.Empty, ct, protocol, regions.ToArray());
 
-    public Task<MoneyAnswer> HandoffAsync(Guid id, Guid sessionId, Guid fromRegion, Guid toRegion, string kind, CancellationToken ct) =>
-        Place("handoff", id, ct, sessionId, fromRegion, toRegion, kind);
+    public Task<MoneyAnswer> HandoffAsync(Guid id, Guid sessionId, Guid fromRegion, Guid toRegion, string kind, string? toHost, int? toPort,
+        CancellationToken ct) =>
+        Place("handoff", id, ct, sessionId, fromRegion, toRegion, kind, toHost, toPort);
 
     public Task<MoneyAnswer> CancelHandoffAsync(Guid sessionId, Guid fromRegion, CancellationToken ct) => Place("cancel", Guid.Empty, ct, sessionId, fromRegion);
 

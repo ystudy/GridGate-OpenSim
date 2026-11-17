@@ -25,7 +25,12 @@ namespace GridGate.Money.Tests;
 public sealed class PlaceReporterTests
 {
     private static readonly UUID Region = TestHelpers.ParseTail(0x100);
-    private static readonly GridRegion Elsewhere = new() { RegionID = TestHelpers.ParseTail(0x300), RegionName = "Elsewhere" };
+    /// <summary>A region on another simulator, at the address and UDP port OpenSim found it at.</summary>
+    private static readonly GridRegion Elsewhere = new()
+    {
+        RegionID = TestHelpers.ParseTail(0x300), RegionName = "Elsewhere", ExternalHostName = "192.168.1.77",
+        InternalEndPoint = new System.Net.IPEndPoint(System.Net.IPAddress.Any, 9010),
+    };
 
     private static void TeleportStart(MoneyScene region, IClientAPI client, GridRegion to, bool gridLogout = false) =>
         region.Scene.EventManager.TriggerTeleportStart(client, to, to, (uint)TeleportFlags.ViaLandmark, gridLogout);
@@ -121,7 +126,8 @@ public sealed class PlaceReporterTests
 
         var handoff = Assert.Single(region.Service.PlacesOf("handoff"));
         Assert.NotEqual(Guid.Empty, handoff.Txn);
-        Assert.Equal(new object?[] { client.SessionId.Guid, Region.Guid, Elsewhere.RegionID.Guid, "teleport" }, handoff.Args);
+        // With the address the avatar was sent to: the service binds the handoff to it.
+        Assert.Equal(new object?[] { client.SessionId.Guid, Region.Guid, Elsewhere.RegionID.Guid, "teleport", "192.168.1.77", 9010 }, handoff.Args);
         Assert.Equal(new[] { "arrived", "handoff" }, Moves(region.Service).Select(c => c.Method));
 
         // Sent once: letting the avatar go again sends nothing more.
@@ -156,7 +162,7 @@ public sealed class PlaceReporterTests
         region.FlushPlaces();
 
         var handoff = Assert.Single(region.Service.PlacesOf("handoff"));
-        Assert.Equal(new object?[] { client.SessionId.Guid, Region.Guid, Elsewhere.RegionID.Guid, "other_grid" }, handoff.Args);
+        Assert.Equal(new object?[] { client.SessionId.Guid, Region.Guid, Elsewhere.RegionID.Guid, "other_grid", null, null }, handoff.Args);
     }
 
     /// <summary>A failed teleport sends its cancel and forgets the destination: nobody is handed over.</summary>
@@ -196,7 +202,11 @@ public sealed class PlaceReporterTests
         var region = Build();
         region.Arrive(Buyer);
         var sp = region.Scene.GetScenePresence(Buyer);
-        var next = new GridRegion { RegionID = TestHelpers.ParseTail(0x301), RegionName = "Next" };
+        var next = new GridRegion
+        {
+            RegionID = TestHelpers.ParseTail(0x301), RegionName = "Next", ExternalHostName = "192.168.1.78",
+            InternalEndPoint = new System.Net.IPEndPoint(System.Net.IPAddress.Any, 9011),
+        };
 
         region.Scene.EventManager.TriggerCrossAgentToNewRegion(sp, false, Elsewhere);
         region.Scene.EventManager.TriggerCrossAgentToNewRegion(sp, false, next);
@@ -204,7 +214,43 @@ public sealed class PlaceReporterTests
         region.FlushPlaces();
 
         var handoff = Assert.Single(region.Service.PlacesOf("handoff"));
-        Assert.Equal(new object?[] { sp.ControllingClient.SessionId.Guid, Region.Guid, next.RegionID.Guid, "crossing" }, handoff.Args);
+        // The latest destination's address, too.
+        Assert.Equal(new object?[] { sp.ControllingClient.SessionId.Guid, Region.Guid, next.RegionID.Guid, "crossing", "192.168.1.78", 9011 }, handoff.Args);
+    }
+
+    /// <summary>
+    /// A crossing hands off with the address and port it crossed to, as OpenSim found the region next door; the service binds
+    /// the handoff to it, whatever Robust lists the region at by the time the report lands.
+    /// </summary>
+    [Fact]
+    public void A_crossing_sends_the_address_it_crossed_to()
+    {
+        var region = Build();
+        region.Arrive(Buyer);
+        var sp = region.Scene.GetScenePresence(Buyer);
+
+        region.Scene.EventManager.TriggerCrossAgentToNewRegion(sp, false, Elsewhere);
+        region.Scene.EventManager.TriggerOnMakeChildAgent(sp);
+        region.FlushPlaces();
+
+        var handoff = Assert.Single(region.Service.PlacesOf("handoff"));
+        Assert.Equal(("crossing", "192.168.1.77", 9010), ((string)handoff.Args[3]!, (string?)handoff.Args[4], (int?)handoff.Args[5]));
+    }
+
+    /// <summary>A destination OpenSim knows no address for is handed off with none: it counts for no paired Region Server.</summary>
+    [Fact]
+    public void A_teleport_to_a_region_with_no_known_address_sends_none()
+    {
+        var region = Build();
+        var client = region.Arrive(Buyer);
+        var nowhere = new GridRegion { RegionID = TestHelpers.ParseTail(0x302), RegionName = "Nowhere" };
+
+        TeleportStart(region, client, nowhere);
+        region.Scene.EventManager.TriggerOnMakeChildAgent(region.Scene.GetScenePresence(Buyer));
+        region.FlushPlaces();
+
+        var handoff = Assert.Single(region.Service.PlacesOf("handoff"));
+        Assert.Equal(new object?[] { "teleport", null, null }, handoff.Args[3..]);
     }
 
     /// <summary>

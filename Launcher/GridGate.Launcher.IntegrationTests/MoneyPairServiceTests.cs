@@ -478,8 +478,8 @@ public sealed class MoneyPairServiceTests(MoneyMariaDb maria) : IClassFixture<Mo
     {
         // A is at the grid's own region. The old server's region reports A arrived in Theirs before the handoff got there,
         // and that arrival waits. Meanwhile Theirs moves to another server and the owner approves the move. The handoff
-        // then comes, but it went to Theirs at the new server's address, so it isn't the old server's: the waiting arrival
-        // places A in Theirs unverified, under the old key, which the new server's key isn't either.
+        // then comes: the grid's region sent A to Theirs at the old server's address, where it had found the region, so the
+        // waiting arrival places A in Theirs under the old key, which the new server's key isn't.
         var db = await StartAsync();
         const string newHost = "192.168.1.50";
         await Place(db, OwnKey, A, Own);
@@ -492,10 +492,10 @@ public sealed class MoneyPairServiceTests(MoneyMariaDb maria) : IClassFixture<Mo
         var fresh = await PairAsync(newHost, machineId: "rs-3");
         await db.Sql($"UPDATE `robust`.`regions` SET serverIP = '{newHost}' WHERE uuid = '{Theirs}'");
         await _pins.ApproveMoveAsync(Theirs, _settings.Money.PairedServers!.Single(p => p.Host == newHost).Id, Ct);
-        var handoff = new { id = Guid.NewGuid(), sessionId = Session, fromRegion = Own, toRegion = Theirs, kind = "teleport" };
+        var handoff = new { id = Guid.NewGuid(), sessionId = Session, fromRegion = Own, toRegion = Theirs, kind = "teleport", toHost = ServerHost, toPort = 9000 };
         Assert.Equal("ok", (string?)(await Post("handoff", handoff, OwnKey)).Body!["code"]);
-        Assert.Equal("unverified_avatar", (string?)(await arrival).Body!["code"]);
-        Assert.Equal("Unverified", await db.Text($"SELECT state FROM `money`.`session_locations` WHERE session_id = '{Session}'"));
+        Assert.Equal("ok", (string?)(await arrival).Body!["code"]);
+        Assert.Equal("Verified", await db.Text($"SELECT state FROM `money`.`session_locations` WHERE session_id = '{Session}'"));
 
         Assert.Equal(1, await Health(fresh, Theirs));
         Assert.Equal("unverified_avatar", (string?)(await Post("transfer", await PaymentFromA(db, Theirs), fresh)).Body!["code"]);

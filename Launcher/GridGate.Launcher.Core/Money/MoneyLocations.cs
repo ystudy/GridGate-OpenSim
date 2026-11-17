@@ -92,22 +92,23 @@ public sealed class MoneyLocations(Func<CancellationToken, Task<MySqlConnection>
     /// <paramref name="toRegion"/>. Accepted only while the session is verified at <paramref name="fromRegion"/>, placed by
     /// this key. A teleport or crossing makes the session handed, at <paramref name="toRegion"/>, until that region's
     /// arrival verifies it there; a teleport to another grid makes it "left the grid". Never creates a location.
+    /// <para>
+    /// <paramref name="toHost"/> and <paramref name="toPort"/> are the address and UDP port the sending region sent the
+    /// avatar to. The handoff is bound to them: a paired server's key counts it only if they are its own (FindMatchAsync).
+    /// Where Robust lists the region when this report lands may already be another server's: the report comes only once
+    /// the move has finished, and a region can be re-registered meanwhile. The sending key is trusted for the address as
+    /// it is for the handoff: it holds the session. A missing or impossible address is kept as none, which no paired key
+    /// counts.
+    /// </para>
     /// </summary>
-    public async Task<PlaceOutcome> HandoffAsync(RegionKeyGrant grant, Guid handoffId, Guid sessionId, Guid fromRegion, Guid toRegion, HandoffKind kind, CancellationToken ct)
+    public async Task<PlaceOutcome> HandoffAsync(RegionKeyGrant grant, Guid handoffId, Guid sessionId, Guid fromRegion, Guid toRegion, HandoffKind kind,
+        string? toHost, int? toPort, CancellationToken ct)
     {
         if (!grant.Regions.Contains(fromRegion)) return PlaceOutcome.NotCovered;
+        // Robust keeps a region's serverIP in 64 characters and its port in an unsigned int; nothing else can be a region's.
+        var known = kind != HandoffKind.OtherGrid && !string.IsNullOrEmpty(toHost) && toHost.Length <= 64 && toPort is >= 0 and <= 65535;
         try
         {
-            // Where Robust lists the destination now, as the avatar goes there: a paired server's key counts the handoff only
-            // if that is its own address (FindMatchAsync), whatever the region id is registered at later. Read before the
-            // transaction, so no row lock waits on Robust.
-            var (toHost, toPort) = (default(string), default(long?));
-            if (kind != HandoffKind.OtherGrid)
-            {
-                await using var robust = await openRobust(ct);
-                (toHost, toPort) = await RegionHosts.AddressOfAsync(robust, toRegion, ct);
-            }
-            var known = toHost is not null && toPort is not null;
             return await InTransactionAsync(async (conn, tx) =>
             {
                 var row = await LockAsync(conn, tx, sessionId, ct);

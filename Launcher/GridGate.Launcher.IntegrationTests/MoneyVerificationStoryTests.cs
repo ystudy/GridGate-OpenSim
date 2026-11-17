@@ -109,7 +109,7 @@ public sealed class MoneyVerificationStoryTests(MoneyMariaDb maria) : IClassFixt
         var sam = await PairAsync(rig, SamHost, SamKey, NeonPier);
         var jo = await PairAsync(rig, JoHost, JoKey, MarketSquare);
         // A teleports from Here to Market Square and shops there.
-        Assert.Equal("ok", await rig.Handoff(Key, SessionA, Here, MarketSquare));
+        Assert.Equal("ok", await rig.Handoff(Key, SessionA, Here, MarketSquare, toHost: JoHost, toPort: 9000));
         Assert.Equal("ok", CodeOf(await rig.Arrived(JoKey, SessionA, A, MarketSquare)));
         Assert.Equal("ok", CodeOf(await rig.Post("transfer", Pay(WhoA(), Resident(B), 10, MarketSquare), JoKey)));
 
@@ -164,7 +164,7 @@ public sealed class MoneyVerificationStoryTests(MoneyMariaDb maria) : IClassFixt
         rig.Settings = rig.Settings with { Money = rig.Settings.Money with { Visitors = VisitorMoney.Listed, ListedGrids = [VisitorHome] } };
         await PairAsync(rig, SamHost, SamKey, NeonPier);
 
-        Assert.Equal("ok", await rig.Handoff(Key, SessionV, Here, NeonPier));
+        Assert.Equal("ok", await rig.Handoff(Key, SessionV, Here, NeonPier, toHost: SamHost, toPort: 9000));
         Assert.Equal("ok", CodeOf(await rig.Arrived(SamKey, SessionV, V, NeonPier)));
         // B tips V at There; V spends some of it at Neon Pier.
         Assert.Equal("ok", CodeOf(await rig.Post("transfer", Pay(WhoB(), new { agentId = V, home = VisitorHome }, 50, There), Key2)));
@@ -293,7 +293,7 @@ public sealed class MoneyVerificationStoryTests(MoneyMariaDb maria) : IClassFixt
         // A, verified at Here, teleports to Harbour, which no key covers. Moments later Sam's server lists Harbour and pins
         // it. The handoff went to Harbour's own address, so it isn't Sam's to use: A's arrival there verifies nobody.
         var rig = await WithHarbourAsync(await StartAsync());
-        Assert.Equal("ok", await rig.Handoff(Key, SessionA, Here, Harbour));
+        Assert.Equal("ok", await rig.Handoff(Key, SessionA, Here, Harbour, toHost: HarbourHost, toPort: 9000));
         await PairAsync(rig, SamHost, SamKey, Harbour);
 
         await AssertSamCannotCharge(rig, (A, SessionA, SecureA));
@@ -321,7 +321,7 @@ public sealed class MoneyVerificationStoryTests(MoneyMariaDb maria) : IClassFixt
         var rig = await WithHarbourAsync(await StartAsync());
         await PairAsync(rig, SamHost, SamKey, Harbour);
         await rig.Db.AddRegion(Harbour, HarbourHost, 9000);
-        Assert.Equal("ok", await rig.Handoff(Key, SessionA, Here, Harbour));
+        Assert.Equal("ok", await rig.Handoff(Key, SessionA, Here, Harbour, toHost: HarbourHost, toPort: 9000));
         await rig.Db.AddRegion(Harbour, SamHost, 9000);
 
         await AssertSamCannotCharge(rig, (A, SessionA, SecureA));
@@ -343,10 +343,11 @@ public sealed class MoneyVerificationStoryTests(MoneyMariaDb maria) : IClassFixt
     [Fact]
     public async Task A_handoff_after_the_pin_still_verifies()
     {
-        // Sam's server covers Harbour, at Sam's address, when A teleports there from Here: the handoff is Sam's to use.
+        // Sam's server covers Harbour, at Sam's address, when A teleports there from Here: the handoff went to Sam's address,
+        // so it is Sam's to use.
         var rig = await StartAsync();
         await PairAsync(rig, SamHost, SamKey, Harbour);
-        Assert.Equal("ok", await rig.Handoff(Key, SessionA, Here, Harbour));
+        Assert.Equal("ok", await rig.Handoff(Key, SessionA, Here, Harbour, toHost: SamHost, toPort: 9000));
 
         Assert.Equal("ok", CodeOf(await rig.Arrived(SamKey, SessionA, A, Harbour)));
         Assert.Equal("ok", CodeOf(await rig.Post("transfer", Pay(WhoA(), Resident(B), 10, Harbour), SamKey)));
@@ -361,12 +362,37 @@ public sealed class MoneyVerificationStoryTests(MoneyMariaDb maria) : IClassFixt
         await PairAsync(rig, SamHost, SamKey, Harbour);
         rig.LocationClock.Advance(TimeSpan.FromDays(7));
         var wendy = await LogInAsync(rig, Harbour);
-        Assert.Equal("ok", await rig.Handoff(Key, SessionA, Here, Harbour));
+        Assert.Equal("ok", await rig.Handoff(Key, SessionA, Here, Harbour, toHost: SamHost, toPort: 9000));
 
         Assert.Equal("ok", CodeOf(await rig.Arrived(SamKey, wendy.Session, wendy.Agent, Harbour)));
         Assert.Equal("ok", CodeOf(await rig.Arrived(SamKey, SessionA, A, Harbour)));
         Assert.Equal("ok", CodeOf(await rig.Post("transfer", Pay(Who(wendy), Resident(B), 10, Harbour), SamKey)));
         Assert.Equal("ok", CodeOf(await rig.Post("transfer", Pay(WhoA(), Resident(B), 10, Harbour), SamKey)));
         await rig.AssertBooksSoundAsync();
+    }
+
+    [Fact]
+    public async Task A_handoff_reported_after_the_region_was_registered_again_cannot_be_used()
+    {
+        // A, verified at Here, teleports to Harbour at its own address. Here's module reports the handoff only once the
+        // teleport has finished, and it may wait in the queue a while. Before it lands, Sam's server registers Harbour at
+        // Sam's address, pins it and reports A's arrival. The handoff says where A really went, Harbour's own address: it
+        // isn't Sam's to use, whatever Robust lists Harbour at by now.
+        var rig = await WithHarbourAsync(await StartAsync());
+        await PairAsync(rig, SamHost, SamKey, Harbour);
+        Assert.Equal("ok", await rig.Handoff(Key, SessionA, Here, Harbour, toHost: HarbourHost, toPort: 9000));
+
+        await AssertSamCannotCharge(rig, (A, SessionA, SecureA));
+    }
+
+    [Fact]
+    public async Task A_handoff_with_no_address_counts_for_no_paired_server()
+    {
+        // An older module sends no address: nothing says A went to Sam's server, so Sam can't use the handoff.
+        var rig = await WithHarbourAsync(await StartAsync());
+        await PairAsync(rig, SamHost, SamKey, Harbour);
+        Assert.Equal("ok", await rig.Handoff(Key, SessionA, Here, Harbour));
+
+        await AssertSamCannotCharge(rig, (A, SessionA, SecureA));
     }
 }

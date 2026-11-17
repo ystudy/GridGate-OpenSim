@@ -170,7 +170,7 @@ public sealed class MoneyServiceClientTests(MoneyMariaDb maria) : IClassFixture<
 
         Assert.Equal("ok", (await p1.HealthAsync(2, [Here], Ct)).Code);
         Assert.Equal("ok", (await p2.HealthAsync(2, [There], Ct)).Code);
-        Assert.Equal("ok", (await p1.HandoffAsync(Guid.NewGuid(), SessionA, Here, There, "teleport", Ct)).Code);
+        Assert.Equal("ok", (await p1.HandoffAsync(Guid.NewGuid(), SessionA, Here, There, "teleport", null, null, Ct)).Code);
         Assert.Equal("ok", (await p2.ArrivedAsync(Guid.NewGuid(), SessionA, A, There, Ct)).Code);
 
         Assert.Equal("ok", (await p2.ChargeAsync(Guid.NewGuid(), "upload_fee", ClientA, 3, null, There, Ct)).Code);
@@ -178,15 +178,15 @@ public sealed class MoneyServiceClientTests(MoneyMariaDb maria) : IClassFixture<
 
         // Time passes between one move and the next, as it does in the world.
         _rig!.LocationClock.Advance(TimeSpan.FromSeconds(5));
-        Assert.Equal("ok", (await p2.HandoffAsync(Guid.NewGuid(), SessionA, There, Here, "crossing", Ct)).Code);
+        Assert.Equal("ok", (await p2.HandoffAsync(Guid.NewGuid(), SessionA, There, Here, "crossing", null, null, Ct)).Code);
         Assert.Equal("ok", (await p1.ArrivedAsync(Guid.NewGuid(), SessionA, A, Here, Ct)).Code);
         // A teleport to another grid that fails is taken back; one that goes through leaves nothing to charge.
         _rig.LocationClock.Advance(TimeSpan.FromSeconds(5));
-        Assert.Equal("ok", (await p1.HandoffAsync(Guid.NewGuid(), SessionA, Here, Guid.NewGuid(), "other_grid", Ct)).Code);
+        Assert.Equal("ok", (await p1.HandoffAsync(Guid.NewGuid(), SessionA, Here, Guid.NewGuid(), "other_grid", null, null, Ct)).Code);
         Assert.Equal("ok", (await p1.CancelHandoffAsync(SessionA, Here, Ct)).Code);
         Assert.Equal("ok", (await p1.ChargeAsync(Guid.NewGuid(), "upload_fee", ClientA, 3, null, Here, Ct)).Code);
         _rig.LocationClock.Advance(TimeSpan.FromSeconds(5));
-        Assert.Equal("ok", (await p1.HandoffAsync(Guid.NewGuid(), SessionA, Here, Guid.NewGuid(), "other_grid", Ct)).Code);
+        Assert.Equal("ok", (await p1.HandoffAsync(Guid.NewGuid(), SessionA, Here, Guid.NewGuid(), "other_grid", null, null, Ct)).Code);
         Assert.Equal("unverified_avatar", (await p1.ChargeAsync(Guid.NewGuid(), "upload_fee", ClientA, 3, null, Here, Ct)).Code);
     }
 
@@ -234,7 +234,7 @@ public sealed class MoneyServiceClientTests(MoneyMariaDb maria) : IClassFixture<
         using var p1 = Client();
         await SecondRegionForP1(p1);
 
-        Assert.Equal("ok", (await p1.HandoffAsync(Guid.NewGuid(), SessionA, Here, HereToo, "teleport", Ct)).Code);
+        Assert.Equal("ok", (await p1.HandoffAsync(Guid.NewGuid(), SessionA, Here, HereToo, "teleport", null, null, Ct)).Code);
         Assert.Equal("ok", (await p1.ArrivedAsync(Guid.NewGuid(), SessionA, A, HereToo, Ct)).Code);
 
         await AssertVerifiedAndNothingHanded(HereToo, "p1");
@@ -257,7 +257,7 @@ public sealed class MoneyServiceClientTests(MoneyMariaDb maria) : IClassFixture<
         _rig!.LocationClock.Advance(TimeSpan.FromSeconds(1));
         await Task.Delay(100, Ct);
         Assert.False(arrival.IsCompleted, "the arrival should be held for its handoff");
-        Assert.Equal("ok", (await p1.HandoffAsync(Guid.NewGuid(), SessionA, Here, There, "teleport", Ct)).Code);
+        Assert.Equal("ok", (await p1.HandoffAsync(Guid.NewGuid(), SessionA, Here, There, "teleport", null, null, Ct)).Code);
 
         Assert.Equal("ok", (await Settle(arrival)).Code);
         await AssertVerifiedAndNothingHanded(There, "p2");

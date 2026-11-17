@@ -36,7 +36,8 @@ public sealed class UnpairedMoneyService : IMoneyService
 
     public Task<MoneyAnswer> HealthAsync(int protocol, IReadOnlyList<Guid> regions, CancellationToken ct) => Refused;
 
-    public Task<MoneyAnswer> HandoffAsync(Guid id, Guid sessionId, Guid fromRegion, Guid toRegion, string kind, CancellationToken ct) => Refused;
+    public Task<MoneyAnswer> HandoffAsync(Guid id, Guid sessionId, Guid fromRegion, Guid toRegion, string kind, string? toHost, int? toPort,
+        CancellationToken ct) => Refused;
 
     public Task<MoneyAnswer> CancelHandoffAsync(Guid sessionId, Guid fromRegion, CancellationToken ct) => Refused;
 
