@@ -44,14 +44,43 @@ public sealed class MoneyServiceClientTests
     }
 
     [Fact]
-    public async Task A_call_that_reaches_nothing_is_lost()
+    public async Task A_call_whose_connection_is_refused_is_unavailable_but_not_lost()
     {
+        // Nothing listens (the service is restarting): no request was sent, so no coins can have moved. Still worth
+        // sending again, unlike a call the service turned away.
         using var client = new MoneyServiceClient(new Uri($"https://127.0.0.1:{FreePort()}/money/v1/"), "key", new string('A', 64));
 
         var answer = await Transfer(client);
 
         Assert.Equal("unavailable", answer.Code);
-        Assert.True(answer.Lost);
+        Assert.False(answer.Lost);
+        Assert.False(answer.Final);
+    }
+
+    [Fact]
+    public async Task A_call_whose_connection_closes_without_an_answer_is_lost()
+    {
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        try
+        {
+            var closing = Task.Run(async () =>
+            {
+                using var tcp = await listener.AcceptTcpClientAsync(Ct);
+                tcp.Client.Close();
+            }, Ct);
+            using var client = new MoneyServiceClient(new Uri($"https://127.0.0.1:{((IPEndPoint)listener.LocalEndpoint).Port}/money/v1/"), "key", new string('A', 64));
+
+            var answer = await Transfer(client);
+            await closing;
+
+            Assert.Equal("unavailable", answer.Code);
+            Assert.True(answer.Lost);
+        }
+        finally
+        {
+            listener.Stop();
+        }
     }
 
     [Theory]

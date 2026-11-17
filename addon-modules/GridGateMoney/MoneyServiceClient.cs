@@ -4,6 +4,7 @@ using System.IO;
 using System.Net;
 using System.Net.Http;
 using System.Net.Security;
+using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
@@ -20,7 +21,8 @@ public sealed record MoneyWho(Guid AgentId, string Home, Guid? SessionId = null,
 
 /// <summary>
 /// The service's answer. <see cref="Code"/> is "ok" or a refusal code; every failure to reach the service reads as
-/// "unavailable", and is <see cref="Lost"/> or <see cref="Final"/> as well when the service's own answer didn't arrive.
+/// "unavailable", and is <see cref="Lost"/> or <see cref="Final"/> as well when the service's own answer didn't arrive
+/// (but neither when the connection was refused: nothing was sent).
 /// </summary>
 public sealed record MoneyAnswer(string Code, long? Balance = null, long? ToBalance = null, long? EntryId = null, long? HoldId = null)
 {
@@ -30,8 +32,10 @@ public sealed record MoneyAnswer(string Code, long? Balance = null, long? ToBala
     public bool Ok => Code == "ok";
 
     /// <summary>
-    /// No answer arrived (no response at all, or an HTTP 5xx): the call may have happened. A service that answers
-    /// "unavailable" itself changed nothing.
+    /// No answer arrived (no response at all, an HTTP 5xx, or a 200 whose body couldn't be read): the call may have
+    /// happened. A connection refused before anything was sent is not lost. A service that answers "unavailable" itself
+    /// almost always changed nothing: the exception is a database error at the commit, which the service can't tell
+    /// apart from a commit that didn't land.
     /// </summary>
     [JsonIgnore]
     public bool Lost { get; init; }
@@ -201,19 +205,24 @@ public sealed class MoneyServiceClient : IMoneyService, IDisposable
 
     private Task<MoneyAnswer> Post(string path, object body, CancellationToken ct) => Post(path, body, Timeout, ct);
 
-    /// <summary>The service's answer; <see cref="MoneyAnswer.NoAnswer"/> when the call may have happened, <see cref="MoneyAnswer.Rejected"/> when it was turned away.</summary>
+    /// <summary>
+    /// The service's answer; without one, <see cref="MoneyAnswer.NoAnswer"/> when the call may have happened,
+    /// <see cref="MoneyAnswer.Rejected"/> when it was turned away, <see cref="MoneyAnswer.Unavailable"/> when it was never sent.
+    /// </summary>
     private async Task<MoneyAnswer> Post(string path, object body, TimeSpan timeout, CancellationToken ct)
     {
-        var (answer, lost) = await Send<MoneyAnswer>(path, body, timeout, ct).ConfigureAwait(false);
-        return answer is { Code: { Length: > 0 } } ? answer : lost ? MoneyAnswer.NoAnswer : MoneyAnswer.Rejected;
+        var (answer, missing) = await Send<MoneyAnswer>(path, body, timeout, ct).ConfigureAwait(false);
+        return answer is { Code: { Length: > 0 } } ? answer : missing;
     }
 
     /// <summary>
     /// The body: null for anything but a 200 with a readable JSON body within <paramref name="timeout"/>. Without one,
-    /// <c>Lost</c> says whether the call may still have happened: no response, an HTTP 5xx, or a 200 whose body couldn't be
-    /// read. Any other status (a 4xx) turned it away before anything happened. Only the caller's own cancellation throws.
+    /// <c>Missing</c> says what that means: <see cref="MoneyAnswer.NoAnswer"/> when the call may still have happened (no
+    /// response, an HTTP 5xx, or a 200 whose body couldn't be read); <see cref="MoneyAnswer.Rejected"/> for any other status
+    /// (a 4xx), which turned it away before anything happened; <see cref="MoneyAnswer.Unavailable"/> when the connection was
+    /// refused, so nothing was sent. Only the caller's own cancellation throws.
     /// </summary>
-    private async Task<(T? Body, bool Lost)> Send<T>(string path, object body, TimeSpan timeout, CancellationToken ct) where T : class
+    private async Task<(T? Body, MoneyAnswer Missing)> Send<T>(string path, object body, TimeSpan timeout, CancellationToken ct) where T : class
     {
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         cts.CancelAfter(timeout);
@@ -228,10 +237,10 @@ public sealed class MoneyServiceClient : IMoneyService, IDisposable
             if (response.StatusCode != HttpStatusCode.OK)
             {
                 _failed?.Invoke($"{path}: HTTP {(int)response.StatusCode}");
-                return (null, (int)response.StatusCode >= 500);
+                return (null, (int)response.StatusCode >= 500 ? MoneyAnswer.NoAnswer : MoneyAnswer.Rejected);
             }
             await using var stream = await response.Content.ReadAsStreamAsync(cts.Token).ConfigureAwait(false);
-            return (await JsonSerializer.DeserializeAsync<T>(stream, Json, cts.Token).ConfigureAwait(false), true);
+            return (await JsonSerializer.DeserializeAsync<T>(stream, Json, cts.Token).ConfigureAwait(false), MoneyAnswer.NoAnswer);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -240,7 +249,9 @@ public sealed class MoneyServiceClient : IMoneyService, IDisposable
         catch (Exception e) when (e is HttpRequestException or OperationCanceledException or JsonException or IOException or NotSupportedException)
         {
             _failed?.Invoke($"{path}: {e.GetType().Name}{(e.InnerException is { } inner ? " (" + inner.GetType().Name + ")" : "")}");
-            return (null, true);
+            // A refused connection sent nothing (the service is down or restarting): unavailable, but not lost.
+            var refused = e is HttpRequestException { InnerException: SocketException { SocketErrorCode: SocketError.ConnectionRefused } };
+            return (null, refused ? MoneyAnswer.Unavailable : MoneyAnswer.NoAnswer);
         }
     }
 
