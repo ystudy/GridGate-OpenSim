@@ -78,7 +78,7 @@ public sealed class MoneyPairServiceTests(MoneyMariaDb maria) : IClassFixture<Mo
         _fingerprint = MoneyCertificate.Fingerprint(cert);
         _pairing = new MoneyPairing(time);
         var pins = _pins = new RegionPins(MoneyConnections.Money(() => _moneyDown ? dbSettings with { MariaDbPort = MoneyMariaDb.FreePort() } : dbSettings),
-            MoneyConnections.Robust(() => dbSettings), new RegionHosts(MoneyConnections.Robust(() => dbSettings)), TimeProvider.System);
+            new RegionHosts(MoneyConnections.Robust(() => dbSettings)), TimeProvider.System);
         var verification = new RegionVerification(MoneyConnections.Money(() => dbSettings), MoneyConnections.Robust(() => dbSettings), pins, time);
         _host = new MoneyServiceHost(ledger, presence, () => _settings, () => _mode, () => cert,
             new MoneyAuthFailures(time, loggers.CreateLogger<MoneyAuthFailures>()), loggers, new MoneyStatus(), _pairing,
@@ -478,8 +478,8 @@ public sealed class MoneyPairServiceTests(MoneyMariaDb maria) : IClassFixture<Mo
     {
         // A is at the grid's own region. The old server's region reports A arrived in Theirs before the handoff got there,
         // and that arrival waits. Meanwhile Theirs moves to another server and the owner approves the move. The handoff
-        // then comes, but Theirs is no longer pinned to the old server, so nothing vouches for the waiting arrival: A is
-        // placed in Theirs unverified, under the old key, which the new server's key isn't.
+        // then comes, but it went to Theirs at the new server's address, so it isn't the old server's: the waiting arrival
+        // places A in Theirs unverified, under the old key, which the new server's key isn't either.
         var db = await StartAsync();
         const string newHost = "192.168.1.50";
         await Place(db, OwnKey, A, Own);

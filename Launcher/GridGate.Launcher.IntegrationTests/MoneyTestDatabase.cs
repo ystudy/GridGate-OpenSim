@@ -93,6 +93,8 @@ public sealed class MoneyMariaDb : IAsyncLifetime
               `RegionID` CHAR(36) NOT NULL,
               `Source` VARCHAR(16) NOT NULL,
               `At` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              `ServerIP` VARCHAR(64) NULL,
+              `ServerPort` INT UNSIGNED NULL,
               PRIMARY KEY (`Id`),
               KEY (`SessionID`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
@@ -193,16 +195,28 @@ public sealed class MoneyTestDatabase(LauncherSettings settings)
     public Task AddPresence(Guid user, Guid region, Guid session, Guid secure) =>
         Sql($"INSERT INTO `robust`.`Presence` (`UserID`, `RegionID`, `SessionID`, `SecureSessionID`) VALUES ('{user}', '{region}', '{session}', '{secure}')");
 
-    /// <summary>Records a session start the way Robust's presence service does (Task 1's gridgate_session_starts); returns the new Id.</summary>
-    public async Task<long> AddSessionStart(Guid session, Guid user, Guid region, string source)
+    /// <summary>
+    /// Records a session start the way Robust's login service and Gatekeeper do (gridgate_session_starts), with the address
+    /// Robust lists the region at now, or none when it isn't listed; returns the new Id. <paramref name="withAddress"/> false
+    /// writes a row as an older Robust did, with no address.
+    /// </summary>
+    public async Task<long> AddSessionStart(Guid session, Guid user, Guid region, string source, bool withAddress = true)
     {
-        await Sql($"INSERT INTO `robust`.`gridgate_session_starts` (`SessionID`, `UserID`, `RegionID`, `Source`) VALUES ('{session}', '{user}', '{region}', '{source}')");
+        var address = withAddress
+            ? $"(SELECT `serverIP` FROM `robust`.`regions` WHERE `uuid` = '{region}'), (SELECT `serverPort` FROM `robust`.`regions` WHERE `uuid` = '{region}')"
+            : "NULL, NULL";
+        await Sql($"INSERT INTO `robust`.`gridgate_session_starts` (`SessionID`, `UserID`, `RegionID`, `Source`, `ServerIP`, `ServerPort`) " +
+            $"VALUES ('{session}', '{user}', '{region}', '{source}', {address})");
         return await Scalar($"SELECT MAX(`Id`) FROM `robust`.`gridgate_session_starts` WHERE `SessionID` = '{session}'");
     }
 
-    /// <summary>Registers a region with Robust the way a region does: its id, the address it reports (serverIP) and its UDP port (serverPort).</summary>
+    /// <summary>
+    /// Registers a region with Robust the way a region does: its id, the address it reports (serverIP) and its UDP port
+    /// (serverPort). Registering an id again moves it to the new address, as Robust lets any region server do.
+    /// </summary>
     public Task AddRegion(Guid id, string serverIp, int port = 9000) =>
-        Sql($"INSERT INTO `robust`.`regions` (`uuid`, `regionName`, `serverIP`, `serverPort`) VALUES ('{id}', 'R{id.ToString()[..4]}', '{serverIp}', {port})");
+        Sql($"INSERT INTO `robust`.`regions` (`uuid`, `regionName`, `serverIP`, `serverPort`) VALUES ('{id}', 'R{id.ToString()[..4]}', '{serverIp}', {port}) " +
+            $"ON DUPLICATE KEY UPDATE `serverIP` = '{serverIp}', `serverPort` = {port}");
 
     /// <summary>
     /// Records a hypergrid visitor the way the Gatekeeper does: GridUser.UserID = "uuid;HomeURI;First Last". Like OpenSim's

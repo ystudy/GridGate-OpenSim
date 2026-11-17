@@ -644,7 +644,8 @@ namespace OpenSim.Services.HypergridService
                 {
                     try
                     {
-                        m_SessionStarts.Record(aCircuit.SessionID, aCircuit.AgentID, destination.RegionID, "gatekeeper");
+                        m_SessionStarts.Record(aCircuit.SessionID, aCircuit.AgentID, destination.RegionID,
+                            destination.ExternalHostName, destination.InternalEndPoint?.Port, "gatekeeper");
                     }
                     catch (Exception e)
                     {

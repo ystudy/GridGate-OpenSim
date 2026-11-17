@@ -121,8 +121,7 @@ internal sealed class MoneyServiceRig : IAsyncDisposable
         var alertsDb = alertsDown ? dbSettings with { MariaDbPort = MoneyMariaDb.FreePort() } : dbSettings;
         Alerts = new MoneyAlerts(MoneyConnections.Money(() => alertsDb), time, loggers.CreateLogger<MoneyAlerts>());
         Failures = new MoneyAuthFailures(FailureClock, loggers.CreateLogger<MoneyAuthFailures>());
-        // Pins and locations read one clock, as in the launcher: a pin's time is compared with the handoffs' times.
-        var pins = new RegionPins(MoneyConnections.Money(() => dbSettings), MoneyConnections.Robust(() => dbSettings), new RegionHosts(MoneyConnections.Robust(() => dbSettings)), LocationClock, Alerts);
+        var pins = new RegionPins(MoneyConnections.Money(() => dbSettings), new RegionHosts(MoneyConnections.Robust(() => dbSettings)), TimeProvider.System, Alerts);
         Verification = new RegionVerification(MoneyConnections.Money(() => dbSettings), MoneyConnections.Robust(() => dbSettings), pins, VerifyClock);
         Locations = new MoneyLocations(MoneyConnections.Money(() => dbSettings), MoneyConnections.Robust(() => dbSettings), Verification, presence, LocationClock);
         _host = new MoneyServiceHost(Ledger, presence, () => Settings, () => Mode, () => cert,

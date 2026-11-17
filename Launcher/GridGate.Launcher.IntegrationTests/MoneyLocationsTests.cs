@@ -44,8 +44,8 @@ public sealed class MoneyLocationsTests(MoneyMariaDb maria) : IClassFixture<Mone
     private RegionPins _pins = null!;
 
     /// <summary>
-    /// A fresh database where R3 is listed in Robust at the paired server and was pinned to it at first sight, before
-    /// anyone logged in.
+    /// A fresh database where R3 is listed in Robust at the paired server's address, and pinned to it. The local programs'
+    /// regions aren't listed: their starts and handoffs carry no address, which only paired keys look at.
     /// </summary>
     private async Task StartAsync()
     {
@@ -54,7 +54,7 @@ public sealed class MoneyLocationsTests(MoneyMariaDb maria) : IClassFixture<Mone
         await _db.AddPresence(U, R1, SessionU, SecureU);
         await _db.AddPresence(V, R1, SessionV, SecureV);
         _clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
-        _pins = new RegionPins(_db.OpenMoney, _db.OpenRobust, new RegionHosts(_db.OpenRobust), _clock);
+        _pins = new RegionPins(_db.OpenMoney, new RegionHosts(_db.OpenRobust), _clock);
         await _db.AddRegion(R3, Paired.ServerHost!);
         var server = new PairedServer(PairedId, Paired.ServerHost!, new string('a', 64), DateTimeOffset.UtcNow, 9000, "machine-paired");
         Assert.Contains(R3, await _pins.CoveredAsync(server, 9000, 65536, new HashSet<Guid>(), Ct));
@@ -862,18 +862,17 @@ public sealed class MoneyLocationsTests(MoneyMariaDb maria) : IClassFixture<Mone
     }
 
     [Fact]
-    public async Task Approving_a_move_resets_the_floor()
+    public async Task Approving_a_move_counts_only_what_went_to_the_new_server()
     {
-        // R3 moves from the paired server to another one, and the owner approves it. The starts and handoffs from before
-        // the approval were the old server's: they don't count for the new one. Ones after it do.
+        // R3 moves from the paired server to another one, and the owner approves it. The login and the handoff from before
+        // the move went to the old server's address: they don't count for the new one. Ones to the new address do.
         await StartAsync();
         await _verification.HeardAsync(Other.KeyId, RegionVerification.HandoffProtocol, [R3], Ct);
         await _db.AddSessionStart(SessionU, U, R3, "login"); // U logs in at R3 while the old server runs it
         await _db.AddSessionStart(SessionV, V, R1, "login");
         Assert.Equal(PlaceOutcome.Ok, (await Arrive(P1, R1, SessionV, V)).Outcome);
         Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, R3, session: SessionV)); // V is on the way to R3
-        _clock.Advance(TimeSpan.FromSeconds(5));
-        await _db.Sql($"UPDATE `robust`.`regions` SET serverIP = '{Other.ServerHost}' WHERE uuid = '{R3}'");
+        await _db.AddRegion(R3, Other.ServerHost!);
 
         await _pins.ApproveMoveAsync(R3, OtherId, Ct);
 
@@ -881,7 +880,7 @@ public sealed class MoneyLocationsTests(MoneyMariaDb maria) : IClassFixture<Mone
         Assert.Equal(PlaceOutcome.PlacedUnverified, (await Arrive(Other, R3, SessionV, V)).Outcome);
         Assert.Equal(0, await VerifiedRows());
 
-        // After the approval: a new login at R3, and a new handoff to it, are the new server's.
+        // After the move: a new login at R3, and a new handoff to it, went to the new server.
         var (login, handed) = (Guid.NewGuid(), Guid.NewGuid());
         await _db.AddPresence(U, R3, login, Guid.NewGuid());
         await _db.AddSessionStart(login, U, R3, "login");
@@ -894,31 +893,51 @@ public sealed class MoneyLocationsTests(MoneyMariaDb maria) : IClassFixture<Mone
     }
 
     [Fact]
-    public async Task A_handoff_written_at_the_pin_time_counts()
+    public async Task A_handoff_keeps_the_address_Robust_lists_its_destination_at()
     {
-        // The pin and the handoff read the same clock: one written in the same instant as the pin came after it.
         await StartAsync();
-        await _db.Sql($"DELETE FROM `money`.`region_pins` WHERE region_id = '{R3}'");
         await LoggedInAtR1();
-        Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, R3));
-        var server = new PairedServer(PairedId, Paired.ServerHost!, new string('a', 64), DateTimeOffset.UtcNow, 9000, "machine-paired");
-        await _pins.CoveredAsync(server, 9000, 65536, new HashSet<Guid>(), Ct); // pinned again, the clock standing still
 
-        Assert.Equal(PlaceOutcome.Ok, (await Arrive(Paired, R3)).Outcome);
+        Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, R3));
+
+        Assert.Equal(Paired.ServerHost, await _db.Text($"SELECT to_host FROM `money`.`handoffs` WHERE to_region = '{R3}'"));
+        Assert.Equal(9000, await _db.Scalar($"SELECT to_port FROM `money`.`handoffs` WHERE to_region = '{R3}'"));
     }
 
     [Fact]
-    public async Task A_paired_key_counts_nothing_in_a_region_pinned_to_another_server()
+    public async Task An_old_start_with_no_address_counts_for_no_paired_key_but_still_for_a_local_one()
     {
-        // Whatever the key's grant says, a region pinned to another server holds no starts or handoffs for this key.
+        // Starts an older Robust wrote carry no address: nothing says they went to a paired server.
         await StartAsync();
-        await _db.Sql($"UPDATE `money`.`region_pins` SET server_id = '{OtherId:N}' WHERE region_id = '{R3}'");
-        await _db.AddSessionStart(SessionU, U, R3, "login");
-        await _db.AddSessionStart(SessionV, V, R1, "login");
-        Assert.Equal(PlaceOutcome.Ok, (await Arrive(P1, R1, SessionV, V)).Outcome);
-        Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, R3, session: SessionV));
+        await _db.AddSessionStart(SessionU, U, R3, "login", withAddress: false);
+        await _db.AddSessionStart(SessionV, V, R1, "login", withAddress: false);
 
         Assert.Equal(PlaceOutcome.PlacedUnverified, (await Arrive(Paired, R3)).Outcome);
-        Assert.Equal(PlaceOutcome.PlacedUnverified, (await Arrive(Paired, R3, SessionV, V)).Outcome);
+        Assert.Equal(PlaceOutcome.Ok, (await Arrive(P1, R1, SessionV, V)).Outcome);
+    }
+
+    [Fact]
+    public async Task A_handoff_to_a_region_Robust_did_not_list_counts_for_no_paired_key()
+    {
+        await StartAsync();
+        await LoggedInAtR1();
+        await _db.Sql($"DELETE FROM `robust`.`regions` WHERE uuid = '{R3}'");
+        Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, R3));
+        await _db.AddRegion(R3, Paired.ServerHost!);
+
+        Assert.Equal(PlaceOutcome.PlacedUnverified, (await Arrive(Paired, R3)).Outcome);
+    }
+
+    [Fact]
+    public async Task A_start_at_the_servers_host_but_outside_its_ports_does_not_count()
+    {
+        // Two paired servers can share an address, each with its own ports: a start to the other one's port isn't this one's.
+        await StartAsync();
+        var low = Paired with { ToPort = 9500 };
+        await _db.AddRegion(R3, Paired.ServerHost!, 9600);
+        await _db.AddSessionStart(SessionU, U, R3, "login");
+        await _db.AddRegion(R3, Paired.ServerHost!, 9000);
+
+        Assert.Equal(PlaceOutcome.PlacedUnverified, (await Arrive(low, R3)).Outcome);
     }
 }

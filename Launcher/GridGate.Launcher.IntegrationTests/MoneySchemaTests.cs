@@ -78,8 +78,8 @@ public sealed class MoneySchemaTests(MoneyMariaDb maria) : IClassFixture<MoneyMa
         Assert.Equal("tinyint(4)", await db.Text("SELECT COLUMN_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = 'money' AND TABLE_NAME = 'alerts' AND COLUMN_NAME = 'repeated'"));
         // Where a person is (the website) is found by agent, newest first.
         Assert.Equal(2, await db.Scalar("SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = 'money' AND TABLE_NAME = 'session_locations' AND INDEX_NAME = 'agent_updated'"));
-        // A pin keeps the newest Robust start it saw when it was made.
-        Assert.Equal("bigint(20)", await StartFloorType(db));
+        // A handoff keeps the address and port Robust listed its destination at.
+        Assert.Equal(("varchar(64)", "int(11)"), await HandoffAddressTypes(db));
     }
 
     [Fact]
@@ -107,31 +107,35 @@ public sealed class MoneySchemaTests(MoneyMariaDb maria) : IClassFixture<MoneyMa
         foreach (var table in V3Tables)
             Assert.Equal(1, await db.Scalar($"SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = 'money' AND TABLE_NAME = '{table}'"));
         Assert.Equal(3, await db.Scalar("SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = 'money' AND TABLE_NAME = 'entries' AND INDEX_NAME = 'key_type_at'"));
-        Assert.Equal("bigint(20)", await StartFloorType(db));
+        Assert.Equal(("varchar(64)", "int(11)"), await HandoffAddressTypes(db));
     }
 
-    private static Task<string?> StartFloorType(MoneyTestDatabase db) =>
-        db.Text("SELECT COLUMN_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = 'money' AND TABLE_NAME = 'region_pins' AND COLUMN_NAME = 'start_floor'");
+    private static async Task<(string?, string?)> HandoffAddressTypes(MoneyTestDatabase db)
+    {
+        const string Of = "SELECT COLUMN_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = 'money' AND TABLE_NAME = 'handoffs' AND COLUMN_NAME = ";
+        return (await db.Text(Of + "'to_host'"), await db.Text(Of + "'to_port'"));
+    }
 
     [Fact]
     public async Task Version_3_migrates_to_4()
     {
-        // A version 3 database has pins without a start floor. They keep working, with floor 0: every start counts for them,
-        // as before.
+        // A version 3 database has handoffs without a destination address. They keep none, so they count for no paired key;
+        // they expire within minutes anyway.
         var db = await maria.FreshAsync();
         await db.EnsureSchemaAsync();
-        var (region, server) = (Guid.NewGuid(), Guid.NewGuid());
+        var handoff = Guid.NewGuid();
         await db.Sql($"""
-            ALTER TABLE `money`.`region_pins` DROP COLUMN start_floor;
-            INSERT INTO `money`.`region_pins` (region_id, server_id, machine_id, pinned) VALUES ('{region}', '{server:N}', 'm-1', UTC_TIMESTAMP(6));
+            ALTER TABLE `money`.`handoffs` DROP COLUMN to_host, DROP COLUMN to_port;
+            INSERT INTO `money`.`handoffs` (id, session_id, from_key, from_region, to_region, kind, created)
+              VALUES ('{handoff}', '{Guid.NewGuid()}', 'p1', '{Guid.NewGuid()}', '{Guid.NewGuid()}', 'Teleport', UTC_TIMESTAMP(6));
             UPDATE `money`.`state` SET value = '3' WHERE name = 'schema_version';
             """);
 
         await db.EnsureSchemaAsync();
 
         Assert.Equal("4", await db.Text("SELECT value FROM `money`.`state` WHERE name = 'schema_version'"));
-        Assert.Equal("bigint(20)", await StartFloorType(db));
-        Assert.Equal(0, await db.Scalar($"SELECT start_floor FROM `money`.`region_pins` WHERE region_id = '{region}' AND server_id = '{server:N}'"));
+        Assert.Equal(("varchar(64)", "int(11)"), await HandoffAddressTypes(db));
+        Assert.Equal(1, await db.Scalar($"SELECT COUNT(*) FROM `money`.`handoffs` WHERE id = '{handoff}' AND to_host IS NULL AND to_port IS NULL"));
     }
 
     [Fact]

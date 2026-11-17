@@ -51,7 +51,7 @@ public sealed class MoneyPairClientTests(MoneyMariaDb maria) : IClassFixture<Mon
         _pairing = new MoneyPairing(TimeProvider.System);
         _host = new MoneyServiceHost(ledger, presence, () => _grid, () => MoneyMode.Play, () => cert,
             new MoneyAuthFailures(TimeProvider.System, NullLogger<MoneyAuthFailures>.Instance), NullLoggerFactory.Instance, new MoneyStatus(), _pairing,
-            change => _grid = change(_grid), new RegionPins(MoneyConnections.Money(() => dbSettings), MoneyConnections.Robust(() => dbSettings), new RegionHosts(MoneyConnections.Robust(() => dbSettings)), TimeProvider.System));
+            change => _grid = change(_grid), new RegionPins(MoneyConnections.Money(() => dbSettings), new RegionHosts(MoneyConnections.Robust(() => dbSettings)), TimeProvider.System));
         await _host.StartAsync(Ct);
         return db;
     }

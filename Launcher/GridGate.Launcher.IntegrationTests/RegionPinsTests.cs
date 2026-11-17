@@ -1,6 +1,5 @@
 using GridGate.Launcher.Core.Money;
 using GridGate.Launcher.Core.Settings;
-using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
 namespace GridGate.Launcher.IntegrationTests;
@@ -22,7 +21,7 @@ public sealed class RegionPinsTests(MoneyMariaDb maria) : IClassFixture<MoneyMar
     {
         var db = await maria.FreshAsync();
         await db.EnsureSchemaAsync();
-        return (db, new RegionPins(db.OpenMoney, db.OpenRobust, new RegionHosts(db.OpenRobust), TimeProvider.System));
+        return (db, new RegionPins(db.OpenMoney, new RegionHosts(db.OpenRobust), TimeProvider.System));
     }
 
     private static Task<IReadOnlySet<Guid>> Covered(RegionPins pins, PairedServer s) => pins.CoveredAsync(s, s.FirstPort, 65536, NoOwn, Ct);
@@ -238,118 +237,12 @@ public sealed class RegionPinsTests(MoneyMariaDb maria) : IClassFixture<MoneyMar
         Assert.Empty(await Covered(pins, replacement));
     }
 
-    private static Task<long> Floor(MoneyTestDatabase db, Guid region) =>
-        db.Scalar($"SELECT start_floor FROM `money`.`region_pins` WHERE region_id = '{region}'");
-
-    private static Task<long> PinnedAt(MoneyTestDatabase db, Guid region, DateTimeOffset at) =>
-        db.Scalar($"SELECT COUNT(*) FROM `money`.`region_pins` WHERE region_id = '{region}' AND pinned = '{at.UtcDateTime:yyyy-MM-dd HH:mm:ss.ffffff}'");
-
-    private static async Task<(MoneyTestDatabase Db, RegionPins Pins, FakeTimeProvider Clock)> StartWithClockAsync(MoneyMariaDb maria)
-    {
-        var db = await maria.FreshAsync();
-        await db.EnsureSchemaAsync();
-        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
-        return (db, new RegionPins(db.OpenMoney, db.OpenRobust, new RegionHosts(db.OpenRobust), clock), clock);
-    }
-
-    [Fact]
-    public async Task First_sight_keeps_the_newest_start_as_the_floor()
-    {
-        // Logins from before the pin aren't the server's to use: the pin keeps the newest start Robust had written then.
-        var (db, pins, clock) = await StartWithClockAsync(maria);
-        var (a, region) = (Server(HostA), Guid.NewGuid());
-        await db.AddSessionStart(Guid.NewGuid(), Guid.NewGuid(), region, "login");
-        var newest = await db.AddSessionStart(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "login");
-        await db.AddRegion(region, HostA);
-
-        await Covered(pins, a);
-
-        Assert.Equal(newest, await Floor(db, region));
-        Assert.Equal(1, await PinnedAt(db, region, clock.GetUtcNow()));
-        // Later starts and later looks leave the pin as it was.
-        await db.AddSessionStart(Guid.NewGuid(), Guid.NewGuid(), region, "login");
-        clock.Advance(TimeSpan.FromMinutes(1));
-        await Covered(pins, a);
-        Assert.Equal(newest, await Floor(db, region));
-        Assert.Equal(1, await PinnedAt(db, region, clock.GetUtcNow() - TimeSpan.FromMinutes(1)));
-    }
-
-    [Fact]
-    public async Task First_sight_with_no_starts_has_floor_0()
-    {
-        var (db, pins) = await StartAsync(maria);
-        var (a, region) = (Server(HostA), Guid.NewGuid());
-        await db.AddRegion(region, HostA);
-
-        await Covered(pins, a);
-
-        Assert.Equal(0, await Floor(db, region));
-    }
-
-    [Fact]
-    public async Task Approving_a_move_gives_a_new_pin_time_and_floor()
-    {
-        var (db, pins, clock) = await StartWithClockAsync(maria);
-        var (a, b, region) = (Server(HostA), Server(HostB), Guid.NewGuid());
-        await db.AddRegion(region, HostB);
-        await Covered(pins, b);
-        var newest = await db.AddSessionStart(Guid.NewGuid(), Guid.NewGuid(), region, "login");
-        clock.Advance(TimeSpan.FromHours(1));
-        await db.Sql($"UPDATE `robust`.`regions` SET serverIP = '{HostA}' WHERE uuid = '{region}'");
-
-        await pins.ApproveMoveAsync(region, a.Id, Ct);
-
-        Assert.Equal(newest, await Floor(db, region));
-        Assert.Equal(1, await PinnedAt(db, region, clock.GetUtcNow()));
-    }
-
-    [Fact]
-    public async Task Same_machine_repairing_keeps_the_pin_time_and_floor()
-    {
-        // The same machine already covered the region: what it saw before stays its own.
-        var (db, pins, clock) = await StartWithClockAsync(maria);
-        var (old, region) = (Server(HostA, "machine-1"), Guid.NewGuid());
-        var replacement = Server(HostA, "machine-1");
-        var floor = await db.AddSessionStart(Guid.NewGuid(), Guid.NewGuid(), region, "login");
-        await db.AddRegion(region, HostA);
-        await Covered(pins, old);
-        var pinned = clock.GetUtcNow();
-        await db.AddSessionStart(Guid.NewGuid(), Guid.NewGuid(), region, "login");
-        clock.Advance(TimeSpan.FromHours(1));
-
-        await pins.CarryOverAsync(old, replacement, Ct);
-        await Covered(pins, replacement);
-
-        Assert.Equal(floor, await Floor(db, region));
-        Assert.Equal(1, await PinnedAt(db, region, pinned));
-    }
-
-    [Fact]
-    public async Task Robust_down_is_unavailable_and_pins_nothing()
-    {
-        // Without the newest start a pin can't be made safely, at first sight or at an approved move.
-        var db = await maria.FreshAsync();
-        await db.EnsureSchemaAsync();
-        var closed = db.Settings with { MariaDbPort = MoneyMariaDb.FreePort() };
-        var (a, b, region, moving) = (Server(HostA), Server(HostB), Guid.NewGuid(), Guid.NewGuid());
-        await db.AddRegion(moving, HostB);
-        await Covered(new RegionPins(db.OpenMoney, db.OpenRobust, new RegionHosts(db.OpenRobust), TimeProvider.System), b);
-        await db.AddRegion(region, HostA);
-        var pins = new RegionPins(db.OpenMoney, ct => Core.Database.GridDb.OpenRobustAsync(closed, 2, ct), new RegionHosts(db.OpenRobust), TimeProvider.System);
-
-        await Assert.ThrowsAsync<MoneyUnavailableException>(() => Covered(pins, a));
-        await Assert.ThrowsAsync<MoneyUnavailableException>(() => pins.ApproveMoveAsync(moving, a.Id, Ct));
-
-        Assert.Equal(0, await db.Scalar($"SELECT COUNT(*) FROM `money`.`region_pins` WHERE region_id = '{region}'"));
-        Assert.Equal(b.Id.ToString("N"), await db.Text($"SELECT server_id FROM `money`.`region_pins` WHERE region_id = '{moving}'"));
-    }
-
     [Fact]
     public async Task Database_down_is_unavailable()
     {
         var db = await maria.FreshAsync();
         var closed = db.Settings with { MariaDbPort = MoneyMariaDb.FreePort() };
-        var pins = new RegionPins(ct => Core.Database.GridDb.OpenMoneyAsync(closed, 2, ct), db.OpenRobust, new RegionHosts(db.OpenRobust), TimeProvider.System);
+        var pins = new RegionPins(ct => Core.Database.GridDb.OpenMoneyAsync(closed, 2, ct), new RegionHosts(db.OpenRobust), TimeProvider.System);
         await db.AddRegion(Guid.NewGuid(), HostA);
 
         await Assert.ThrowsAsync<MoneyUnavailableException>(() => Covered(pins, Server(HostA)));

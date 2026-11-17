@@ -14,8 +14,8 @@ public enum AccountKind { Person, Visitor, Bank, Fees, Holding }
 public static class MoneySchema
 {
     /// <summary>
-    /// 4: each region pin keeps the newest Robust start it saw when it was made. 3: key ids on entries and holds, and the
-    /// tables for locations, handoffs, pins, limits and alerts. 2: homes compared byte for byte.
+    /// 4: each handoff keeps the address and port Robust listed its destination at. 3: key ids on entries and holds, and
+    /// the tables for locations, handoffs, pins, limits and alerts. 2: homes compared byte for byte.
     /// </summary>
     public const int Version = 4;
 
@@ -53,11 +53,11 @@ public static class MoneySchema
           ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
         CREATE TABLE IF NOT EXISTS handoffs (
           id CHAR(36) PRIMARY KEY, session_id CHAR(36) NOT NULL, from_key VARCHAR(64) NOT NULL, from_region CHAR(36) NOT NULL,
-          to_region CHAR(36) NOT NULL, kind VARCHAR(16) NOT NULL, created DATETIME(6) NOT NULL, KEY session_created (session_id, created))
+          to_region CHAR(36) NOT NULL, kind VARCHAR(16) NOT NULL, created DATETIME(6) NOT NULL, to_host VARCHAR(64) NULL, to_port INT NULL,
+          KEY session_created (session_id, created))
           ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
         CREATE TABLE IF NOT EXISTS region_pins (
-          region_id CHAR(36) PRIMARY KEY, server_id CHAR(32) NOT NULL, machine_id VARCHAR(64) NULL, pinned DATETIME(6) NOT NULL,
-          start_floor BIGINT NOT NULL DEFAULT 0)
+          region_id CHAR(36) PRIMARY KEY, server_id CHAR(32) NOT NULL, machine_id VARCHAR(64) NULL, pinned DATETIME(6) NOT NULL)
           ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
         CREATE TABLE IF NOT EXISTS key_heard (
           key_id VARCHAR(64) PRIMARY KEY, protocol INT NOT NULL, at DATETIME(6) NOT NULL)
@@ -133,11 +133,12 @@ public static class MoneySchema
         """;
 
     /// <summary>
-    /// Version 3 to 4: <c>region_pins.start_floor</c>, the newest Robust start id when the pin was made. A paired server's
-    /// key counts only starts newer than it. Existing pins get 0, so every start still counts for them, as before.
+    /// Version 3 to 4: <c>handoffs.to_host</c> and <c>to_port</c>, where Robust listed the destination when the handoff was
+    /// written. A paired server's key counts only handoffs that went to its own address. Older handoffs have none, so they
+    /// count for no paired key; they expire within minutes anyway.
     /// </summary>
     private const string To4 = """
-        ALTER TABLE region_pins ADD COLUMN IF NOT EXISTS start_floor BIGINT NOT NULL DEFAULT 0;
+        ALTER TABLE handoffs ADD COLUMN IF NOT EXISTS to_host VARCHAR(64) NULL, ADD COLUMN IF NOT EXISTS to_port INT NULL;
         UPDATE state SET value = '4' WHERE name = 'schema_version';
         """;
 
