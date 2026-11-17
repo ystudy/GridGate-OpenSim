@@ -218,7 +218,23 @@ namespace OpenSim.Region.Framework.Scenes
         /// or teleport, or an archive), so YEngine restores no PERMISSION_DEBIT from it. Not persisted, and not copied
         /// by <see cref="CloneForNewScene"/>.
         /// </summary>
-        public bool StateFromOutside { get; set; }
+        /// <remarks>
+        /// The mark is lost at a region restart, so nothing stored from such a state may keep the grant either. Setting
+        /// it removes PERMISSION_DEBIT from the saved script states the object carries and from its script items' masks
+        /// (which the region database stores), and while it is set <see cref="SetState"/> hands the script engine its
+        /// states without it (the engine stores them as its state files).
+        /// </remarks>
+        public bool StateFromOutside
+        {
+            get { return m_stateFromOutside; }
+            set
+            {
+                m_stateFromOutside = value;
+                if (value)
+                    DropDebitFromStoredStates();
+            }
+        }
+        private bool m_stateFromOutside;
 
         /// <summary>
         /// This indicates whether the object has changed such that it needs to be repersisted to permenant storage
@@ -1488,6 +1504,10 @@ namespace OpenSim.Region.Framework.Scenes
                     }
                 }
             }
+
+            // GridGate: see StateFromOutside.
+            if (m_stateFromOutside)
+                DropDebitFromSavedScriptStates();
         }
 
         public void LoadScriptState(XmlReader reader)
@@ -1524,6 +1544,10 @@ namespace OpenSim.Region.Framework.Scenes
                         break;
                 }
             }
+
+            // GridGate: see StateFromOutside.
+            if (m_stateFromOutside)
+                DropDebitFromSavedScriptStates();
         }
 
         /// <summary>
