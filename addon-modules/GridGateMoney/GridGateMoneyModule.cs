@@ -30,7 +30,7 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
     public const string ModuleName = "GridGateMoneyModule";
     private static readonly ILog Log = LogManager.GetLogger(MethodBase.GetCurrentMethod()!.DeclaringType);
     private static readonly TimeSpan EconomyFresh = TimeSpan.FromSeconds(60);
-    private static readonly TimeSpan LandHoldLimit = TimeSpan.FromSeconds(3);
+    internal static readonly TimeSpan LandHoldLimit = TimeSpan.FromSeconds(1.5);
     private static readonly TimeSpan HealthEvery = TimeSpan.FromMinutes(3);
     // Until the service first answers: no fees are known (so none are offered free, R-8), and visitors and payouts are off.
     private static readonly EconomyInfo NoEconomy = new("C$", 0, 0, false, false, 1_000_000);
@@ -42,6 +42,7 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
     private readonly ConcurrentDictionary<UUID, string> _visitorHomes = new();
     // Land purchases between the hold (validate) and the settle (buy), by region and parcel.
     private readonly ConcurrentDictionary<(UUID Region, int Parcel), LandHold> _landHolds = new();
+    private readonly ParcelBuyLimit _buyLimit = new(TimeProvider.System);
     private readonly object _economyGate = new();
 
     private IMoneyService? _client;
@@ -300,7 +301,9 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
 
     private void OnClientClosed(UUID agent, Scene scene)
     {
-        if (FindClient(agent) is null) _balances.TryRemove(agent, out _);
+        if (FindClient(agent) is not null) return;
+        _balances.TryRemove(agent, out _);
+        _buyLimit.Forget(agent.Guid);
     }
 
     private async Task PushBalanceAsync(IClientAPI c)
@@ -381,20 +384,34 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
             e.economyValidated = true;
             return;
         }
-        var key = (scene.RegionInfo.RegionID, e.parcelLocalID);
-        // One purchase of a parcel at a time. Validate and buy already run one after another on the region's packet thread,
-        // and the land module's own check refuses a parcel no longer for sale; this only guards against that changing.
-        if (_landHolds.TryGetValue(key, out var busy) && DateTime.UtcNow - busy.At < TimeSpan.FromMinutes(1))
+        if (!_buyLimit.TryTake(e.agentId.Guid))
         {
-            client.SendAlertMessage("Someone is buying this parcel right now. Please try again in a moment.");
+            client.SendAlertMessage(MoneyRules.LandTooFastText);
             return;
         }
+        var key = (scene.RegionInfo.RegionID, e.parcelLocalID);
         var payer = PayerOf(client);
         var seller = WhoOf(e.parcelOwnerID);
-        // This runs on the region's packet thread (ParcelBuy is handled in line), so the service gets a few seconds only.
+        // One purchase of a parcel at a time: the parcel is marked before the service is asked (HoldId 0, nothing held yet),
+        // so a second buyer who gets in while the first one waits is turned away. An entry over a minute old is a purchase
+        // that never finished, and is taken over.
+        var mine = new LandHold(e.agentId, 0, payer, seller, DateTime.UtcNow);
+        if (!_landHolds.TryAdd(key, mine))
+        {
+            if (!_landHolds.TryGetValue(key, out var busy) || DateTime.UtcNow - busy.At < TimeSpan.FromMinutes(1) || !_landHolds.TryUpdate(key, mine, busy))
+            {
+                client.SendAlertMessage("Someone is buying this parcel right now. Please try again in a moment.");
+                return;
+            }
+        }
+        // This runs on the region's packet thread (ParcelBuy is handled in line), so the service gets a moment only.
         var hold = actions.HoldLandAsync(payer, seller, e.parcelPrice, e.parcelLocalID, LandHoldLimit).GetAwaiter().GetResult();
-        if (hold is not { } holdId || holdId == 0) return;
-        _landHolds[key] = new LandHold(e.agentId, holdId, payer, seller, DateTime.UtcNow);
+        if (hold is not { } holdId || holdId == 0)
+        {
+            _landHolds.TryRemove(KeyValuePair.Create(key, mine));
+            return;
+        }
+        _landHolds.TryUpdate(key, mine with { HoldId = holdId }, mine);
         e.economyValidated = true;
         e.amountDebited = e.parcelPrice;
     }
@@ -402,7 +419,7 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
     private void OnLandBuy(Scene scene, EventManager.LandBuyArgs e)
     {
         var key = (scene.RegionInfo.RegionID, e.parcelLocalID);
-        if (!_landHolds.TryGetValue(key, out var hold) || hold.Agent != e.agentId) return;
+        if (!_landHolds.TryGetValue(key, out var hold) || hold.Agent != e.agentId || hold.HoldId == 0) return;
         _landHolds.TryRemove(key, out _);
         var data = scene.LandChannel?.GetLandObject(e.parcelLocalID)?.LandData;
         var confirmed = data is not null && (e.groupOwned ? data.GroupID == e.groupId && data.IsGroupOwned : data.OwnerID == e.agentId && !data.IsGroupOwned);

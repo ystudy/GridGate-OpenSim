@@ -41,6 +41,7 @@ internal static class MoneyRules
     private static readonly int[] DefaultButtons = [1, 5, 10, 20];
 
     public const string GroupLandText = "Group-owned land can't be sold for coins on this grid.";
+    public const string LandTooFastText = "You're buying land too quickly. Please wait a minute and try again.";
     public const string GroupPassText = "Passes to group-owned land can't be bought with coins on this grid.";
     public const string NoEconomyText = "Fees can't be paid yet: this region hasn't reached the grid's money service. Try again in a minute.";
     public const string VisitorsOffText = "Visitors can't pay or be paid on this grid.";
