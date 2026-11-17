@@ -10,6 +10,11 @@
   <data name="Layout.Help" xml:space="preserve"><value>Demander de l’aide</value></data>
   <data name="Layout.Language" xml:space="preserve"><value>Langue</value></data>
   <data name="Layout.ChangeLanguage" xml:space="preserve"><value>Changer de langue</value></data>
+  <data name="Layout.Register" xml:space="preserve"><value>S'inscrire</value></data>
+  <data name="Layout.Menu" xml:space="preserve"><value>Menu</value></data>
+  <data name="Layout.MenuHome" xml:space="preserve"><value>Accueil</value></data>
+  <data name="Layout.MenuConnect" xml:space="preserve"><value>Comment se connecter</value></data>
+  <data name="Layout.MenuResetPassword" xml:space="preserve"><value>Réinitialiser le mot de passe</value></data>
   <data name="Common.SignIn" xml:space="preserve"><value>Se connecter</value></data>
   <data name="SignIn.Intro" xml:space="preserve"><value>Utilisez le nom et le mot de passe de votre avatar.</value></data>
   <data name="Common.AvatarName" xml:space="preserve"><value>Nom de l’avatar</value></data>

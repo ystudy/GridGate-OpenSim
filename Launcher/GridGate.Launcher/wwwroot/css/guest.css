@@ -82,3 +82,31 @@
     box-shadow: var(--gg-glow);
 }
 .guest-site .form-control, .guest-site .form-select { background-color: var(--gg-bg); color: var(--gg-text); border-color: var(--gg-border); }
+
+/* The top bar: black, sticky, the logo and name at the start, the account buttons and the menu at the end. */
+.guest-site .site-bar { position: sticky; top: 0; z-index: 1030; background: var(--gg-bar); border-bottom: 1px solid var(--gg-border); }
+.guest-site .site-bar-row { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem 1rem; padding-top: .6rem; padding-bottom: .6rem; }
+.guest-site .site-home { display: inline-flex; align-items: center; gap: .6rem; margin-inline-end: auto; color: #fff; text-decoration: none; }
+.guest-site .site-home:hover { color: #fff; }
+.guest-site .site-logo { max-height: 2.25rem; width: auto; }
+.guest-site .site-home .grid-name { font-size: 1.25rem; font-weight: 800; letter-spacing: .02em; }
+.guest-site .site-account { text-transform: uppercase; font-weight: 700; letter-spacing: .03em; }
+
+/* The menu: a <details> whose panel opens under the ☰ button, lined up with the bar's end. */
+.guest-site .site-menu { position: relative; }
+.guest-site .site-menu > summary {
+    display: inline-flex; align-items: center; justify-content: center; width: 2.4rem; height: 2.1rem;
+    font-size: 1.3rem; line-height: 1; color: #fff; list-style: none; cursor: pointer;
+    border: 1px solid var(--gg-border); border-radius: var(--bs-border-radius);
+}
+.guest-site .site-menu > summary::-webkit-details-marker { display: none; }
+.guest-site .site-menu > summary:hover, .guest-site .site-menu[open] > summary { background: var(--gg-surface); }
+.guest-site .site-menu > summary:focus-visible { outline: 2px solid var(--gg-yellow); outline-offset: 2px; }
+.guest-site .site-menu-panel {
+    position: absolute; top: calc(100% + .4rem); inset-inline-end: 0; z-index: 1040; min-width: 15rem;
+    padding: .5rem; background: var(--gg-surface); border: 1px solid var(--gg-border); border-radius: .75rem; box-shadow: var(--gg-glow);
+}
+.guest-site .site-menu-panel nav { display: flex; flex-direction: column; }
+.guest-site .site-menu-panel nav a { display: flex; align-items: center; padding: .5rem .75rem; color: var(--gg-text); text-decoration: none; border-radius: .5rem; font-weight: 600; }
+.guest-site .site-menu-panel nav a:hover, .guest-site .site-menu-panel nav a:focus-visible { background: var(--gg-bg); color: #fff; }
+.guest-site .site-menu-panel .language-picker { margin-top: .5rem; padding: .5rem .75rem 0; border-top: 1px solid var(--gg-border); }
