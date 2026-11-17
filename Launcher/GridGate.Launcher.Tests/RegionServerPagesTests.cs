@@ -262,12 +262,22 @@ public sealed class RegionServerPagesTests
     public async Task Region_server_plan_page_has_no_hypergrid_switch_and_links_to_the_join_page()
     {
         await using var f = Factory(OwnerPlan.RegionServer);
-        using var client = await SignedInAsync(f);
+        using var client = await SignedInAsync(f, "owner");
 
         var doc = new HtmlParser().ParseDocument(await client.GetStringAsync("/advanced/plan", Ct));
         Assert.Null(doc.QuerySelector("form#hypergrid"));
         Assert.Contains("Hypergrid is off for this grid; the Grid Asset Server decides.", doc.QuerySelector("main")!.TextContent);
         Assert.Contains(doc.QuerySelectorAll("a"), a => a.GetAttribute("href") == "/advanced/join");
+    }
+
+    [Fact]
+    public async Task Region_server_plan_page_shows_the_join_link_to_the_owner_only()
+    {
+        await using var f = Factory(OwnerPlan.RegionServer);
+        using var admin = await SignedInAsync(f, "admin");
+
+        var doc = new HtmlParser().ParseDocument(await admin.GetStringAsync("/advanced/plan", Ct));
+        Assert.DoesNotContain(doc.QuerySelectorAll("a"), a => a.GetAttribute("href") == "/advanced/join");
     }
 
     [Fact]
