@@ -10,19 +10,22 @@
     var culture = CultureInfo.CurrentUICulture;
     var rtl = culture.TextInfo.IsRightToLeft;
     var lang = culture.TwoLetterISOLanguageName is { Length: 2 } two ? two : "en";
+    // The public look (guest.css) plus the page's width, if it asks for more room.
+    var bodyClass = ViewData["Wide"] switch { true => "guest-site page-wide", "full" => "guest-site page-full", _ => "guest-site" };
 }
 <!DOCTYPE html>
-<html lang="@lang" dir="@(rtl ? "rtl" : "ltr")">
+@* Always dark (spec 2026-11-17-public-look-design): no theme.js here, and guest.css after site.css. *@
+<html lang="@lang" dir="@(rtl ? "rtl" : "ltr")" data-bs-theme="dark">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>@(ViewData["Title"] is string t ? t + " - " : "")@gridName</title>
-    <script src="/js/theme.js"></script>
     <link rel="stylesheet" href="@(rtl ? "/lib/bootstrap/bootstrap.rtl.min.css" : "/lib/bootstrap/bootstrap.min.css")">
     <link rel="stylesheet" href="/css/site.css">
+    <link rel="stylesheet" href="/css/guest.css">
     @await RenderSectionAsync("Head", required: false)
 </head>
-<body class="@(ViewData["Wide"] switch { true => "page-wide", "full" => "page-full", _ => null })">
+<body class="@bodyClass">
 @* The guest pages: the grid's name and nothing of the staff side. *@
 <header class="navbar navbar-expand bg-body border-bottom shadow-sm">
     <div class="container">

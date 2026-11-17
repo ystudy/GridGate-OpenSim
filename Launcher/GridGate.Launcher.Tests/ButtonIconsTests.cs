@@ -93,6 +93,6 @@ public sealed class ButtonIconsTests
         Assert.Equal("/img/icons.svg#plus", page.QuerySelector("main a[href='/signup'] svg use")!.GetAttribute("href"));
         Assert.Equal("/img/icons.svg#shield", page.QuerySelector("header a#staff-link svg use")!.GetAttribute("href"));
         Assert.Equal("/img/icons.svg#help", page.QuerySelector("header a#help-link svg use")!.GetAttribute("href"));
-        Assert.Null(page.Body!.GetAttribute("class")); // the narrow, centred column
+        Assert.Equal("guest-site", page.Body!.GetAttribute("class")); // the public look, in the narrow, centred column
     }
 }

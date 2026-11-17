@@ -1,0 +1,84 @@
+/* The public side's look (spec 2026-11-17-public-look-design): loaded only by _GuestLayout, after site.css. Always dark: a
+   navy page, near-white words, bold uppercase headings, a yellow main button and a blue second one. The colours are the
+   variables below, one per line ("--gg-name: #rrggbb;"): PublicLookTests reads them to check the contrast, so keep that form. */
+.guest-site {
+    --gg-bg: #00001a;
+    --gg-surface: #0b1236;
+    --gg-border: #2a3a7a;
+    --gg-text: #f8f9fa;
+    --gg-muted: #c9cfdb;
+    --gg-yellow: #ffc107;
+    --gg-yellow-hover: #ffcd39;
+    --gg-yellow-text: #111111;
+    --gg-blue: #0b5ed7;
+    --gg-blue-hover: #0a58ca;
+    --gg-blue-text: #ffffff;
+    --gg-link: #9ec5fe;
+    --gg-bar: #000000;
+    --gg-glow: 0 0 1.25rem rgba(13, 110, 253, .35);
+
+    --bs-body-bg: var(--gg-bg);
+    --bs-body-bg-rgb: 0, 0, 26;
+    --bs-body-color: var(--gg-text);
+    --bs-emphasis-color: #fff;
+    --bs-secondary-color: var(--gg-muted);
+    --bs-tertiary-bg: var(--gg-surface);
+    --bs-secondary-bg: var(--gg-surface);
+    --bs-border-color: var(--gg-border);
+    --bs-link-color: var(--gg-link);
+    --bs-link-color-rgb: 158, 197, 254;
+    --bs-link-hover-color: #fff;
+    --bs-link-hover-color-rgb: 255, 255, 255;
+    background: var(--gg-bg);
+    color: var(--gg-text);
+}
+
+/* Headings: heavy, uppercase, a little spaced. Body text keeps its normal case. */
+.guest-site h1, .guest-site h2, .guest-site h3, .guest-site .h4 {
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+}
+.guest-site h1 { font-size: clamp(1.8rem, 4vw, 2.6rem); }
+
+/* Buttons: yellow for the main action, blue for the second, outline buttons white. */
+.guest-site .btn { font-weight: 700; }
+.guest-site .btn-primary {
+    --bs-btn-color: var(--gg-yellow-text);
+    --bs-btn-bg: var(--gg-yellow);
+    --bs-btn-border-color: var(--gg-yellow);
+    --bs-btn-hover-color: var(--gg-yellow-text);
+    --bs-btn-hover-bg: var(--gg-yellow-hover);
+    --bs-btn-hover-border-color: var(--gg-yellow-hover);
+    --bs-btn-active-color: var(--gg-yellow-text);
+    --bs-btn-active-bg: var(--gg-yellow-hover);
+    --bs-btn-active-border-color: var(--gg-yellow-hover);
+    --bs-btn-disabled-color: var(--gg-yellow-text);
+    --bs-btn-disabled-bg: var(--gg-yellow);
+    --bs-btn-disabled-border-color: var(--gg-yellow);
+    --bs-btn-focus-shadow-rgb: 255, 193, 7;
+}
+.guest-site .btn-secondary, .guest-site .btn-info {
+    --bs-btn-color: var(--gg-blue-text);
+    --bs-btn-bg: var(--gg-blue);
+    --bs-btn-border-color: var(--gg-blue);
+    --bs-btn-hover-color: var(--gg-blue-text);
+    --bs-btn-hover-bg: var(--gg-blue-hover);
+    --bs-btn-hover-border-color: var(--gg-blue-hover);
+    --bs-btn-active-color: var(--gg-blue-text);
+    --bs-btn-active-bg: var(--gg-blue-hover);
+    --bs-btn-active-border-color: var(--gg-blue-hover);
+    --bs-btn-disabled-color: var(--gg-blue-text);
+    --bs-btn-disabled-bg: var(--gg-blue);
+    --bs-btn-disabled-border-color: var(--gg-blue);
+}
+
+/* Cards: dark blue panels with a soft border and glow. */
+.guest-site .card {
+    --bs-card-bg: var(--gg-surface);
+    --bs-card-border-color: var(--gg-border);
+    --bs-card-color: var(--gg-text);
+    border-radius: 1rem;
+    box-shadow: var(--gg-glow);
+}
+.guest-site .form-control, .guest-site .form-select { background-color: var(--gg-bg); color: var(--gg-text); border-color: var(--gg-border); }
