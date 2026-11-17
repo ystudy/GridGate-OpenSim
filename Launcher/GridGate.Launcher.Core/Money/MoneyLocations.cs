@@ -42,7 +42,8 @@ public sealed record ArrivalResult(PlaceOutcome Outcome, SessionLocation? Verifi
 /// Robust's <c>Presence</c> only proves a session is logged in; its RegionID, which any region can rewrite, is never read.
 /// A location moves only by a start that Robust wrote (<c>gridgate_session_starts</c>) or by a handoff from the key whose
 /// region holds the session. Each placement is one money-database transaction holding the session's row lock, so racing
-/// calls for one session decide one at a time.
+/// calls for one session decide one at a time. Starts and handoffs keep the address Robust listed their region at when
+/// they happened; a paired Region Server's key counts only those that went to its own address.
 /// </summary>
 public sealed class MoneyLocations(Func<CancellationToken, Task<MySqlConnection>> openMoney,
     Func<CancellationToken, Task<MySqlConnection>> openRobust, RegionVerification verification, PresenceCheck presence, TimeProvider time)
@@ -91,10 +92,21 @@ public sealed class MoneyLocations(Func<CancellationToken, Task<MySqlConnection>
     /// <paramref name="toRegion"/>. Accepted only while the session is verified at <paramref name="fromRegion"/>, placed by
     /// this key. A teleport or crossing makes the session handed, at <paramref name="toRegion"/>, until that region's
     /// arrival verifies it there; a teleport to another grid makes it "left the grid". Never creates a location.
+    /// <para>
+    /// <paramref name="toHost"/> and <paramref name="toPort"/> are the address and UDP port the sending region sent the
+    /// avatar to. The handoff is bound to them: a paired server's key counts it only if they are its own (FindMatchAsync).
+    /// Where Robust lists the region when this report lands may already be another server's: the report comes only once
+    /// the move has finished, and a region can be re-registered meanwhile. The sending key is trusted for the address as
+    /// it is for the handoff: it holds the session. A missing or impossible address is kept as none, which no paired key
+    /// counts.
+    /// </para>
     /// </summary>
-    public async Task<PlaceOutcome> HandoffAsync(RegionKeyGrant grant, Guid handoffId, Guid sessionId, Guid fromRegion, Guid toRegion, HandoffKind kind, CancellationToken ct)
+    public async Task<PlaceOutcome> HandoffAsync(RegionKeyGrant grant, Guid handoffId, Guid sessionId, Guid fromRegion, Guid toRegion, HandoffKind kind,
+        string? toHost, int? toPort, CancellationToken ct)
     {
         if (!grant.Regions.Contains(fromRegion)) return PlaceOutcome.NotCovered;
+        // Robust keeps a region's serverIP in 64 characters and its port in an unsigned int; nothing else can be a region's.
+        var known = kind != HandoffKind.OtherGrid && !string.IsNullOrEmpty(toHost) && toHost.Length <= 64 && toPort is >= 0 and <= 65535;
         try
         {
             return await InTransactionAsync(async (conn, tx) =>
@@ -121,10 +133,11 @@ public sealed class MoneyLocations(Func<CancellationToken, Task<MySqlConnection>
                 // session "left the grid" by that shared time.
                 var now = Now;
                 await ExecAsync(conn, tx, """
-                    INSERT INTO handoffs (id, session_id, from_key, from_region, to_region, kind, created)
-                    VALUES (@id, @s, @k, @from, @to, @kind, @t)
+                    INSERT INTO handoffs (id, session_id, from_key, from_region, to_region, kind, created, to_host, to_port)
+                    VALUES (@id, @s, @k, @from, @to, @kind, @t, @toHost, @toPort)
                     """, ct, ("@id", handoffId.ToString()), ("@s", sessionId.ToString()), ("@k", grant.KeyId), ("@from", fromRegion.ToString()),
-                    ("@to", toRegion.ToString()), ("@kind", kind.ToString()), ("@t", now));
+                    ("@to", toRegion.ToString()), ("@kind", kind.ToString()), ("@t", now),
+                    ("@toHost", known ? toHost : null), ("@toPort", known ? toPort : null));
 
                 // A teleport to another grid is "left the grid" at once. Its handoff row is kept so a retry is recognised and
                 // a failed teleport can be taken back: arrivals never match that kind.
@@ -369,16 +382,18 @@ public sealed class MoneyLocations(Func<CancellationToken, Task<MySqlConnection>
         var here = row?.Location;
 
         // 1. A handoff: the session was handed to this region from its verified place, by a handoff still open and younger
-        // than HandoffLife.
+        // than HandoffLife. For a paired server's key it must also have gone to that server: Robust lets any server register
+        // any region id, so a server that registers a region later must not use handoffs to the region's real address.
         if (here is { State: LocationState.Handed } && here.RegionId == regionId)
         {
             await using var cmd = Command(conn, tx, $"""
-                SELECT id FROM handoffs
+                SELECT id, to_host, to_port FROM handoffs
                 WHERE session_id = @s AND to_region = @r AND kind IN {OpenKinds} AND created > @since
                 ORDER BY created DESC LIMIT 1
                 """, ("@s", sessionId.ToString()), ("@r", regionId.ToString()), ("@since", Now - HandoffLife));
             await using var r = await cmd.ExecuteReaderAsync(ct);
-            if (await r.ReadAsync(ct)) return new Match(r.GetValue(0).ToString(), null);
+            if (await r.ReadAsync(ct) && WentTo(grant, r.IsDBNull(1) ? null : r.GetString(1), r.IsDBNull(2) ? null : r.GetInt64(2)))
+                return new Match(r.GetValue(0).ToString(), null);
         }
 
         // A start never moves a verified session: a second start through the Gatekeeper is refused while the session is
@@ -389,7 +404,7 @@ public sealed class MoneyLocations(Func<CancellationToken, Task<MySqlConnection>
         // 2. A login start counts only when the session was never placed. A login region could otherwise hold back its own
         // arrival and use the start once the avatar had moved on and been placed unverified elsewhere. An early claim by
         // another region before the real arrival therefore pauses money until the next login; it can't verify anyone.
-        if (row is null && await StartAsync(sessionId, agentId, regionId, "login", after, ct) is { } login)
+        if (row is null && await StartAsync(grant, sessionId, agentId, regionId, "login", after, ct) is { } login)
             return new Match(null, login);
 
         // 3. A Gatekeeper start counts only in a region of the Grid Asset Server's own (a local program's key, never a
@@ -397,25 +412,39 @@ public sealed class MoneyLocations(Func<CancellationToken, Task<MySqlConnection>
         // on: those regions report an arrival only when the viewer really connects, so a false claim elsewhere can't keep a
         // resident from coming home.
         if (grant.ServerHost is null && (row is null || here!.State is LocationState.LeftGrid or LocationState.Unverified or LocationState.Handed)
-            && await StartAsync(sessionId, agentId, regionId, "gatekeeper", after, ct) is { } gatekeeper)
+            && await StartAsync(grant, sessionId, agentId, regionId, "gatekeeper", after, ct) is { } gatekeeper)
             return new Match(null, gatekeeper);
 
         return null;
     }
 
     /// <summary>
-    /// The newest start Robust wrote for the session in the region, after <paramref name="after"/> and within the last day
-    /// by the database's clock (Robust's own clean-up only runs on logins, so it can't be relied on). A missing
-    /// table throws, and the caller answers Unavailable.
+    /// Whether a start or handoff that went to <paramref name="host"/> and UDP port <paramref name="port"/> counts for
+    /// <paramref name="grant"/>. A local program's key has no address to check. A paired server's key counts it only when
+    /// that address is the server's, by the same comparison that decides which regions it covers
+    /// (<see cref="RegionHosts.IsAt"/>); an event with no address counts for no paired key.
     /// </summary>
-    private async Task<long?> StartAsync(Guid sessionId, Guid agentId, Guid regionId, string source, long after, CancellationToken ct)
+    private static bool WentTo(RegionKeyGrant grant, string? host, long? port) =>
+        grant.ServerHost is not { } server || RegionHosts.IsAt(host, port, server, grant.FromPort, grant.ToPort);
+
+    /// <summary>
+    /// The newest start Robust wrote for the session in the region, after <paramref name="after"/> and within the last day
+    /// by the database's clock (Robust's own clean-up only runs on logins, so it can't be relied on), that went to
+    /// <paramref name="grant"/>'s address (<see cref="WentTo"/>). A missing table throws, and the caller answers Unavailable.
+    /// </summary>
+    private async Task<long?> StartAsync(RegionKeyGrant grant, Guid sessionId, Guid agentId, Guid regionId, string source, long after, CancellationToken ct)
     {
         await using var conn = await openRobust(ct);
         await using var cmd = Command(conn, null, """
-            SELECT MAX(Id) FROM gridgate_session_starts
+            SELECT Id, ServerIP, ServerPort FROM gridgate_session_starts
             WHERE SessionID = @s AND UserID = @u AND RegionID = @r AND Source = @src AND Id > @after AND At > NOW() - INTERVAL 1 DAY
+            ORDER BY Id DESC
             """, ("@s", sessionId.ToString()), ("@u", agentId.ToString()), ("@r", regionId.ToString()), ("@src", source), ("@after", after));
-        return await cmd.ExecuteScalarAsync(ct) is { } id and not DBNull ? Convert.ToInt64(id) : null;
+        await using var r = await cmd.ExecuteReaderAsync(ct);
+        while (await r.ReadAsync(ct))
+            if (WentTo(grant, r.IsDBNull(1) ? null : r.GetValue(1).ToString(), r.IsDBNull(2) ? null : Convert.ToInt64(r.GetValue(2))))
+                return Convert.ToInt64(r.GetValue(0));
+        return null;
     }
 
     private Task PlaceAsync(MySqlConnection conn, MySqlTransaction tx, Guid sessionId, Guid agentId, Guid regionId, string keyId, LocationState state, long lastStartId, CancellationToken ct) =>

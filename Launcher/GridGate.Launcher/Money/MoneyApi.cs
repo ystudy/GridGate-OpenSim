@@ -34,8 +34,11 @@ internal static class MoneyApi
     internal sealed record ChargeBody(Guid? TxnId, string? Type, Who? Payer, long? Amount, Guid? PayTo, Guid? RegionId);
     internal sealed record HoldBody(Guid? TxnId, string? Kind, Who? Buyer, Who? Seller, long? Amount, Guid? RegionId, Guid? ObjectId, string? ObjectName);
     internal sealed record SettleBody(Guid? TxnId, long? HoldId);
-    /// <summary>A module's handoff; <c>Kind</c> is <c>teleport</c>, <c>crossing</c> or <c>other_grid</c>.</summary>
-    internal sealed record HandoffBody(Guid? Id, Guid? SessionId, Guid? FromRegion, Guid? ToRegion, string? Kind);
+    /// <summary>
+    /// A module's handoff; <c>Kind</c> is <c>teleport</c>, <c>crossing</c> or <c>other_grid</c>. <c>ToHost</c> and
+    /// <c>ToPort</c> are the address and UDP port the sending region sent the avatar to; an older module sends neither.
+    /// </summary>
+    internal sealed record HandoffBody(Guid? Id, Guid? SessionId, Guid? FromRegion, Guid? ToRegion, string? Kind, string? ToHost = null, int? ToPort = null);
     internal sealed record CancelBody(Guid? SessionId, Guid? FromRegion);
     internal sealed record ArrivedBody(Guid? Id, Guid? SessionId, Guid? AgentId, Guid? RegionId);
 
@@ -164,7 +167,8 @@ internal static class MoneyApi
                 "other_grid" => HandoffKind.OtherGrid,
                 _ => throw new BadRequest(),
             };
-            return Code(PlaceCode(await Locations(c).HandoffAsync(grant, Need(b.Id), Need(b.SessionId), Need(b.FromRegion), Need(b.ToRegion), kind, ct)));
+            return Code(PlaceCode(await Locations(c).HandoffAsync(grant, Need(b.Id), Need(b.SessionId), Need(b.FromRegion), Need(b.ToRegion), kind,
+                b.ToHost, b.ToPort, ct)));
         }, whileOff: true);
         Post(app, "/money/v1/handoff/cancel", c, async (http, grant, ct) =>
         {

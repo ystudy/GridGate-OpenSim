@@ -201,9 +201,13 @@ internal sealed class MoneyServiceRig : IAsyncDisposable
         return await call;
     }
 
-    /// <summary>A module's handoff: <paramref name="session"/> leaves <paramref name="from"/> for <paramref name="to"/>.</summary>
-    public async Task<string> Handoff(string key, Guid session, Guid from, Guid to, string kind = "teleport") =>
-        CodeOf(await Post("handoff", new { id = Guid.NewGuid(), sessionId = session, fromRegion = from, toRegion = to, kind }, key));
+    /// <summary>
+    /// A module's handoff: <paramref name="session"/> leaves <paramref name="from"/> for <paramref name="to"/>, sent to
+    /// <paramref name="toHost"/> and <paramref name="toPort"/> when given (as the module does), with no address otherwise (as an
+    /// older module does).
+    /// </summary>
+    public async Task<string> Handoff(string key, Guid session, Guid from, Guid to, string kind = "teleport", string? toHost = null, int? toPort = null) =>
+        CodeOf(await Post("handoff", new { id = Guid.NewGuid(), sessionId = session, fromRegion = from, toRegion = to, kind, toHost, toPort }, key));
 
     /// <summary>A teleport from Here to There: p1 hands <paramref name="session"/> off and p2 reports the arrival.</summary>
     public async Task MoveToThere(Guid session)

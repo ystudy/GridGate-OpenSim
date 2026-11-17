@@ -19,7 +19,7 @@ public sealed class MoneySchemaTests(MoneyMariaDb maria) : IClassFixture<MoneyMa
         await db.EnsureSchemaAsync();
 
         Assert.Equal(3, await db.Scalar("SELECT COUNT(*) FROM `money`.`accounts`"));
-        Assert.Equal("3", await db.Text("SELECT value FROM `money`.`state` WHERE name = 'schema_version'"));
+        Assert.Equal("4", await db.Text("SELECT value FROM `money`.`state` WHERE name = 'schema_version'"));
         Assert.Equal("0", await db.Text("SELECT value FROM `money`.`state` WHERE name = 'frozen'"));
         Assert.Equal("system:bank", await db.Text("SELECT home FROM `money`.`accounts` WHERE id = 1"));
         Assert.Equal("system:fees", await db.Text("SELECT home FROM `money`.`accounts` WHERE id = 2"));
@@ -53,7 +53,7 @@ public sealed class MoneySchemaTests(MoneyMariaDb maria) : IClassFixture<MoneyMa
         await db.EnsureSchemaAsync();
 
         Assert.Equal("utf8mb4_bin", await HomeCollation(db));
-        Assert.Equal("3", await db.Text("SELECT value FROM `money`.`state` WHERE name = 'schema_version'"));
+        Assert.Equal("4", await db.Text("SELECT value FROM `money`.`state` WHERE name = 'schema_version'"));
         Assert.Equal(3, await db.Scalar("SELECT COUNT(*) FROM `money`.`accounts`"));
     }
 
@@ -61,13 +61,13 @@ public sealed class MoneySchemaTests(MoneyMariaDb maria) : IClassFixture<MoneyMa
         ["session_locations", "handoffs", "region_pins", "key_heard", "region_heard", "limit_overrides", "alerts", "key_locks"];
 
     [Fact]
-    public async Task Fresh_schema_is_version_3_with_the_new_tables()
+    public async Task Fresh_schema_is_version_4_with_the_new_tables()
     {
         var db = await maria.FreshAsync();
 
         await db.EnsureSchemaAsync();
 
-        Assert.Equal("3", await db.Text("SELECT value FROM `money`.`state` WHERE name = 'schema_version'"));
+        Assert.Equal("4", await db.Text("SELECT value FROM `money`.`state` WHERE name = 'schema_version'"));
         foreach (var table in V3Tables)
             Assert.Equal(1, await db.Scalar($"SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = 'money' AND TABLE_NAME = '{table}'"));
         foreach (var table in new[] { "entries", "holds" })
@@ -78,10 +78,12 @@ public sealed class MoneySchemaTests(MoneyMariaDb maria) : IClassFixture<MoneyMa
         Assert.Equal("tinyint(4)", await db.Text("SELECT COLUMN_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = 'money' AND TABLE_NAME = 'alerts' AND COLUMN_NAME = 'repeated'"));
         // Where a person is (the website) is found by agent, newest first.
         Assert.Equal(2, await db.Scalar("SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = 'money' AND TABLE_NAME = 'session_locations' AND INDEX_NAME = 'agent_updated'"));
+        // A handoff keeps the address and port Robust listed its destination at.
+        Assert.Equal(("varchar(64)", "int(11)"), await HandoffAddressTypes(db));
     }
 
     [Fact]
-    public async Task Version_2_database_moves_to_3_and_keeps_entries()
+    public async Task Version_2_database_moves_to_4_and_keeps_entries()
     {
         var db = await maria.FreshAsync();
         await db.EnsureSchemaAsync();
@@ -98,13 +100,42 @@ public sealed class MoneySchemaTests(MoneyMariaDb maria) : IClassFixture<MoneyMa
 
         await db.EnsureSchemaAsync();
 
-        Assert.Equal("3", await db.Text("SELECT value FROM `money`.`state` WHERE name = 'schema_version'"));
+        Assert.Equal("4", await db.Text("SELECT value FROM `money`.`state` WHERE name = 'schema_version'"));
         Assert.Equal(1, await db.Scalar("SELECT COUNT(*) FROM `money`.`entries`"));
         Assert.Equal(1, await db.Scalar("SELECT COUNT(*) FROM `money`.`entries` WHERE key_id IS NULL"));
         Assert.Equal(1, await db.Scalar("SELECT COUNT(*) FROM `money`.`holds` WHERE key_id IS NULL"));
         foreach (var table in V3Tables)
             Assert.Equal(1, await db.Scalar($"SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = 'money' AND TABLE_NAME = '{table}'"));
         Assert.Equal(3, await db.Scalar("SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = 'money' AND TABLE_NAME = 'entries' AND INDEX_NAME = 'key_type_at'"));
+        Assert.Equal(("varchar(64)", "int(11)"), await HandoffAddressTypes(db));
+    }
+
+    private static async Task<(string?, string?)> HandoffAddressTypes(MoneyTestDatabase db)
+    {
+        const string Of = "SELECT COLUMN_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = 'money' AND TABLE_NAME = 'handoffs' AND COLUMN_NAME = ";
+        return (await db.Text(Of + "'to_host'"), await db.Text(Of + "'to_port'"));
+    }
+
+    [Fact]
+    public async Task Version_3_migrates_to_4()
+    {
+        // A version 3 database has handoffs without a destination address. They keep none, so they count for no paired key;
+        // they expire within minutes anyway.
+        var db = await maria.FreshAsync();
+        await db.EnsureSchemaAsync();
+        var handoff = Guid.NewGuid();
+        await db.Sql($"""
+            ALTER TABLE `money`.`handoffs` DROP COLUMN to_host, DROP COLUMN to_port;
+            INSERT INTO `money`.`handoffs` (id, session_id, from_key, from_region, to_region, kind, created)
+              VALUES ('{handoff}', '{Guid.NewGuid()}', 'p1', '{Guid.NewGuid()}', '{Guid.NewGuid()}', 'Teleport', UTC_TIMESTAMP(6));
+            UPDATE `money`.`state` SET value = '3' WHERE name = 'schema_version';
+            """);
+
+        await db.EnsureSchemaAsync();
+
+        Assert.Equal("4", await db.Text("SELECT value FROM `money`.`state` WHERE name = 'schema_version'"));
+        Assert.Equal(("varchar(64)", "int(11)"), await HandoffAddressTypes(db));
+        Assert.Equal(1, await db.Scalar($"SELECT COUNT(*) FROM `money`.`handoffs` WHERE id = '{handoff}' AND to_host IS NULL AND to_port IS NULL"));
     }
 
     [Fact]

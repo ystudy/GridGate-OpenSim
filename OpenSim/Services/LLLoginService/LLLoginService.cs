@@ -357,15 +357,16 @@ namespace OpenSim.Services.LLLoginService
             return response;
         }
 
-        // GridGate: writes the session-start row; logs without ids and never throws.
-        private void RecordSessionStart(UUID sessionID, UUID userID, UUID regionID)
+        // GridGate: writes the session-start row, with the address the session was sent to (the destination's
+        // ExternalHostName and UDP port, as Robust's regions table lists them); logs without ids and never throws.
+        private void RecordSessionStart(UUID sessionID, UUID userID, GridRegion destination)
         {
             ISessionStartsData starts = m_SessionStarts;
             if (starts is null)
                 return;
             try
             {
-                starts.Record(sessionID, userID, regionID, "login");
+                starts.Record(sessionID, userID, destination.RegionID, destination.ExternalHostName, destination.InternalEndPoint?.Port, "login");
 
                 long now = Environment.TickCount64;
                 long last = Interlocked.Read(ref m_SessionStartsCleanedAt);
@@ -676,7 +677,7 @@ namespace OpenSim.Services.LLLoginService
                 }
 
                 // GridGate: record where this session starts. It must never fail the login.
-                RecordSessionStart(session, account.PrincipalID, destination.RegionID);
+                RecordSessionStart(session, account.PrincipalID, destination);
 
                 // only now we can assume a login
                 guinfo = m_GridUserService.LoggedIn(PrincipalIDstr);

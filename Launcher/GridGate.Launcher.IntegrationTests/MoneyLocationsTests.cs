@@ -28,8 +28,12 @@ public sealed class MoneyLocationsTests(MoneyMariaDb maria) : IClassFixture<Mone
     private static readonly RegionKeyGrant P1 = new("p1", new HashSet<Guid> { R1, R5 });
     private static readonly RegionKeyGrant P2 = new("p2", new HashSet<Guid> { R2 });
     private static readonly RegionKeyGrant P4 = new("p4", new HashSet<Guid> { R4 });
-    private static readonly RegionKeyGrant Paired = new("server:" + Guid.Parse("d0000000-0000-0000-0000-00000000000d").ToString("N"),
-        new HashSet<Guid> { R3 }, "192.168.1.20", 9000, 65536);
+    private static readonly Guid PairedId = Guid.Parse("d0000000-0000-0000-0000-00000000000d");
+    private static readonly RegionKeyGrant Paired = new("server:" + PairedId.ToString("N"), new HashSet<Guid> { R3 }, "192.168.1.20", 9000, 65536);
+
+    /// <summary>Another paired Region Server, that R3 moves to when the owner approves it.</summary>
+    private static readonly Guid OtherId = Guid.Parse("d0000000-0000-0000-0000-0000000000ee");
+    private static readonly RegionKeyGrant Other = new("server:" + OtherId.ToString("N"), new HashSet<Guid> { R3 }, "192.168.1.30", 9000, 65536);
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
@@ -37,7 +41,12 @@ public sealed class MoneyLocationsTests(MoneyMariaDb maria) : IClassFixture<Mone
     private FakeTimeProvider _clock = null!;
     private MoneyLocations _locations = null!;
     private RegionVerification _verification = null!;
+    private RegionPins _pins = null!;
 
+    /// <summary>
+    /// A fresh database where R3 is listed in Robust at the paired server's address, and pinned to it. The local programs'
+    /// regions aren't listed: their starts and handoffs carry no address, which only paired keys look at.
+    /// </summary>
     private async Task StartAsync()
     {
         _db = await maria.FreshAsync();
@@ -45,8 +54,11 @@ public sealed class MoneyLocationsTests(MoneyMariaDb maria) : IClassFixture<Mone
         await _db.AddPresence(U, R1, SessionU, SecureU);
         await _db.AddPresence(V, R1, SessionV, SecureV);
         _clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
-        var pins = new RegionPins(_db.OpenMoney, new RegionHosts(_db.OpenRobust), _clock);
-        _verification = new RegionVerification(_db.OpenMoney, _db.OpenRobust, pins, _clock);
+        _pins = new RegionPins(_db.OpenMoney, new RegionHosts(_db.OpenRobust), _clock);
+        await _db.AddRegion(R3, Paired.ServerHost!);
+        var server = new PairedServer(PairedId, Paired.ServerHost!, new string('a', 64), DateTimeOffset.UtcNow, 9000, "machine-paired");
+        Assert.Contains(R3, await _pins.CoveredAsync(server, 9000, 65536, new HashSet<Guid>(), Ct));
+        _verification = new RegionVerification(_db.OpenMoney, _db.OpenRobust, _pins, _clock);
         await ModulesCheckIn();
         _locations = new MoneyLocations(_db.OpenMoney, _db.OpenRobust, _verification, new PresenceCheck(_db.OpenRobust), _clock);
     }
@@ -78,8 +90,13 @@ public sealed class MoneyLocationsTests(MoneyMariaDb maria) : IClassFixture<Mone
     private Task<ArrivalResult> Arrive(RegionKeyGrant grant, Guid region, Guid? session = null, Guid? agent = null) =>
         Settle(_locations.ArrivedAsync(grant, session ?? SessionU, agent ?? U, region, Ct));
 
-    private Task<PlaceOutcome> Handoff(RegionKeyGrant grant, Guid from, Guid to, HandoffKind kind = HandoffKind.Teleport, Guid? id = null, Guid? session = null) =>
-        _locations.HandoffAsync(grant, id ?? Guid.NewGuid(), session ?? SessionU, from, to, kind, Ct);
+    /// <summary>The paired server's address and R3's port: where a region sends an avatar going to R3.</summary>
+    private static readonly (string Host, int Port) AtPaired = ("192.168.1.20", 9000);
+
+    /// <summary>A handoff sent to <paramref name="at"/>, the address the sending region used; with none, as an older module sends.</summary>
+    private Task<PlaceOutcome> Handoff(RegionKeyGrant grant, Guid from, Guid to, HandoffKind kind = HandoffKind.Teleport, Guid? id = null, Guid? session = null,
+        (string Host, int Port)? at = null) =>
+        _locations.HandoffAsync(grant, id ?? Guid.NewGuid(), session ?? SessionU, from, to, kind, at?.Host, at?.Port, Ct);
 
     /// <summary>U logs in at R1 and arrives there: verified at R1.</summary>
     private async Task LoggedInAtR1()
@@ -847,5 +864,105 @@ public sealed class MoneyLocationsTests(MoneyMariaDb maria) : IClassFixture<Mone
 
         Assert.Equal(PlaceOutcome.PlacedUnverified, (await Arrive(P1, R1)).Outcome);
         Assert.Equal(PlaceOutcome.PlacedUnverified, (await Arrive(P1, R1, SessionV, V)).Outcome);
+    }
+
+    [Fact]
+    public async Task Approving_a_move_counts_only_what_went_to_the_new_server()
+    {
+        // R3 moves from the paired server to another one, and the owner approves it. The login and the handoff from before
+        // the move went to the old server's address: they don't count for the new one. Ones to the new address do.
+        await StartAsync();
+        await _verification.HeardAsync(Other.KeyId, RegionVerification.HandoffProtocol, [R3], Ct);
+        await _db.AddSessionStart(SessionU, U, R3, "login"); // U logs in at R3 while the old server runs it
+        await _db.AddSessionStart(SessionV, V, R1, "login");
+        Assert.Equal(PlaceOutcome.Ok, (await Arrive(P1, R1, SessionV, V)).Outcome);
+        Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, R3, session: SessionV, at: AtPaired)); // V is on the way to R3
+        await _db.AddRegion(R3, Other.ServerHost!);
+
+        await _pins.ApproveMoveAsync(R3, OtherId, Ct);
+
+        Assert.Equal(PlaceOutcome.PlacedUnverified, (await Arrive(Other, R3)).Outcome);
+        Assert.Equal(PlaceOutcome.PlacedUnverified, (await Arrive(Other, R3, SessionV, V)).Outcome);
+        Assert.Equal(0, await VerifiedRows());
+
+        // After the move: a new login at R3, and a new handoff to it, went to the new server.
+        var (login, handed) = (Guid.NewGuid(), Guid.NewGuid());
+        await _db.AddPresence(U, R3, login, Guid.NewGuid());
+        await _db.AddSessionStart(login, U, R3, "login");
+        Assert.Equal(PlaceOutcome.Ok, (await Arrive(Other, R3, login)).Outcome);
+        await _db.AddPresence(V, R1, handed, Guid.NewGuid());
+        await _db.AddSessionStart(handed, V, R1, "login");
+        Assert.Equal(PlaceOutcome.Ok, (await Arrive(P1, R1, handed, V)).Outcome);
+        Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, R3, session: handed, at: (Other.ServerHost!, 9000)));
+        Assert.Equal(PlaceOutcome.Ok, (await Arrive(Other, R3, handed, V)).Outcome);
+    }
+
+    [Fact]
+    public async Task A_handoff_keeps_the_address_the_sending_region_used()
+    {
+        // Robust lists R3 at the paired server, but the region that sent U there used another address (its cache was older,
+        // or R3 was registered again since): that is where U went, and the handoff keeps it.
+        await StartAsync();
+        await LoggedInAtR1();
+
+        Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, R3, at: ("192.168.1.77", 9010)));
+
+        Assert.Equal("192.168.1.77", await _db.Text($"SELECT to_host FROM `money`.`handoffs` WHERE to_region = '{R3}'"));
+        Assert.Equal(9010, await _db.Scalar($"SELECT to_port FROM `money`.`handoffs` WHERE to_region = '{R3}'"));
+        Assert.Equal(PlaceOutcome.PlacedUnverified, (await Arrive(Paired, R3)).Outcome);
+    }
+
+    [Fact]
+    public async Task A_handoff_to_the_paired_servers_address_verifies_there()
+    {
+        await StartAsync();
+        await LoggedInAtR1();
+
+        Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, R3, at: AtPaired));
+
+        Assert.Equal(PlaceOutcome.Ok, (await Arrive(Paired, R3)).Outcome);
+    }
+
+    [Fact]
+    public async Task A_handoff_with_no_address_counts_for_no_paired_key_but_still_for_a_local_one()
+    {
+        // An older module sends no address: nothing says the avatar went to a paired server.
+        await StartAsync();
+        await LoggedInAtR1();
+        await _db.AddSessionStart(SessionV, V, R1, "login");
+        Assert.Equal(PlaceOutcome.Ok, (await Arrive(P1, R1, SessionV, V)).Outcome);
+
+        Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, R3));
+        Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, R2, session: SessionV));
+
+        Assert.Equal(PlaceOutcome.PlacedUnverified, (await Arrive(Paired, R3)).Outcome);
+        Assert.Equal(PlaceOutcome.Ok, (await Arrive(P2, R2, SessionV, V)).Outcome);
+    }
+
+    [Theory]
+    [InlineData("", 9000)]
+    [InlineData("192.168.1.20", -1)]
+    [InlineData("192.168.1.20", 65536)]
+    public async Task A_handoff_with_an_impossible_address_keeps_none(string host, int port)
+    {
+        await StartAsync();
+        await LoggedInAtR1();
+
+        Assert.Equal(PlaceOutcome.Ok, await Handoff(P1, R1, R3, at: (host, port)));
+
+        Assert.Equal(1, await _db.Scalar("SELECT COUNT(*) FROM `money`.`handoffs` WHERE to_host IS NULL AND to_port IS NULL"));
+    }
+
+    [Fact]
+    public async Task A_start_at_the_servers_host_but_outside_its_ports_does_not_count()
+    {
+        // Two paired servers can share an address, each with its own ports: a start to the other one's port isn't this one's.
+        await StartAsync();
+        var low = Paired with { ToPort = 9500 };
+        await _db.AddRegion(R3, Paired.ServerHost!, 9600);
+        await _db.AddSessionStart(SessionU, U, R3, "login");
+        await _db.AddRegion(R3, Paired.ServerHost!, 9000);
+
+        Assert.Equal(PlaceOutcome.PlacedUnverified, (await Arrive(low, R3)).Outcome);
     }
 }

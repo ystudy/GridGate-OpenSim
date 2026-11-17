@@ -583,14 +583,15 @@ namespace OpenSim.Region.ScriptEngine.Yengine
         }
 
         /// <summary>
-        /// GridGate: a saved PERMISSION_DEBIT comes back only from a running script's own state (a region start, a
+        /// GridGate: a saved PERMISSION_DEBIT comes back only from this program's own running script (a region start, a
         /// crossing, a teleport), granted by the owner. A rez or an attach reads the state saved in the object's asset,
-        /// which an inventory backup or a copy sale can bring from someone else (money review 2026-11-15, R-1).
+        /// which an inventory backup or a copy sale can bring from someone else. A state from outside this program
+        /// (another program's crossing or teleport, or an archive: the object is marked StateFromOutside) can name
+        /// anyone as the granter, so it brings no grant back either.
         /// </summary>
         private int RestoredPermsMask(UUID granter, int mask)
         {
-            bool fromRunningScript = m_StateSource == StateSource.RegionStart || m_StateSource == StateSource.PrimCrossing
-                                     || m_StateSource == StateSource.Teleporting;
+            bool fromRunningScript = DebitPermission.FromRunningScript(m_StateSource, m_Part.ParentGroup.StateFromOutside);
             return DebitPermission.Restored(mask, granter, m_Part.OwnerID, fromRunningScript);
         }
 

@@ -312,6 +312,13 @@ public sealed class GridBootTests : IDisposable
             Assert.Equal(1, await CountAsync(grid, "SELECT COUNT(*) FROM `robust`.`gridgate_session_starts` WHERE `SessionID` = @id", Guid.Parse(login.SessionId!), ct));
             Assert.Equal("login", await ScalarAsync(grid, "SELECT `Source` FROM `robust`.`gridgate_session_starts` WHERE `SessionID` = @id", login.SessionId!, ct));
             Assert.Equal(isle.Uuid.ToString(), Convert.ToString(await ScalarAsync(grid, "SELECT `RegionID` FROM `robust`.`gridgate_session_starts` WHERE `SessionID` = @id", login.SessionId!, ct)));
+            // With the address the session was sent to, as Robust's regions table lists the region.
+            foreach (var (start, region) in new[] { ("ServerIP", "serverIP"), ("ServerPort", "serverPort") })
+            {
+                var listed = Convert.ToString(await ScalarAsync(grid, $"SELECT `{region}` FROM `robust`.`regions` WHERE `uuid` = @id", isle.Uuid.ToString(), ct));
+                Assert.False(string.IsNullOrEmpty(listed), $"Robust lists Isle with no {region}");
+                Assert.Equal(listed, Convert.ToString(await ScalarAsync(grid, $"SELECT `{start}` FROM `robust`.`gridgate_session_starts` WHERE `SessionID` = @id", login.SessionId!, ct)));
+            }
 
             await grid.StopAllAsync(ct);
         }

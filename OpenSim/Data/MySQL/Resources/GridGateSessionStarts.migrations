@@ -14,3 +14,13 @@ CREATE TABLE `gridgate_session_starts` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 COMMIT;
+
+:VERSION 2         # --------------------------
+
+BEGIN;
+
+ALTER TABLE `gridgate_session_starts`
+    ADD COLUMN `ServerIP` VARCHAR(64) NULL,
+    ADD COLUMN `ServerPort` INT UNSIGNED NULL;
+
+COMMIT;

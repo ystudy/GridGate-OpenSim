@@ -161,9 +161,14 @@ marked in the code with a `GridGate:` comment. When an upstream pick touches the
 | `fix(opensim): session-start warnings name only the error type; the crossing event says what it is for` | `LLLoginService.cs`, `GatekeeperService.cs` (the session-start warnings), `EntityTransferModule.cs` (the comment at the crossing trigger) |
 | `fix(opensim): group join, invitation, classified and caps upload fees are held before the action` | `OpenSim/Framework/IFeeHoldModule.cs` (new), `OpenSim.Framework.csproj`, `Addons/Groups/GroupsModule.cs` (`JoinGroupRequest`, invitation accept), `XmlRpcGroups/GroupsModule.cs` (same), `UserProfileModule.cs` (`ClassifiedInfoUpdate`), `BunchOfCaps.cs` (`UploadCompleteHandler`; the rest of it moved, body unchanged, into the new private `StoreUpload`) |
 | `fix(opensim): an invitation to a paid group says the join fee and gives it to the viewer` | `Addons/Groups/GroupsModule.cs` (`InviteGroup`, `JoinFeeOnAccept`, `InvitationBucket`), `XmlRpcGroups/GroupsModule.cs` (same); `IFeeHoldModule.cs` (the `IFeeHold.Settle` comment) |
+| `fix(scripts): a debit permission saved in script state from another program or an archive is not restored` | `OpenSim/Framework/ISceneObject.cs` and `SceneObjectGroup.cs` (`StateFromOutside`, cleared in `CloneForNewScene`), `OpenSim/Server/Handlers/Simulation/ObjectHandlers.cs` (`DoObjectPost`), `OpenSim/Framework/ChildAgentDataUpdate.cs` (`AgentData.Unpack`, the attachment objects), `ArchiveReadRequest.cs` (`LoadObjects`), `SceneXmlLoader.cs` (`LoadPrimsFromXml`, `LoadPrimsFromXml2`), `XMRInstCtor.cs` (`RestoredPermsMask`), `DebitPermission.cs` (`FromRunningScript`) |
+| `fix(scripts): a debit permission from another program or an archive is not kept in the saved script state either` | `SceneObjectGroup.cs` (`StateFromOutside` setter, both `LoadScriptState`s), `SceneObjectGroup.Inventory.cs` (`SetState`, `DropDebit`, `DropDebitFromSavedScriptStates`, `DropDebitFromStoredStates`) |
+| `fix(money): a paired server counts only the logins and handoffs that went to its own address` | `GridGateSessionStarts.migrations` (version 2: `ServerIP`, `ServerPort`), `ISessionStartsData.cs` (`Record` takes the address; `SessionStartRow`), `MySQLSessionStartsData.cs` (`Record`), `LLLoginService.cs` (`RecordSessionStart` takes the destination), `GatekeeperService.cs` (the session-start record in `LoginAgent`) |
 
 The script changes (the six `LSL_Api.cs` rows) are tried against a real `LSL_Api` in a test region by
-`tests/GridGate.Lsl.Tests`, which CI runs on Linux and Windows. After an upstream pick that touches `LSL_Api.cs`, run it:
+`tests/GridGate.Lsl.Tests`, which CI runs on Linux and Windows, and so are the places the saved-debit row marks an
+object whose script state comes from outside. After an upstream pick that touches `LSL_Api.cs` or one of those files, run
+it:
 
 ```bash
 dotnet test --project tests/GridGate.Lsl.Tests -c Release

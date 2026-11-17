@@ -71,8 +71,11 @@ internal sealed class PlaceReporter : IDisposable
     /// </summary>
     private sealed record Report(string What, Kind Kind, Guid Session, DateTimeOffset Queued, Func<CancellationToken, Task<MoneyAnswer>> Send);
 
-    /// <summary>A teleport or crossing (<paramref name="Kind"/>) of <paramref name="Session"/> from one region to another, and when it began.</summary>
-    private sealed record Leaving(Guid Session, Guid From, Guid To, string Kind)
+    /// <summary>
+    /// A teleport or crossing (<paramref name="Kind"/>) of <paramref name="Session"/> from one region to another, the address
+    /// and UDP port this program sent the avatar to (<paramref name="ToHost"/>, <paramref name="ToPort"/>), and when it began.
+    /// </summary>
+    private sealed record Leaving(Guid Session, Guid From, Guid To, string Kind, string? ToHost, int? ToPort)
     {
         public DateTimeOffset At { get; init; }
     }
@@ -118,10 +121,10 @@ internal sealed class PlaceReporter : IDisposable
         if (gridLogout)
         {
             Forget(agent);
-            Handoff(session, fromRegion, to, "other_grid");
+            Handoff(session, fromRegion, to, "other_grid", null, null);
             return;
         }
-        Remember(agent, new Leaving(session, fromRegion, to, "teleport"));
+        Remember(agent, new Leaving(session, fromRegion, to, "teleport", finalDestination.ExternalHostName, finalDestination.InternalEndPoint?.Port));
     }
 
     /// <summary>
@@ -143,7 +146,8 @@ internal sealed class PlaceReporter : IDisposable
     public void Crossing(ScenePresence sp, GridRegion newRegion)
     {
         if (sp.IsNPC || newRegion is null) return;
-        Remember(sp.UUID.Guid, new Leaving(sp.ControllingClient.SessionId.Guid, sp.Scene.RegionInfo.RegionID.Guid, newRegion.RegionID.Guid, "crossing"));
+        Remember(sp.UUID.Guid, new Leaving(sp.ControllingClient.SessionId.Guid, sp.Scene.RegionInfo.RegionID.Guid, newRegion.RegionID.Guid, "crossing",
+            newRegion.ExternalHostName, newRegion.InternalEndPoint?.Port));
     }
 
     /// <summary>
@@ -208,13 +212,18 @@ internal sealed class PlaceReporter : IDisposable
 
     private static string Reports(int n) => n == 1 ? "1 place report" : $"{n} place reports";
 
-    private void Handoff(Leaving l) => Handoff(l.Session, l.From, l.To, l.Kind);
+    private void Handoff(Leaving l) => Handoff(l.Session, l.From, l.To, l.Kind, l.ToHost, l.ToPort);
 
-    private void Handoff(Guid session, Guid from, Guid to, string kind)
+    /// <summary>
+    /// Queues a handoff with the address and port the avatar was sent to, as OpenSim found the destination when the move
+    /// started. The service binds the handoff to that address, not to wherever Robust lists the region by the time the report
+    /// lands: a paired Region Server counts it only if it went to that server.
+    /// </summary>
+    private void Handoff(Guid session, Guid from, Guid to, string kind, string? toHost, int? toPort)
     {
         var id = Guid.NewGuid();
         Enqueue(kind == "other_grid" ? "a handoff to another grid" : $"a {kind} handoff", Kind.Handoff, session,
-            ct => _service.HandoffAsync(id, session, from, to, kind, ct));
+            ct => _service.HandoffAsync(id, session, from, to, kind, toHost, toPort, ct));
     }
 
     /// <summary>Remembers what <paramref name="agent"/> is leaving by; a newer one takes the place of the last.</summary>

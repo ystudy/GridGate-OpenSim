@@ -91,8 +91,12 @@ public interface IMoneyService
     /// <summary>The money protocol this program speaks and the regions it runs.</summary>
     Task<MoneyAnswer> HealthAsync(int protocol, IReadOnlyList<Guid> regions, CancellationToken ct);
 
-    /// <summary><paramref name="sessionId"/> leaves <paramref name="fromRegion"/> for <paramref name="toRegion"/>; <paramref name="kind"/> is teleport, crossing or other_grid.</summary>
-    Task<MoneyAnswer> HandoffAsync(Guid id, Guid sessionId, Guid fromRegion, Guid toRegion, string kind, CancellationToken ct);
+    /// <summary>
+    /// <paramref name="sessionId"/> leaves <paramref name="fromRegion"/> for <paramref name="toRegion"/>; <paramref name="kind"/>
+    /// is teleport, crossing or other_grid. <paramref name="toHost"/> and <paramref name="toPort"/> are the address and UDP
+    /// port this program sent the avatar to (the destination's ExternalHostName and port), or null when unknown.
+    /// </summary>
+    Task<MoneyAnswer> HandoffAsync(Guid id, Guid sessionId, Guid fromRegion, Guid toRegion, string kind, string? toHost, int? toPort, CancellationToken ct);
 
     /// <summary>A teleport from <paramref name="fromRegion"/> failed: its open handoff is void.</summary>
     Task<MoneyAnswer> CancelHandoffAsync(Guid sessionId, Guid fromRegion, CancellationToken ct);
@@ -188,8 +192,9 @@ public sealed class MoneyServiceClient : IMoneyService, IDisposable
             ? new MoneyAnswer("ok")
             : MoneyAnswer.Unavailable;
 
-    public Task<MoneyAnswer> HandoffAsync(Guid id, Guid sessionId, Guid fromRegion, Guid toRegion, string kind, CancellationToken ct) =>
-        Post("handoff", new HandoffBody(id, sessionId, fromRegion, toRegion, kind), ct);
+    public Task<MoneyAnswer> HandoffAsync(Guid id, Guid sessionId, Guid fromRegion, Guid toRegion, string kind, string? toHost, int? toPort,
+        CancellationToken ct) =>
+        Post("handoff", new HandoffBody(id, sessionId, fromRegion, toRegion, kind, toHost, toPort), ct);
 
     public Task<MoneyAnswer> CancelHandoffAsync(Guid sessionId, Guid fromRegion, CancellationToken ct) =>
         Post("handoff/cancel", new CancelBody(sessionId, fromRegion), ct);
@@ -269,7 +274,7 @@ public sealed class MoneyServiceClient : IMoneyService, IDisposable
 
     private sealed record HealthWire(bool Ok, int Regions);
 
-    private sealed record HandoffBody(Guid Id, Guid SessionId, Guid FromRegion, Guid ToRegion, string Kind);
+    private sealed record HandoffBody(Guid Id, Guid SessionId, Guid FromRegion, Guid ToRegion, string Kind, string? ToHost, int? ToPort);
 
     private sealed record CancelBody(Guid SessionId, Guid FromRegion);
 
