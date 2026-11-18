@@ -47,7 +47,10 @@
             <section class="work-panel">
                 <h2 class="panel-title">Grid Asset Server</h2>
                 <p>This computer adds regions to the grid at <strong>@gridAssetAddress</strong>.</p>
-                <a class="btn btn-outline-primary w-100" href="/advanced/join" icon="link">Point at a different Grid Asset Server</a>
+                @if (User.IsInRole(GridGate.Launcher.Security.AuthSchemes.OwnerRole))
+                {
+                    <a class="btn btn-outline-primary w-100" href="/advanced/join" icon="link">Point at a different Grid Asset Server</a>
+                }
             </section>
         }
 

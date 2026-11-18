@@ -718,14 +718,21 @@ internal sealed class FakeRobustAccounts : IRobustClient, IRobustPasswords, IRob
         return Task.FromResult(_accounts.Values.Select(a => a.Account).FirstOrDefault(a => a.PrincipalId == principal));
     }
 
+    /// <summary>Thrown by <see cref="AuthenticateAsync"/> when set (a stalled grid, or an aborted request).</summary>
+    public Exception? AuthenticateError { get; set; }
+
+    /// <summary>Thrown by <see cref="GetMapRegionsAsync(CancellationToken)"/> when set.</summary>
+    public Exception? MapError { get; set; }
+
     public Task<bool> AuthenticateAsync(Guid principal, string plainPassword, CancellationToken ct) =>
+        AuthenticateError is { } failure ? throw failure :
         Down ? throw new HttpRequestException("Connection refused") : Task.FromResult(_accounts.Values.Any(a => a.Account.PrincipalId == principal && a.Password == plainPassword));
 
     /// <summary>The grid's map this fake reports.</summary>
     public List<MapRegion> MapRegions { get; } = [];
 
     public Task<IReadOnlyList<MapRegion>> GetMapRegionsAsync(CancellationToken ct) =>
-        Task.FromResult<IReadOnlyList<MapRegion>>(MapRegions.ToList());
+        MapError is { } failure ? throw failure : Task.FromResult<IReadOnlyList<MapRegion>>(MapRegions.ToList());
 
     public Task<IReadOnlyList<MapRegion>> GetMapRegionsAsync(MapArea area, CancellationToken ct) =>
         Task.FromResult<IReadOnlyList<MapRegion>>(MapRegions.Where(m => m.X <= area.XMax && m.X + m.Size - 1 >= area.XMin

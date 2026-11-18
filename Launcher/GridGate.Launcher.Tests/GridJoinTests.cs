@@ -77,6 +77,33 @@ public sealed class GridJoinTests
         Assert.Null(GridGate.Launcher.Setup.JoinForm.Apply(paired, GridJoin.Parse("192.168.1.9", 8002, Xml())).Money.Pairing);
     }
 
+    private static readonly Core.Money.GloebitSettings App = new("sandbox", "0b9e3c2a-1111-4c5d-8e9f-0123456789ab", "7d3f9a10-2222-4b6c-9d8e-fedcba987654", "Owner");
+
+    [Fact]
+    public void Joining_the_same_host_keeps_the_gloebit_app()
+    {
+        var saved = TestSettings.Create() with { Join = GridJoin.Parse("192.168.1.5", 8002, Xml()), Money = new Core.Money.MoneySettings(Gloebit: App) };
+
+        Assert.Equal(App, GridGate.Launcher.Setup.JoinForm.Apply(saved, GridJoin.Parse("192.168.1.5", 9002, Xml())).Money.Gloebit);
+    }
+
+    [Fact]
+    public void Joining_another_host_clears_the_gloebit_app()
+    {
+        var saved = TestSettings.Create() with { Join = GridJoin.Parse("grid.example", 8002, Xml()), Money = new Core.Money.MoneySettings(Gloebit: App) };
+
+        Assert.Null(GridGate.Launcher.Setup.JoinForm.Apply(saved, GridJoin.Parse("192.168.1.9", 8002, Xml())).Money.Gloebit);
+        Assert.Equal(App, GridGate.Launcher.Setup.JoinForm.Apply(saved, GridJoin.Parse("GRID.example", 8002, Xml())).Money.Gloebit);
+    }
+
+    [Fact]
+    public void The_first_join_keeps_a_saved_gloebit_app()
+    {
+        var saved = TestSettings.Create() with { Join = null, Money = new Core.Money.MoneySettings(Gloebit: App) };
+
+        Assert.Equal(App, GridGate.Launcher.Setup.JoinForm.Apply(saved, GridJoin.Parse("192.168.1.9", 8002, Xml())).Money.Gloebit);
+    }
+
     [Fact]
     public void Parse_reads_empty_region_ports()
     {

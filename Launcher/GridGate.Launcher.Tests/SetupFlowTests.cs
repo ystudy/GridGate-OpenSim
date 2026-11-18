@@ -1630,6 +1630,7 @@ public sealed class SetupFlowTests
         Assert.Contains(page.QuerySelectorAll("button"), b => b.TextContent.Trim() == "Join this grid");
         Assert.Contains(page.QuerySelectorAll("button, a"), b => b.TextContent.Trim() == "Change the address");
         Assert.Null(page.QuerySelector(".version-warning"));
+        Assert.Null(page.QuerySelector("input[name=Password]"));
         Assert.Null(f.Store.LoadOrCreate().Join);
         Assert.DoesNotContain("UpdateSettings", f.Grid.Snapshot());
         Assert.Equal(("192.168.1.5", 8002), f.Join.Reads.Single());

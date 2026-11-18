@@ -16,6 +16,9 @@ public static class RobustAccountNames
     public static string FullName(this RobustAccount a) => $"{a.FirstName} {a.LastName}";
 }
 
+/// <summary>A robust client for the given settings, which are not saved: the Grid Asset Server they name is asked, wherever the saved settings point.</summary>
+public delegate IRobustClient RobustClientFor(LauncherSettings settings);
+
 public interface IRobustClient
 {
     Task<bool> IsReadyAsync(CancellationToken ct);
