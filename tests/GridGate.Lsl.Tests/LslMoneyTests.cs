@@ -169,6 +169,51 @@ public sealed class LslMoneyTests
         Assert.Equal(5, (await Paid(r, Payee)).Amount);
     }
 
+    // --- Payouts run on their own queue. ----------------------------------------------------------------------------
+
+    /// <summary>
+    /// The harness can't drive a notecard read, so this uses the dataserver pool directly: more payouts are held than the
+    /// dataserver pool has threads (four), and a request given to that pool must still run.
+    /// </summary>
+    [Fact]
+    public async Task llGiveMoney_runs_on_the_payout_queue_not_the_dataserver()
+    {
+        var r = Setup();
+        Grant(r, Owner);
+        using var hold = new ManualResetEventSlim();
+        r.Money.Hold = hold;
+        try
+        {
+            for (var i = 0; i < 6; i++) r.Api.llGiveMoney(Payee.ToString(), 1);
+            await Task.Delay(Settle, TestContext.Current.CancellationToken);
+
+            var done = new TaskCompletionSource();
+            AsyncCommandManager.GetDataserverPlugin(r.Engine)!.RegisterRequest(r.Part.LocalId, r.Item.ItemID, _ => done.TrySetResult());
+
+            await done.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+            Assert.Empty(r.Money.Payments);
+        }
+        finally
+        {
+            hold.Set();
+        }
+        await Paid(r, Payee);
+    }
+
+    [Fact]
+    public async Task llTransferLindenDollars_still_posts_its_transaction_result()
+    {
+        var r = Setup();
+        Grant(r, Owner);
+
+        var key = r.Api.llTransferLindenDollars(Payee.ToString(), 7);
+
+        var result = await TransactionResult(r);
+        Assert.Equal(key.ToString(), result.Params[0].ToString());
+        Assert.Equal(1, ((LSL_Types.LSLInteger)result.Params[1]).value);
+        Assert.Equal(7, (await Paid(r, Payee)).Amount);
+    }
+
     // --- llGiveMoney refuses amounts of 0 or less. ------------------------------------------------------------------
 
     [Theory]
@@ -496,8 +541,12 @@ public sealed class LslMoneyTests
         public void RemoveRegion(Scene scene) { }
         public void RegionLoaded(Scene scene) { }
 
+        /// <summary>When set, <see cref="ObjectGiveMoney"/> waits for it before paying.</summary>
+        public ManualResetEventSlim? Hold { get; set; }
+
         public bool ObjectGiveMoney(UUID objectID, UUID fromID, UUID toID, int amount, UUID txn, out string reason)
         {
+            Hold?.Wait(TimeSpan.FromSeconds(30));
             _payments.Enqueue(new Payment(objectID, fromID, toID, amount));
             reason = string.Empty;
             return true;

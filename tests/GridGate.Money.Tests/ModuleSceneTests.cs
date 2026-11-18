@@ -659,6 +659,32 @@ public sealed class ModuleSceneTests
         Assert.Empty(region.Service.Calls);
     }
 
+    [Fact]
+    public void An_owner_past_sixty_payouts_a_minute_is_refused()
+    {
+        var region = Build();
+        var obj = SceneHelpers.AddSceneObject(region.Scene, 1, Seller, "Vendor ", 0x80);
+        for (var i = 0; i < PayoutLimit.PerWindow; i++)
+            Assert.True(region.Module.ObjectGiveMoney(obj.RootPart.UUID, Seller, Buyer, 1, UUID.Zero, out _));
+
+        Assert.False(region.Module.ObjectGiveMoney(obj.RootPart.UUID, Seller, Buyer, 1, UUID.Zero, out var reason));
+
+        Assert.Equal("SERVICE_ERROR", reason);
+        Assert.Equal(PayoutLimit.PerWindow, region.Service.Of("payout").Count());
+    }
+
+    [Fact]
+    public void Payouts_by_different_owners_have_their_own_limits()
+    {
+        var region = Build();
+        var mine = SceneHelpers.AddSceneObject(region.Scene, 1, Seller, "Vendor ", 0x81);
+        var theirs = SceneHelpers.AddSceneObject(region.Scene, 1, Stranger, "Vendor ", 0x82);
+        for (var i = 0; i < PayoutLimit.PerWindow; i++)
+            region.Module.ObjectGiveMoney(mine.RootPart.UUID, Seller, Buyer, 1, UUID.Zero, out _);
+
+        Assert.True(region.Module.ObjectGiveMoney(theirs.RootPart.UUID, Stranger, Buyer, 1, UUID.Zero, out _));
+    }
+
     // --- ApplyCharge: where each fee goes ----------------------------------------------------------------------------
 
     /// <summary>money review 2026-11-15, R-10: a group join fee is paid to the group's founder.</summary>

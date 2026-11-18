@@ -467,6 +467,41 @@ public sealed class MoneyActionsTests
     }
 
     [Fact]
+    public void After_a_payout_gets_no_answer_payouts_fail_fast_for_thirty_seconds()
+    {
+        var time = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(DateTimeOffset.UtcNow);
+        var actions = new MoneyActions(_service, Region, () => _economy, _view) { Time = time };
+        _service.Answer = _ => MoneyAnswer.NoAnswer;
+        Assert.False(actions.Payout(Me, ThemWho, 5, PartId, "slot", Guid.NewGuid(), out _));
+        var calls = _service.Of("payout").Count();
+        Assert.Single(_view.Warnings);
+
+        Assert.False(actions.Payout(Me, ThemWho, 5, PartId, "slot", Guid.NewGuid(), out var reason));
+
+        Assert.Equal("SERVICE_ERROR", reason);
+        Assert.Equal(calls, _service.Of("payout").Count());
+        Assert.Single(_view.Warnings);
+
+        time.Advance(TimeSpan.FromSeconds(31));
+        _service.Answer = _ => new MoneyAnswer("ok", 95, 105, 1);
+        Assert.True(actions.Payout(Me, ThemWho, 5, PartId, "slot", Guid.NewGuid(), out _));
+        Assert.Equal(calls + 1, _service.Of("payout").Count());
+    }
+
+    [Fact]
+    public async Task A_pay_still_works_while_payouts_are_paused()
+    {
+        var actions = new MoneyActions(_service, Region, () => _economy, _view);
+        _service.Answer = m => m == "payout" ? MoneyAnswer.NoAnswer : new MoneyAnswer("ok", 70, 130, 1);
+        Assert.False(actions.Payout(Me, ThemWho, 5, PartId, "slot", Guid.NewGuid(), out _));
+
+        await actions.PayAvatarAsync(P, Me, ThemWho, 30);
+
+        Assert.Single(_service.Of("transfer"));
+        Assert.Contains(_view.Pushed, x => x.Agent == Me && x.Balance == 70);
+    }
+
+    [Fact]
     public void Payout_is_retried_with_the_scripts_txn()
     {
         var txn = Guid.NewGuid();

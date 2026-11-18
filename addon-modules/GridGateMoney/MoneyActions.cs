@@ -60,6 +60,22 @@ internal sealed class MoneyActions(IMoneyService service, Guid regionId, Func<Ec
     /// </summary>
     public TimeSpan SyncBudget { get; init; } = MoneyServiceClient.Timeout;
 
+    /// <summary>How long script payouts fail at once after one got no answer from the service.</summary>
+    public static readonly TimeSpan PayoutPause = TimeSpan.FromSeconds(30);
+
+    public TimeProvider Time { get; init; } = TimeProvider.System;
+
+    /// <summary>
+    /// When the pause ends, as a <see cref="TimeProvider.GetTimestamp"/> value. Shared by every region of a Region Server
+    /// (the module passes one to each), so one dead money service is noticed once, not once per region.
+    /// </summary>
+    public PayoutPauseState Pause { get; init; } = new();
+
+    internal sealed class PayoutPauseState
+    {
+        public long Until;
+    }
+
     public async Task PayAvatarAsync(Payer p, Guid source, MoneyWho to, int amount)
     {
         if (MoneyRules.CheckPayAvatar(p.AgentId, source, amount) is var refusal && refusal != Refusal.None)
@@ -260,11 +276,22 @@ internal sealed class MoneyActions(IMoneyService service, Guid regionId, Func<Ec
             reason = "LINDENDOLLAR_ENTITYDOESNOTEXIST";
             return false;
         }
+        if (Interlocked.Read(ref Pause.Until) is var until && until != 0 && Time.GetTimestamp() < until)
+        {
+            reason = "SERVICE_ERROR";
+            return false;
+        }
         if (txn == Guid.Empty) txn = Guid.NewGuid();
         var answer = Wait(RetriedAsync(ct => service.PayoutAsync(txn, ownerId, to, amount, regionId, objectId, objectName, ct), SyncBudget));
         if (!answer.Ok)
         {
-            if (answer.Lost) Unknown("payout", txn, ownerId, to.AgentId, amount);
+            if (answer.Lost)
+            {
+                Unknown("payout", txn, ownerId, to.AgentId, amount);
+                var now = Time.GetTimestamp();
+                var wasPaused = Interlocked.Exchange(ref Pause.Until, now + (long)(PayoutPause.TotalSeconds * Time.TimestampFrequency)) > now;
+                if (!wasPaused) view.Warn($"The money service didn't answer a payout; script payouts fail at once for {PayoutPause.TotalSeconds:0} seconds.");
+            }
             reason = MoneyRules.ScriptReason(answer.Code);
             return false;
         }

@@ -46,6 +46,8 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
     // Land purchases between the hold (validate) and the settle (buy), by region and parcel.
     private readonly ConcurrentDictionary<(UUID Region, int Parcel), LandHold> _landHolds = new();
     private readonly ParcelBuyLimit _buyLimit = new(TimeProvider.System);
+    private readonly PayoutLimit _payoutLimit = new(TimeProvider.System);
+    private readonly MoneyActions.PayoutPauseState _payoutPause = new();
     private readonly object _economyGate = new();
 
     private IMoneyService? _client;
@@ -134,7 +136,7 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
             _healthTimer ??= TimeProvider.System.CreateTimer(_ => TimedHealth(), null, HealthEvery, HealthEvery);
         }
         var regionId = scene.RegionInfo.RegionID;
-        _actions[regionId] = new MoneyActions(_client!, regionId.Guid, KnownEconomy, new View(this));
+        _actions[regionId] = new MoneyActions(_client!, regionId.Guid, KnownEconomy, new View(this)) { Pause = _payoutPause };
         scene.EventManager.OnNewClient += OnNewClient;
         scene.EventManager.OnClientClosed += OnClientClosed;
         // Where avatars are: reported in the background, never holding up a teleport or crossing. A teleport or crossing is
@@ -632,6 +634,12 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
         if (MoneyRules.CheckPayout(Info(root), fromID.Guid) is { } refused)
         {
             reason = refused;
+            return false;
+        }
+        if (!_payoutLimit.TryTake(fromID.Guid, out var warn))
+        {
+            if (warn) Log.Warn($"[GRIDGATE MONEY]: {fromID} has made {PayoutLimit.PerWindow} script payouts in a minute; more are refused until it eases.");
+            reason = "SERVICE_ERROR";
             return false;
         }
         return actions.Payout(fromID.Guid, WhoOf(toID), amount, root.UUID.Guid, root.Name, txn.Guid, out reason);

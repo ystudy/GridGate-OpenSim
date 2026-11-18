@@ -53,4 +53,35 @@ public sealed class ParcelBuyLimitTests
 
         Assert.True(limit.TryTake(A));
     }
+
+    [Fact]
+    public void A_payout_limit_warns_once_a_minute_per_owner()
+    {
+        var limit = new PayoutLimit(_time);
+        for (var i = 0; i < PayoutLimit.PerWindow; i++) limit.TryTake(A, out _);
+
+        Assert.False(limit.TryTake(A, out var first));
+        Assert.False(limit.TryTake(A, out var second));
+        _time.Advance(PayoutLimit.Window + TimeSpan.FromSeconds(1));
+        Assert.True(limit.TryTake(A, out _));
+        for (var i = 1; i < PayoutLimit.PerWindow; i++) limit.TryTake(A, out _);
+        Assert.False(limit.TryTake(A, out var third));
+
+        Assert.True(first);
+        Assert.False(second);
+        Assert.True(third);
+    }
+
+    [Fact]
+    public void The_payout_table_stays_bounded()
+    {
+        var limit = new PayoutLimit(_time);
+        for (var i = 0; i < PayoutLimit.MaxOwners * 3; i++)
+        {
+            limit.TryTake(Guid.NewGuid(), out _);
+            if (i % 1000 == 0) _time.Advance(PayoutLimit.Window + TimeSpan.FromSeconds(1));
+        }
+
+        Assert.True(limit.Count <= PayoutLimit.MaxOwners + 1000);
+    }
 }
