@@ -173,7 +173,7 @@ public sealed class RegionPinsTests(MoneyMariaDb maria) : IClassFixture<MoneyMar
 
         Assert.Empty(await Covered(pins, a));
         Assert.Equal(2, await db.Scalar($"SELECT COUNT(*) FROM `money`.`region_pins` WHERE server_id = '{a.Id:N}' AND waiting = 1"));
-        Assert.Equal([r1, r2], (await pins.WaitingAsync(a.Id, Ct)).Order());
+        Assert.Equal(new[] { r1, r2 }.Order(), (await pins.WaitingAsync(a.Id, Ct)).Order());
         Assert.Empty(await pins.MovesAsync([a], Ct));
     }
 
