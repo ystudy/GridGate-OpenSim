@@ -443,11 +443,16 @@ namespace OpenSim.Region.ClientStack.Linden
 
             LLSDAssetUploadResponseData meshcostdata = new LLSDAssetUploadResponseData();
 
-            if (llsdRequest.asset_type == "texture" ||
-                llsdRequest.asset_type == "animation" ||
-                llsdRequest.asset_type == "animatn" ||    // this is the asset name actually used by viewers
-                llsdRequest.asset_type == "mesh" ||
-                llsdRequest.asset_type == "sound")
+            // GridGate: an upload is priced by the type it is stored as (from the inventory type), not by the asset type the
+            // viewer declared: a declared "notecard" or "clothing" can't make a texture upload free. Wearables and every
+            // type that stores nothing stay free here.
+            sbyte? storedType = StoredAssetType(llsdRequest.inventory_type, llsdRequest.asset_type);
+            bool isMeshModel = storedType == (sbyte)AssetType.Object;
+
+            if (storedType == (sbyte)AssetType.Texture ||
+                storedType == (sbyte)AssetType.Animation ||
+                storedType == (sbyte)AssetType.Sound ||
+                isMeshModel)
             {
                 ScenePresence avatar = null;
                 m_Scene.TryGetScenePresence(m_HostCapsObj.AgentID, out avatar);
@@ -482,7 +487,7 @@ namespace OpenSim.Region.ClientStack.Linden
 
                     string warning = String.Empty;
 
-                    if (llsdRequest.asset_type == "mesh")
+                    if (isMeshModel)
                     {
                         string error;
                         int modelcost;
@@ -504,6 +509,11 @@ namespace OpenSim.Region.ClientStack.Linden
                             return errorResponse;
                         }
                         cost = modelcost;
+
+                        // GridGate: what the model was priced for; completion refuses a model that holds more
+                        nreqtextures = llsdRequest.asset_resources?.texture_list?.Array.Count ?? 0;
+                        nreqmeshs = llsdRequest.asset_resources?.mesh_list?.Array.Count ?? 0;
+                        nreqinstances = llsdRequest.asset_resources?.instance_list?.Array.Count ?? 0;
                     }
                     else
                     {
@@ -597,7 +607,7 @@ namespace OpenSim.Region.ClientStack.Linden
             uploadResponse.state = "upload";
             uploadResponse.upload_price = (int)cost;
 
-            if (llsdRequest.asset_type == "mesh")
+            if (isMeshModel) // GridGate: the same test as the model cost above
             {
                 uploadResponse.data = meshcostdata;
             }
@@ -644,11 +654,15 @@ namespace OpenSim.Region.ClientStack.Linden
 
             string creatorIDstr = creatorID.ToString();
 
-            // GridGate: a paid upload's fee is held before anything is stored, then taken once its item is made or given back
-            // if the upload fails (FeeHolds: a money module without holds is checked now and charged after, as before). The
+            // GridGate: a paid upload's fee is held before anything is stored, then taken once anything is stored (a texture,
+            // a mesh or the asset itself) or given back if the upload fails before that (FeeHolds: a money module without holds is checked now and charged after, as before). The
             // item is then added at cost 0, so the fee isn't charged a second time.
             IFeeHold fee = null;
             IMoneyModule mm = m_Scene.RequestModuleInterface<IMoneyModule>();
+            // GridGate: texture or sound data pays the upload fee whatever type the viewer declared (a texture uploaded as
+            // clothing was free): such data that was priced at 0 is held at the plain upload fee.
+            if (mm != null && !istest && cost == 0 && mm.UploadCharge > 0 && UploadData.IsTextureOrSound(data))
+                cost = mm.UploadCharge;
             if (mm != null)
             {
                 if (!istest && cost > 0)
@@ -673,7 +687,7 @@ namespace OpenSim.Region.ClientStack.Linden
             {
                 StoreUpload(assetName, assetDescription, assetID, inventoryItem, parentFolder, data, inventoryType, assetType,
                     fee == null ? cost : 0, texturesFolder, nreqtextures, nreqmeshs, nreqinstances, istest, restrictPerms, creatorID,
-                    creatorIDstr, owner_id, ref nextOwnerMask, ref groupMask, ref everyoneMask, meshesSides, ref stored);
+                    creatorIDstr, owner_id, ref nextOwnerMask, ref groupMask, ref everyoneMask, meshesSides, ref error, ref stored);
             }
             finally
             {
@@ -682,24 +696,57 @@ namespace OpenSim.Region.ClientStack.Linden
         }
 
         /// <summary>
+        /// GridGate: the asset type an upload is stored as, from the inventory type the viewer declared (the mapping
+        /// <see cref="StoreUpload"/> always used). Null for an "object" that isn't a mesh: nothing is stored for it. Any
+        /// inventory type not listed is stored as a texture.
+        /// </summary>
+        public static sbyte? StoredAssetType(string inventoryType, string assetType)
+        {
+            switch (inventoryType)
+            {
+                case "sound":
+                    return (sbyte)AssetType.Sound;
+                case "animation":
+                    return (sbyte)AssetType.Animation;
+                case "animset":
+                    return (sbyte)CustomAssetType.AnimationSet;
+                case "wearable":
+                    switch (assetType)
+                    {
+                        case "bodypart":
+                            return (sbyte)AssetType.Bodypart;
+                        case "clothing":
+                            return (sbyte)AssetType.Clothing;
+                    }
+                    return (sbyte)AssetType.Texture;
+                case "object":
+                    return assetType == "mesh" ? (sbyte)AssetType.Object : null;
+                default: // includes "snapshot"
+                    return (sbyte)AssetType.Texture;
+            }
+        }
+
+        /// <summary>
         /// GridGate: the rest of <see cref="UploadCompleteHandler"/>, after the fee is held: stores the asset and makes its
-        /// item. <paramref name="stored"/> is set once the item is made.
+        /// item. <paramref name="stored"/> is set as soon as anything is stored (a texture, a mesh or the asset itself), so
+        /// the fee is taken for stored work; a model that holds more than it was priced for is refused before it stores
+        /// anything.
         /// </summary>
         private void StoreUpload(string assetName, string assetDescription, UUID assetID, UUID inventoryItem, UUID parentFolder,
             byte[] data, string inventoryType, string assetType, int cost, UUID texturesFolder, int nreqtextures, int nreqmeshs,
             int nreqinstances, bool istest, bool restrictPerms, UUID creatorID, string creatorIDstr, UUID owner_id,
-            ref int nextOwnerMask, ref int groupMask, ref int everyoneMask, int[] meshesSides, ref bool stored)
+            ref int nextOwnerMask, ref int groupMask, ref int everyoneMask, int[] meshesSides, ref string error, ref bool stored)
         {
-            sbyte assType = 0;
+            // GridGate: the asset type comes from StoredAssetType (null: nothing is stored)
+            sbyte assType = StoredAssetType(inventoryType, assetType) ?? 0;
             sbyte inType = 0;
 
             IClientAPI client = null;
 
-            // strings to types
+            // strings to types (the asset type: see StoredAssetType)
             if (inventoryType == "sound")
             {
                 inType = (sbyte)InventoryType.Sound;
-                assType = (sbyte)AssetType.Sound;
             }
             else if (inventoryType == "snapshot")
             {
@@ -708,59 +755,40 @@ namespace OpenSim.Region.ClientStack.Linden
             else if (inventoryType == "animation")
             {
                 inType = (sbyte)InventoryType.Animation;
-                assType = (sbyte)AssetType.Animation;
             }
             else if (inventoryType == "animset")
             {
                 inType = (sbyte)CustomInventoryType.AnimationSet;
-                assType = (sbyte)CustomAssetType.AnimationSet;
                 m_log.Debug("got animset upload request");
             }
             else if (inventoryType == "wearable")
             {
                 inType = (sbyte)InventoryType.Wearable;
-                switch (assetType)
-                {
-                    case "bodypart":
-                        assType = (sbyte)AssetType.Bodypart;
-                        break;
-                    case "clothing":
-                        assType = (sbyte)AssetType.Clothing;
-                        break;
-                }
             }
             else if (inventoryType == "object")
             {
                 if (assetType == "mesh") // this code for now is for mesh models uploads only
                 {
                     inType = (sbyte)InventoryType.Object;
-                    assType = (sbyte)AssetType.Object;
 
                     List<Vector3> positions = new List<Vector3>();
                     List<Quaternion> rotations = new List<Quaternion>();
                     OSDMap request = (OSDMap)OSDParser.DeserializeLLSDXml(data);
 
-                    // compare and get updated information
-/* does nothing still we do need something to avoid special viewer to upload something diferent from the cost estimation
-                    bool mismatchError = true;
+                    OSDArray instance_list = (OSDArray)request["instance_list"];
+                    OSDArray mesh_list = (OSDArray)request["mesh_list"];
+                    OSDArray texture_list = (OSDArray)request["texture_list"];
 
-                    while (mismatchError)
-                    {
-                        mismatchError = false;
-                    }
-
-                    if (mismatchError)
+                    // GridGate: a model that holds more textures, meshes or instances than the upload was priced for is refused
+                    // before anything is stored (the held fee is given back), so a viewer can't pay for a small model and
+                    // upload a big one.
+                    if (texture_list.Count > nreqtextures || mesh_list.Count > nreqmeshs || instance_list.Count > nreqinstances)
                     {
                         error = "Upload and fee estimation information don't match";
                         lock (m_ModelCost)
                             m_FileAgentInventoryState = FileAgentInventoryState.idle;
-
                         return;
                     }
-*/
-                    OSDArray instance_list = (OSDArray)request["instance_list"];
-                    OSDArray mesh_list = (OSDArray)request["mesh_list"];
-                    OSDArray texture_list = (OSDArray)request["texture_list"];
                     SceneObjectGroup grp = null;
 
                     // create and store texture assets
@@ -784,6 +812,7 @@ namespace OpenSim.Region.ClientStack.Linden
                         if (istest)
                             textureAsset.Local = true;
                         m_assetService.Store(textureAsset);
+                        stored = true; // GridGate: stored work is paid for
                         textures.Add(textureAsset.FullID);
 
                         if (doTextInv)
@@ -848,6 +877,7 @@ namespace OpenSim.Region.ClientStack.Linden
                         if (istest)
                             meshAsset.Local = true;
                         m_assetService.Store(meshAsset);
+                        stored = true; // GridGate: stored work is paid for
                         meshAssets.Add(meshAsset.FullID);
                         meshAvatarSkeletons.Add(curAvSkeleton);
                         meshAvatarColliders.Add(curAvCollider);
@@ -1088,6 +1118,7 @@ namespace OpenSim.Region.ClientStack.Linden
                 AddNewAsset(asset);
             else if (m_assetService != null)
                 m_assetService.Store(asset);
+            stored = true; // GridGate: stored work is paid for
 
             InventoryItemBase item = new InventoryItemBase();
             item.Owner = m_HostCapsObj.AgentID;
