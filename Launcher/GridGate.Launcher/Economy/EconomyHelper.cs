@@ -47,7 +47,16 @@ public sealed class EconomyHelper(
             || agent == Guid.Empty || secure == Guid.Empty)
             return Refuse(s, t["Economy.LogInAgain"]);
         var known = limits.IsChecked(agent, secure);
-        if (!known && (!limits.TryTakeLookupSecond() || !limits.TryStartLookup())) return Refuse(s, t["Economy.TooMany"]);
+        // The lookup cap is asked first, so a refusal there doesn't use up the grid-wide second.
+        if (!known)
+        {
+            if (!limits.TryStartLookup()) return Refuse(s, t["Economy.TooMany"]);
+            if (!limits.TryTakeLookupSecond())
+            {
+                limits.EndLookup();
+                return Refuse(s, t["Economy.TooMany"]);
+            }
+        }
         try
         {
             switch (known ? PresenceOutcome.Ok : await sessions.HasSecureSessionAsync(agent, secure, ct))

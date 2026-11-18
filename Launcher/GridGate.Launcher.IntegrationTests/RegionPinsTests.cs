@@ -4,6 +4,13 @@ using Xunit;
 
 namespace GridGate.Launcher.IntegrationTests;
 
+/// <summary>The owner confirming everything a test server has waiting and listed.</summary>
+internal static class RegionPinsTestExtensions
+{
+    public static Task<int> ConfirmAllAsync(this RegionPins pins, PairedServer server, CancellationToken ct) =>
+        pins.ConfirmWaitingAsync(server, server.FirstPort, 65536, new HashSet<Guid>(), ct);
+}
+
 /// <summary>Region ids belong to the paired Region Server they were first seen under.</summary>
 [Collection(GridCollection.Name)]
 public sealed class RegionPinsTests(MoneyMariaDb maria) : IClassFixture<MoneyMariaDb>
@@ -178,10 +185,59 @@ public sealed class RegionPinsTests(MoneyMariaDb maria) : IClassFixture<MoneyMar
         await db.AddRegion(region, HostA);
         await pins.PinWaitingAsync(a, a.FirstPort, 65536, Ct);
 
-        Assert.Equal(1, await pins.ConfirmWaitingAsync(a.Id, Ct));
+        Assert.Equal(1, await pins.ConfirmAllAsync(a, Ct));
 
         Assert.Equal(new HashSet<Guid> { region }, (await Covered(pins, a)).ToHashSet());
         Assert.Empty(await pins.WaitingAsync(a.Id, Ct));
+    }
+
+    [Fact]
+    public async Task Confirming_covers_only_the_waiting_regions_that_are_listed_at_the_server()
+    {
+        var (db, pins) = await StartAsync(maria);
+        var (a, shown, unlisted) = (Server(HostA), Guid.NewGuid(), Guid.NewGuid());
+        await db.AddRegion(shown, HostA);
+        await db.AddRegion(unlisted, HostA);
+        await pins.PinWaitingAsync(a, a.FirstPort, 65536, Ct);
+        await db.Sql($"DELETE FROM `robust`.`regions` WHERE uuid = '{unlisted}'");
+
+        Assert.Equal([shown], await pins.WaitingListedAsync(a, a.FirstPort, 65536, NoOwn, Ct));
+        Assert.Equal(1, await pins.ConfirmAllAsync(a, Ct));
+
+        Assert.Equal(new HashSet<Guid> { shown }, (await Covered(pins, a)).ToHashSet());
+        Assert.Equal([unlisted], await pins.WaitingAsync(a.Id, Ct));
+        Assert.Equal(0, await pins.ConfirmAllAsync(a, Ct));
+    }
+
+    [Fact]
+    public async Task Approving_a_move_turns_a_waiting_region_on_and_leaves_the_servers_other_waiting_regions_waiting()
+    {
+        var (db, pins) = await StartAsync(maria);
+        var (a, b, moved, other) = (Server(HostA), Server(HostB), Guid.NewGuid(), Guid.NewGuid());
+        await db.AddRegion(moved, HostA);
+        await db.AddRegion(other, HostB);
+        await pins.PinWaitingAsync(a, a.FirstPort, 65536, Ct);
+        await pins.PinWaitingAsync(b, b.FirstPort, 65536, Ct);
+        await db.Sql($"UPDATE `robust`.`regions` SET serverIP = '{HostB}' WHERE uuid = '{moved}'");
+
+        await pins.ApproveMoveAsync(moved, b.Id, Ct);
+
+        Assert.Equal(new HashSet<Guid> { moved }, (await Covered(pins, b)).ToHashSet());
+        Assert.Equal([other], await pins.WaitingAsync(b.Id, Ct));
+    }
+
+    [Fact]
+    public async Task A_status_read_pins_nothing_but_the_request_path_does()
+    {
+        var (db, pins) = await StartAsync(maria);
+        var (a, region) = (Server(HostA), Guid.NewGuid());
+        await db.AddRegion(region, HostA);
+
+        Assert.Equal(new HashSet<Guid> { region }, (await pins.CoveredAsync(a, a.FirstPort, 65536, NoOwn, Ct, pinNew: false)).ToHashSet());
+        Assert.Equal(0, await db.Scalar("SELECT COUNT(*) FROM `money`.`region_pins`"));
+
+        await pins.CoveredAsync(a, a.FirstPort, 65536, NoOwn, Ct);
+        Assert.Equal(1, await db.Scalar("SELECT COUNT(*) FROM `money`.`region_pins`"));
     }
 
     [Fact]
@@ -346,7 +402,7 @@ public sealed class RegionPinsTests(MoneyMariaDb maria) : IClassFixture<MoneyMar
 
         await Assert.ThrowsAsync<MoneyUnavailableException>(() => Covered(pins, Server(HostA)));
         await Assert.ThrowsAsync<MoneyUnavailableException>(() => pins.PinWaitingAsync(Server(HostA), 9000, 65536, Ct));
-        await Assert.ThrowsAsync<MoneyUnavailableException>(() => pins.ConfirmWaitingAsync(Guid.NewGuid(), Ct));
+        await Assert.ThrowsAsync<MoneyUnavailableException>(() => pins.ConfirmAllAsync(Server(HostA), Ct));
         await Assert.ThrowsAsync<MoneyUnavailableException>(() => pins.WaitingAsync(Guid.NewGuid(), Ct));
     }
 }

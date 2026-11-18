@@ -18,10 +18,11 @@ public sealed class RegionPins(Func<CancellationToken, Task<MySqlConnection>> op
     /// <summary>
     /// The regions Robust lists at <paramref name="server"/>'s address and port range, minus <paramref name="ownRegions"/>,
     /// that are pinned to it and confirmed. Listed regions nobody has pinned yet are pinned to it first. Only the request path passes
-    /// <paramref name="raiseMoves"/>: a status read (the website's region list) raises no alerts.
+    /// <paramref name="raiseMoves"/>: a status read (the website's region list) raises no alerts. A read that passes <paramref name="pinNew"/> false
+    /// pins nothing (so a page load can't pin a server's regions while it is pairing) and counts the unpinned ones as covered, which the request path would make them.
     /// </summary>
     public async Task<IReadOnlySet<Guid>> CoveredAsync(PairedServer server, int fromPort, int toPort, IReadOnlySet<Guid> ownRegions, CancellationToken ct,
-        bool raiseMoves = false)
+        bool raiseMoves = false, bool pinNew = true)
     {
         var listed = (await hosts.RegionsAtAsync(server.Host, fromPort, toPort, ct)).Where(r => !ownRegions.Contains(r)).ToList();
         if (listed.Count == 0) return new HashSet<Guid>();
@@ -31,7 +32,7 @@ public sealed class RegionPins(Func<CancellationToken, Task<MySqlConnection>> op
             await using var conn = await openMoney(ct);
             pins = await PinsOfAsync(conn, listed, ct);
             var unpinned = listed.Where(r => !pins.ContainsKey(r)).ToList();
-            if (unpinned.Count > 0)
+            if (unpinned.Count > 0 && pinNew)
             {
                 foreach (var id in unpinned)
                 {
@@ -52,7 +53,7 @@ public sealed class RegionPins(Func<CancellationToken, Task<MySqlConnection>> op
         if (raiseMoves && alerts is not null)
             foreach (var moved in listed.Where(r => pins.TryGetValue(r, out var to) && to.ServerId != server.Id))
                 await alerts.RegionMovedAsync(moved, "server:" + server.Id.ToString("N"), CancellationToken.None);
-        return listed.Where(r => pins.TryGetValue(r, out var to) && to.ServerId == server.Id && !to.Waiting).ToHashSet();
+        return listed.Where(r => pins.TryGetValue(r, out var to) ? to.ServerId == server.Id && !to.Waiting : !pinNew).ToHashSet();
     }
 
     /// <summary>Regions Robust lists at one paired server that are pinned to a different one (which may no longer be paired).</summary>
@@ -91,7 +92,7 @@ public sealed class RegionPins(Func<CancellationToken, Task<MySqlConnection>> op
         {
             await using var conn = await openMoney(ct);
             await using var tx = await conn.BeginTransactionAsync(ct);
-            await Exec(conn, tx, "UPDATE region_pins SET server_id = @s, machine_id = NULL, pinned = @t WHERE region_id = @r", ct,
+            await Exec(conn, tx, "UPDATE region_pins SET server_id = @s, machine_id = NULL, pinned = @t, waiting = 0 WHERE region_id = @r", ct,
                 ("@s", toServerId.ToString("N")), ("@t", now), ("@r", regionId.ToString()));
             await Exec(conn, tx, "UPDATE session_locations SET state = 'Unverified', updated = @t WHERE region_id = @r AND state IN ('Verified', 'Handed')", ct,
                 ("@t", now), ("@r", regionId.ToString()));
@@ -132,13 +133,37 @@ public sealed class RegionPins(Func<CancellationToken, Task<MySqlConnection>> op
         return pinned;
     }
 
-    /// <summary>The owner confirms the server's waiting regions: they cover from now on. Nothing else changes; nobody was placed there under another key. Returns how many.</summary>
-    public async Task<int> ConfirmWaitingAsync(Guid serverId, CancellationToken ct)
+    /// <summary>
+    /// The owner confirms the server's waiting regions that Robust lists now at its address and ports (<paramref name="fromPort"/> up to
+    /// <paramref name="toPort"/>), minus <paramref name="ownRegions"/>: they cover from now on. A waiting region that isn't listed there
+    /// stays waiting, so only regions the owner could see are confirmed. Nothing else changes; nobody was placed there under another key. Returns how many.
+    /// </summary>
+    public async Task<int> ConfirmWaitingAsync(PairedServer server, int fromPort, int toPort, IReadOnlySet<Guid> ownRegions, CancellationToken ct)
     {
+        var shown = await WaitingListedAsync(server, fromPort, toPort, ownRegions, ct);
+        if (shown.Count == 0) return 0;
         try
         {
             await using var conn = await openMoney(ct);
-            return await Exec(conn, null, "UPDATE region_pins SET waiting = 0 WHERE server_id = @s AND waiting = 1", ct, ("@s", serverId.ToString("N")));
+            return await Exec(conn, null, "UPDATE region_pins SET waiting = 0 WHERE server_id = @s AND waiting = 1 AND region_id IN (" +
+                string.Join(",", shown.Select((_, i) => "@r" + i)) + ")", ct,
+                shown.Select((r, i) => ("@r" + i, (object)r.ToString())).Append(("@s", (object)server.Id.ToString("N"))).ToArray());
+        }
+        catch (MySqlException e)
+        {
+            throw new MoneyUnavailableException(e);
+        }
+    }
+
+    /// <summary>The server's waiting regions that Robust lists now at its address and ports: the ones the Money page counts and <see cref="ConfirmWaitingAsync"/> confirms.</summary>
+    public async Task<IReadOnlyList<Guid>> WaitingListedAsync(PairedServer server, int fromPort, int toPort, IReadOnlySet<Guid> ownRegions, CancellationToken ct)
+    {
+        var listed = (await hosts.RegionsAtAsync(server.Host, fromPort, toPort, ct)).Where(r => !ownRegions.Contains(r)).ToList();
+        if (listed.Count == 0) return [];
+        try
+        {
+            await using var conn = await openMoney(ct);
+            return (await PinsOfAsync(conn, listed, ct)).Where(p => p.Value.ServerId == server.Id && p.Value.Waiting).Select(p => p.Key).ToList();
         }
         catch (MySqlException e)
         {

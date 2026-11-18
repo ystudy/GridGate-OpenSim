@@ -117,7 +117,7 @@ public sealed class MoneyPairServiceTests(MoneyMariaDb maria) : IClassFixture<Mo
         Assert.Equal("ok", (string?)body!["code"]);
         var key = (string)body["key"]!;
         Assert.True(PairingProof.Same(PairingProof.Server(code, _fingerprint, nonce, key), (string)body["proof"]!));
-        if (confirm && !_moneyDown) await _pins.ConfirmWaitingAsync(_settings.Money.PairedServers!.Single(p => p.KeyHash == PairedServer.HashOf(key)).Id, Ct);
+        if (confirm && !_moneyDown) await _pins.ConfirmAllAsync(_settings.Money.PairedServers!.Single(p => p.KeyHash == PairedServer.HashOf(key)), Ct);
         return key;
     }
 
@@ -319,7 +319,7 @@ public sealed class MoneyPairServiceTests(MoneyMariaDb maria) : IClassFixture<Mo
         // The lower server pairs first, so its range covers the upper region for now; the higher one then takes it over.
         var lower = await PairAsync(firstPort: 9000, confirm: false);
         var higher = await PairAsync(firstPort: 9100, confirm: false);
-        foreach (var paired in _settings.Money.PairedServers!) await _pins.ConfirmWaitingAsync(paired.Id, Ct);
+        foreach (var paired in _settings.Money.PairedServers!) await _pins.ConfirmAllAsync(paired, Ct);
         await Place(db, lower, A, Theirs); // Theirs is at port 9000
         await Place(db, higher, b, upper, sessionB, secureB);
 
@@ -462,7 +462,7 @@ public sealed class MoneyPairServiceTests(MoneyMariaDb maria) : IClassFixture<Mo
         Assert.Equal([Theirs], await _pins.WaitingAsync(server.Id, Ct));
 
         // The owner confirms: the same key now covers the region.
-        await _pins.ConfirmWaitingAsync(server.Id, Ct);
+        await _pins.ConfirmAllAsync(server, Ct);
         Assert.Equal(1, (await Post("health", new { }, key)).Body!["regions"]!.GetValue<int>());
     }
 

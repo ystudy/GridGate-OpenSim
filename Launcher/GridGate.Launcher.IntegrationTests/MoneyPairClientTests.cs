@@ -80,7 +80,7 @@ public sealed class MoneyPairClientTests(MoneyMariaDb maria) : IClassFixture<Mon
     /// <summary>The owner pressing Confirm on every paired server: regions listed when it paired wait until then.</summary>
     private async Task ConfirmAllAsync()
     {
-        foreach (var server in _grid.Money.PairedServers ?? []) await _pins.ConfirmWaitingAsync(server.Id, Ct);
+        foreach (var server in _grid.Money.PairedServers ?? []) await _pins.ConfirmAllAsync(server, Ct);
     }
 
     [Fact]

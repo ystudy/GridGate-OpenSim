@@ -325,7 +325,18 @@ public sealed partial class MoneyLedger(
                 }
                 catch (Exception e) when (e is MySqlException or TimeoutException or InvalidOperationException { Source: "MySqlConnector" })
                 {
-                    // The commit may have landed before the connection failed: look the transaction up again.
+                    // The commit may have landed before the connection failed: look the transaction up again. The failed
+                    // transaction and connection close first, so a commit the server is still finishing is behind us (it handles one
+                    // connection's commands in order) and the lookup sees what it saved.
+                    try
+                    {
+                        await tx.DisposeAsync();
+                        await conn.DisposeAsync();
+                    }
+                    catch (Exception closing) when (closing is MySqlException or TimeoutException or InvalidOperationException { Source: "MySqlConnector" })
+                    {
+                        // Closing a broken connection may fail; the lookup below uses a new one.
+                    }
                     return await AfterFailedCommitAsync(txn, ct);
                 }
                 return result;

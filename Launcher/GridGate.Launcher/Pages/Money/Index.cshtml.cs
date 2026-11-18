@@ -389,19 +389,22 @@ public sealed class IndexModel(IGridController grid, MoneyGate gate, IMoneyBooks
         if (!await GuardServersAsync(ct)) return Page();
         try
         {
-            var paired = grid.CurrentSettings().Money.PairedServers?.FirstOrDefault(p => p.Id == server);
+            var settings = grid.CurrentSettings();
+            var paired = settings.Money.PairedServers?.FirstOrDefault(p => p.Id == server);
+            var own = settings.Regions.Select(r => r.Uuid).ToHashSet();
+            int toPort(PairedServer p) => RegionKeyRing.NextFirstPort(settings.Money.PairedServers!, p);
             if (paired is null)
             {
                 Error = "That Region Server isn't paired.";
             }
-            else if ((await regions.WaitingAsync(server, ct)).Count == 0)
+            else if ((await regions.WaitingAsync(paired, paired.FirstPort, toPort(paired), own, ct)).Count == 0)
             {
                 Error = "No region is waiting for you to confirm at that Region Server.";
             }
             else
             {
-                var confirmed = await regions.ConfirmWaitingAsync(server, ct);
-                audit.Write(User, Ip, "money-region-confirm", LogText.Clean(paired.Host), $"{confirmed} regions");
+                var confirmed = await regions.ConfirmWaitingAsync(paired, paired.FirstPort, toPort(paired), own, ct);
+                audit.Write(User, Ip, "money-region-confirm", LogText.Clean(paired.Host), confirmed == 1 ? "1 region" : $"{confirmed} regions");
                 Notice = $"Confirmed: {(confirmed == 1 ? "its region now belongs" : $"its {confirmed} regions now belong")} to the {MoneyVerifyText.ServerName(paired)}. Money works there once its module checks in.";
             }
         }

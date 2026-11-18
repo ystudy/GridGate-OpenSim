@@ -98,7 +98,7 @@ public sealed class RegionVerification(Func<CancellationToken, Task<MySqlConnect
         var waiting = new Dictionary<Guid, IReadOnlySet<Guid>>();
         foreach (var server in servers)
         {
-            covered[server.Id] = await pins.CoveredAsync(server, server.FirstPort, RegionKeyRing.NextFirstPort(servers, server), own, ct);
+            covered[server.Id] = await pins.CoveredAsync(server, server.FirstPort, RegionKeyRing.NextFirstPort(servers, server), own, ct, pinNew: false);
             waiting[server.Id] = (await pins.WaitingAsync(server.Id, ct)).ToHashSet();
         }
 

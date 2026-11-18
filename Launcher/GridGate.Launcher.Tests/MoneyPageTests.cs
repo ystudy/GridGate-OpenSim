@@ -178,16 +178,16 @@ internal sealed class FakeMoneyRegions : IMoneyRegions
         return Task.CompletedTask;
     }
 
-    public Task<int> ConfirmWaitingAsync(Guid serverId, CancellationToken ct)
+    public Task<int> ConfirmWaitingAsync(PairedServer server, int fromPort, int toPort, IReadOnlySet<Guid> ownRegions, CancellationToken ct)
     {
-        Up($"confirm {serverId}");
-        return Task.FromResult(Waiting(serverId).Count);
+        Up($"confirm {server.Id}");
+        return Task.FromResult(Waiting(server.Id).Count);
     }
 
-    public Task<IReadOnlyList<Guid>> WaitingAsync(Guid serverId, CancellationToken ct)
+    public Task<IReadOnlyList<Guid>> WaitingAsync(PairedServer server, int fromPort, int toPort, IReadOnlySet<Guid> ownRegions, CancellationToken ct)
     {
-        Up($"waiting {serverId}");
-        return Task.FromResult<IReadOnlyList<Guid>>(Waiting(serverId));
+        Up($"waiting {server.Id}");
+        return Task.FromResult<IReadOnlyList<Guid>>(Waiting(server.Id));
     }
 
     private List<Guid> Waiting(Guid serverId) =>
@@ -1490,6 +1490,16 @@ public sealed class MoneyPageTests
     }
 
     [Fact]
+    public async Task Confirming_one_region_is_audited_as_one_region()
+    {
+        await using var f = MakeGridWithWaiting();
+
+        using var ok = await PostAsync(await SignedInAsync(f), "/money", "ConfirmRegions", new() { ["Server"] = Jo.ToString() });
+
+        Assert.Equal(["1 region"], Results(f, "money-region-confirm"));
+    }
+
+    [Fact]
     public async Task Confirming_regions_is_audited_and_refused_to_admins()
     {
         await using var f = MakeGridWithWaiting();
@@ -1899,6 +1909,17 @@ public sealed class MoneyPageTests
     [Theory]
     [InlineData(MoneyOutcome.OverDailyLimit)]
     [InlineData(MoneyOutcome.OverKeyLimit)]
+    [InlineData(MoneyOutcome.OutcomeUnknown)]
     public void Limit_outcomes_have_their_own_words(MoneyOutcome o) =>
         Assert.DoesNotContain("(", MoneyPageRules.Words(o));
+
+    [Fact]
+    public void An_answer_that_may_have_gone_through_tells_staff_to_check_the_history()
+    {
+        var words = MoneyPageRules.Words(MoneyOutcome.OutcomeUnknown);
+
+        Assert.Contains("may have gone through", words);
+        Assert.Contains("history", words);
+        Assert.DoesNotContain("couldn't be done", words);
+    }
 }

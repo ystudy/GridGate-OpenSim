@@ -117,7 +117,9 @@ public sealed class RegionVerificationTests(MoneyMariaDb maria) : IClassFixture<
         var (a, b, region) = (Server(HostA, ServerKeyA), Server(HostB, "the-region-key-for-server-b-000000000000000000"), Guid.NewGuid());
         rig.Settings = rig.Settings with { Money = rig.Settings.Money with { PairedServers = [a, b] } };
         await rig.Db.AddRegion(region, HostA);
-        Assert.Equal(RegionStatus.NoGridGateMoney, await StatusOf(rig, region)); // pinned to A
+        // A's money request pinned it (a status read pins nothing).
+        await rig.Db.Sql($"INSERT INTO `money`.`region_pins` (region_id, server_id, pinned) VALUES ('{region}', '{a.Id:N}', UTC_TIMESTAMP())");
+        Assert.Equal(RegionStatus.NoGridGateMoney, await StatusOf(rig, region));
 
         await rig.Db.Sql($"UPDATE `robust`.`regions` SET serverIP = '{HostB}' WHERE uuid = '{region}'");
 
