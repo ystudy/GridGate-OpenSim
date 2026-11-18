@@ -14,6 +14,8 @@
     <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" Version="10.0.0" />
     <!-- Parses the website's forms (antiforgery tokens, input names) in the end-to-end test. -->
     <PackageReference Include="AngleSharp" Version="1.8.6" />
+    <!-- MySql.Data (OpenSim's driver, used by the groups store test) loads this when it opens a connection. -->
+    <PackageReference Include="System.Security.Permissions" Version="6.0.0" />
   </ItemGroup>
 
   <ItemGroup>
@@ -32,9 +34,6 @@
     <Reference Include="OpenMetaverse"><HintPath>$(GgRoot)bin/OpenMetaverse.dll</HintPath></Reference>
     <Reference Include="Nini"><HintPath>$(GgRoot)bin/Nini.dll</HintPath></Reference>
     <Reference Include="log4net"><HintPath>$(GgRoot)bin/log4net.dll</HintPath></Reference>
-    <!-- MySql.Data (OpenSim's driver) loads these when it opens a connection. -->
-    <Reference Include="System.Security.Permissions"><HintPath>$(GgRoot)bin/System.Security.Permissions.dll</HintPath></Reference>
-    <Reference Include="System.Configuration.ConfigurationManager"><HintPath>$(GgRoot)bin/System.Configuration.ConfigurationManager.dll</HintPath></Reference>
   </ItemGroup>
 
   <ItemGroup>
