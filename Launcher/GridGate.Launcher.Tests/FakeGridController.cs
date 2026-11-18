@@ -407,20 +407,13 @@ internal sealed class FakeGridController : IGridController
     /// <summary>The account's own spelling of the name <see cref="SetEstateOwnerAsync"/> finds; the typed name when null.</summary>
     public (string First, string Last)? EstateOwnerFound { get; set; }
 
-    /// <summary>What <see cref="SetEstateOwnerAsync"/> does besides recording, once the account is found.</summary>
-    public Action? OnSetEstateOwner { get; set; }
-
-    /// <summary>The principal id of the account <see cref="SetEstateOwnerAsync"/> finds; a new one when null.</summary>
-    public Guid? EstateOwnerId { get; set; }
-
     /// <summary>Like the controller: saves Setup.OwnerCreated and Setup.Owner through <see cref="UpdateSettings"/>.</summary>
     public Task<RobustAccount> SetEstateOwnerAsync(string first, string last, CancellationToken ct)
     {
         Record("SetEstateOwner " + first + " " + last);
         if (EstateOwnerError is { } e) throw e;
-        OnSetEstateOwner?.Invoke();
         (first, last) = EstateOwnerFound ?? (first, last);
-        var account = new RobustAccount(EstateOwnerId ?? Guid.NewGuid(), first, last, 0, "");
+        var account = new RobustAccount(Guid.NewGuid(), first, last, 0, "");
         UpdateSettings(l => l with { Setup = l.Setup with { OwnerCreated = true, Owner = new OwnerInfo(first, last, account.PrincipalId) } });
         return Task.FromResult(account);
     }
@@ -725,14 +718,21 @@ internal sealed class FakeRobustAccounts : IRobustClient, IRobustPasswords, IRob
         return Task.FromResult(_accounts.Values.Select(a => a.Account).FirstOrDefault(a => a.PrincipalId == principal));
     }
 
+    /// <summary>Thrown by <see cref="AuthenticateAsync"/> when set (a stalled grid, or an aborted request).</summary>
+    public Exception? AuthenticateError { get; set; }
+
+    /// <summary>Thrown by <see cref="GetMapRegionsAsync(CancellationToken)"/> when set.</summary>
+    public Exception? MapError { get; set; }
+
     public Task<bool> AuthenticateAsync(Guid principal, string plainPassword, CancellationToken ct) =>
+        AuthenticateError is { } failure ? throw failure :
         Down ? throw new HttpRequestException("Connection refused") : Task.FromResult(_accounts.Values.Any(a => a.Account.PrincipalId == principal && a.Password == plainPassword));
 
     /// <summary>The grid's map this fake reports.</summary>
     public List<MapRegion> MapRegions { get; } = [];
 
     public Task<IReadOnlyList<MapRegion>> GetMapRegionsAsync(CancellationToken ct) =>
-        Task.FromResult<IReadOnlyList<MapRegion>>(MapRegions.ToList());
+        MapError is { } failure ? throw failure : Task.FromResult<IReadOnlyList<MapRegion>>(MapRegions.ToList());
 
     public Task<IReadOnlyList<MapRegion>> GetMapRegionsAsync(MapArea area, CancellationToken ct) =>
         Task.FromResult<IReadOnlyList<MapRegion>>(MapRegions.Where(m => m.X <= area.XMax && m.X + m.Size - 1 >= area.XMin

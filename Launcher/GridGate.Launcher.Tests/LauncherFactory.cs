@@ -96,6 +96,9 @@ internal sealed class LauncherFactory : WebApplicationFactory<Program>
     /// <summary>Extra test-only registrations (e.g. a module), added after the fakes.</summary>
     public Action<IServiceCollection>? ExtraServices { get; init; }
 
+    /// <summary>The settings the page asked a Robust client for (settings not saved yet), in order.</summary>
+    public List<LauncherSettings> RobustClientAskedFor { get; } = [];
+
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseSetting("GRIDGATE_DATA", Paths.Data);
@@ -107,6 +110,12 @@ internal sealed class LauncherFactory : WebApplicationFactory<Program>
             services.AddSingleton<IGridController>(Grid);
             services.RemoveAll<IRobustClient>();
             services.AddSingleton<IRobustClient>(Robust);
+            services.RemoveAll<RobustClientFor>();
+            services.AddSingleton<RobustClientFor>(settings =>
+            {
+                RobustClientAskedFor.Add(settings);
+                return Robust;
+            });
             services.RemoveAll<IOnlineUsers>();
             services.AddSingleton<IOnlineUsers>(OnlineUsers);
             services.RemoveAll<GridGate.Launcher.Core.Dashboard.IWorldCounter>();

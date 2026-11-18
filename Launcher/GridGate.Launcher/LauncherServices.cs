@@ -45,6 +45,9 @@ public static class LauncherServices
             sp.GetRequiredService<IHttpClientFactory>().CreateClient("GridGate.Robust"),
             // Resolved per call: the controller itself depends on this client.
             () => sp.GetRequiredService<IGridController>().CurrentSettings()));
+        // A client for settings that are not saved yet (a move to another grid asks the new grid first).
+        services.AddSingleton<RobustClientFor>(sp => settings => new RobustClient(
+            sp.GetRequiredService<IHttpClientFactory>().CreateClient("GridGate.Robust"), () => settings));
         // Assets go up to 64 MB, so this client waits longer than the account lookups do.
         services.AddHttpClient("GridGate.RobustAssets", c => c.Timeout = TimeSpan.FromMinutes(2));
         services.AddSingleton<IRobustAssets>(sp => new RobustAssets(

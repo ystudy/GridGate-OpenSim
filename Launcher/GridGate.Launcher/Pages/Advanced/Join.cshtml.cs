@@ -14,10 +14,10 @@ namespace GridGate.Launcher.Pages.Advanced;
 /// <summary>
 /// A finished Region Server's Grid Asset Server, which only the owner re-points (every confirm is in the audit log): the same read, show and confirm as the setup join step
 /// (<see cref="JoinForm"/>), but the confirm rewrites the INIs and asks for a restart. Any other plan, or a setup not
-/// finished, goes back to Advanced settings. Nothing is saved while the address or the read fails; the new join is put
-/// back when the estate owner isn't on the new grid or one of our regions would overlap a region on its map.
+/// finished, goes back to Advanced settings. Nothing is saved until the new grid has answered: the estate owner must be on it and
+/// accept the typed password, and none of our regions may overlap a region on its map. Then everything is saved in one write.
 /// </summary>
-public sealed class JoinModel(IGridController grid, Func<LauncherSettings> settings, IGridJoinClient join, IRobustClient robust, AuditLog audit) : PageModel
+public sealed class JoinModel(IGridController grid, Func<LauncherSettings> settings, IGridJoinClient join, RobustClientFor robustFor, AuditLog audit) : PageModel
 {
     private string? Ip => HttpContext.Connection.RemoteIpAddress?.ToString();
 
@@ -58,7 +58,11 @@ public sealed class JoinModel(IGridController grid, Func<LauncherSettings> setti
     }
 
     /// <summary>"Change the address": the form again, with the address filled in.</summary>
-    public IActionResult OnPostChange() => Closed() ?? Page();
+    public IActionResult OnPostChange()
+    {
+        Password = null;
+        return Closed() ?? Page();
+    }
 
     public async Task<IActionResult> OnPostConfirmAsync()
     {
@@ -74,61 +78,48 @@ public sealed class JoinModel(IGridController grid, Func<LauncherSettings> setti
             return Page();
         }
 
-        // The estate owner's account id belongs to the old grid: save the new join, then look the owner up on the
-        // new grid (which saves the new id). If that fails, or one of our regions would overlap a region on the new
-        // grid's map, the old join, grid name and owner are put back.
         var before = settings();
         if (before.Setup.Owner is not null && string.IsNullOrWhiteSpace(password))
-        {
-            audit.Write(User, Ip, "grid-join", JoinForm.AddressOf(read), "refused");
-            Error = $"Type your password on {read.GridName}.";
-            Found = read;
-            Address = JoinForm.AddressOf(read);
-            return Page();
-        }
-        grid.UpdateSettings(s => JoinForm.Apply(s, read), writeConfig: true);
-        if (before.Setup.Owner is { } owner)
-        {
-            try
-            {
-                var account = await grid.SetEstateOwnerAsync(owner.FirstName, owner.LastName, ct);
-                // Only the owner's own password on the new grid keeps the move: the robust client asks the grid the settings now name.
-                if (!await robust.AuthenticateAsync(account.PrincipalId, password!, ct))
-                    return Refuse(before, read, $"That isn't the password of {account.FirstName} {account.LastName} on {read.GridName}. Nothing was changed.");
-            }
-            catch (Exception e) when (e is HttpRequestException || (e is TaskCanceledException && !ct.IsCancellationRequested))
-            {
-                return Refuse(before, read, GridAssetUnreachableException.MessageFor(read.Host, read.PublicPort));
-            }
-            catch (Exception e) when (e is ArgumentException or GridUnreachableException)
-            {
-                return Refuse(before, read,
-                    e is ArgumentException ? e.Message + " Create your avatar on that grid first, then try again." : e.Message);
-            }
-        }
+            return Refuse(read, $"Type your password on {read.GridName}.");
 
-        // The robust client asks the grid the settings now name: the new one.
-        IReadOnlyList<MapRegion> map;
+        // Everything is checked with the new grid before anything is saved: the estate owner's account id belongs to
+        // the old grid, so the owner is looked up there by name and must accept the typed password, and none of our
+        // regions may overlap a region on its map. Only then are the join, grid name and owner saved, in one write.
+        var target = JoinForm.Apply(before, read);
+        var newGrid = robustFor(target);
+        RobustAccount? account = null;
         try
         {
-            map = await robust.GetMapRegionsAsync(ct);
+            if (before.Setup.Owner is { } owner)
+            {
+                var (first, last) = (owner.FirstName.Trim(), owner.LastName.Trim());
+                account = await newGrid.GetAccountAsync(first, last, ct);
+                if (account is null)
+                    return Refuse(read, $"There's no avatar called {first} {last} on {read.GridName}. Create your avatar on that grid first, then try again.");
+                if (!await newGrid.AuthenticateAsync(account.PrincipalId, password!, ct))
+                    return Refuse(read, $"That isn't the password of {account.FirstName} {account.LastName} on {read.GridName}. Nothing was changed.");
+            }
+            var map = await newGrid.GetMapRegionsAsync(ct);
+            foreach (var region in target.Regions.Where(r => r.DeletedAt is null))
+            {
+                var check = RegionPlacement.Check(target, region.X, region.Y, region.Size, ignore: region.Uuid, elsewhere: map);
+                if (!check.Ok)
+                    return Refuse(read,
+                        $"Your region {region.Name} would overlap {check.OverlapsWith} on {read.GridName}. Move it first (Regions page), then try again.");
+            }
         }
         catch (Exception e) when (e is HttpRequestException || (e is TaskCanceledException && !ct.IsCancellationRequested))
         {
-            return Refuse(before, read, GridAssetUnreachableException.MessageFor(read.Host, read.PublicPort));
-        }
-        var saved = settings();
-        foreach (var region in saved.Regions.Where(r => r.DeletedAt is null))
-        {
-            var check = RegionPlacement.Check(saved, region.X, region.Y, region.Size, ignore: region.Uuid, elsewhere: map);
-            if (!check.Ok)
-                return Refuse(before, read,
-                    $"Your region {region.Name} would overlap {check.OverlapsWith} on {read.GridName}. Move it first (Regions page), then try again.");
+            return Refuse(read, GridAssetUnreachableException.MessageFor(read.Host, read.PublicPort));
         }
 
+        grid.UpdateSettings(s => account is null
+            ? JoinForm.Apply(s, read)
+            : JoinForm.Apply(s, read) with { Setup = s.Setup with { OwnerCreated = true, Owner = new OwnerInfo(account.FirstName, account.LastName, account.PrincipalId) } },
+            writeConfig: true);
         audit.Write(User, Ip, "grid-join", JoinForm.AddressOf(read));
         Current = JoinForm.AddressOf(read);
-        SavedNotes = PortWarning(saved, read) is { } warning ? [warning] : [];
+        SavedNotes = PortWarning(settings(), read) is { } warning ? [warning] : [];
         return Page();
     }
 
@@ -142,19 +133,10 @@ public sealed class JoinModel(IGridController grid, Func<LauncherSettings> setti
               + "change this computer's first region port in Settings → Network."
             : null;
 
-    /// <summary>Puts back the join, grid name, estate owner, money pairing and Gloebit app saved <paramref name="before"/>, and shows the confirm view with <paramref name="error"/>.</summary>
-    private PageResult Refuse(LauncherSettings before, JoinedGrid read, string error)
+    /// <summary>Nothing was saved: writes the "refused" audit line and shows the confirm view with <paramref name="error"/>.</summary>
+    private PageResult Refuse(JoinedGrid read, string error)
     {
         audit.Write(User, Ip, "grid-join", JoinForm.AddressOf(read), "refused");
-        grid.UpdateSettings(s => s with
-        {
-            Join = before.Join,
-            GridName = before.GridName,
-            Setup = s.Setup with { OwnerCreated = before.Setup.OwnerCreated, Owner = before.Setup.Owner },
-            // Joining dropped a money pairing with the old Grid Asset Server; a refused re-point keeps it.
-            // The Gloebit app belongs to the old grid and is put back with it.
-            Money = s.Money with { Pairing = before.Money.Pairing, Gloebit = before.Money.Gloebit },
-        }, writeConfig: true);
         Error = error;
         Found = read;
         Address = JoinForm.AddressOf(read);
