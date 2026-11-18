@@ -501,8 +501,8 @@ public sealed class OpenSimMoneyPathTests
     }
 
     /// <summary>The viewer accepting an invitation to "Club", as an instant message.</summary>
-    private static void AcceptInvitation(GroupsRig g, InstantMessageDialog answer = InstantMessageDialog.GroupInvitationAccept) =>
-        g.Joiner.Raise(nameof(IClientAPI.OnInstantMessage), g.Joiner, new GridInstantMessage
+    private static void AcceptInvitation(GroupsRig g, InstantMessageDialog answer = InstantMessageDialog.GroupInvitationAccept, RecordingClient? client = null) =>
+        (client ?? g.Joiner).Raise(nameof(IClientAPI.OnInstantMessage), client ?? g.Joiner, new GridInstantMessage
         {
             dialog = (byte)answer, imSessionID = g.InviteGuid, fromAgentID = Buyer.Guid,
             toAgentID = GroupId.Guid, message = "", fromAgentName = "", binaryBucket = [],
@@ -794,8 +794,8 @@ public sealed class OpenSimMoneyPathTests
 
         g.Groups.JoinGroupRequest(g.Joiner, GroupId);
 
-        // Turned away, quietly, while the first one is still going.
-        Assert.Equal([(GroupId, false)], g.Joiner.JoinReplies);
+        // Turned away without a word of its own while the first one is still going: the first one answers.
+        Assert.Empty(g.Joiner.JoinReplies);
         Assert.Empty(g.Joiner.Alerts);
         Assert.Single(g.Region.Service.Of("hold"));
         Assert.Single(g.Service.Order, c => c == "AddAgentToGroup");
@@ -808,7 +808,7 @@ public sealed class OpenSimMoneyPathTests
         Assert.Empty(g.Region.Service.Of("return"));
         Assert.Empty(g.Region.Service.Of("charge"));
         Assert.Contains(Buyer, g.Service.Members);
-        Assert.Equal([(GroupId, false), (GroupId, true)], g.Joiner.JoinReplies);
+        Assert.Equal([(GroupId, true)], g.Joiner.JoinReplies);
     }
 
     [Theory]
@@ -822,8 +822,8 @@ public sealed class OpenSimMoneyPathTests
 
         AcceptInvitation(g);
 
-        // The first accept is answering: this one says nothing and does nothing.
-        Assert.Empty(g.Joiner.Alerts);
+        // The first accept is answering: this one only says the request is still being handled.
+        Assert.Equal(["Your request to join Club is still being handled."], g.Joiner.Alerts);
         Assert.Empty(g.Joiner.Instant);
         Assert.Single(g.Region.Service.Of("hold"));
         Assert.Single(g.Service.Order, c => c == "AddAgentToGroup");
@@ -857,6 +857,32 @@ public sealed class OpenSimMoneyPathTests
         g.Region.WaitFor("complete");
         Assert.Single(g.Region.Service.Of("hold"));
         Assert.Empty(g.Region.Service.Of("charge"));
+    }
+
+    [Theory]
+    [InlineData(V2)]
+    [InlineData(Flotsam)]
+    public void An_accept_sent_by_someone_else_with_the_invitees_id_forged_changes_nothing(string module)
+    {
+        var g = GroupsRegion(module, balance: 100000);
+        Invite(g);
+        g.Service.Fee = 5000;
+        var forger = g.Region.Arrive(Founder);
+
+        // The forger's client sends the accept with the invitee's id as the sender.
+        AcceptInvitation(g, client: forger);
+
+        AssertNoHoldAndNotAdded(g);
+        Assert.Empty(g.Joiner.Instant);
+        Assert.Empty(forger.Instant);
+        Assert.DoesNotContain("RemoveAgentToGroupInvite", g.Service.Order);
+
+        // Nothing was remembered: the real accept offers the new fee, as it would have without the forgery.
+        g.Service.Fee = JoinFee;
+        AcceptInvitation(g);
+        g.Region.WaitFor("complete");
+        Assert.Equal((long)JoinFee, Assert.Single(g.Region.Service.Of("hold")).Args[3]);
+        Assert.Contains(Buyer, g.Service.Members);
     }
 
     [Theory]

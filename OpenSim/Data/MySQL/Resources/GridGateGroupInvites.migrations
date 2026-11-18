@@ -3,7 +3,7 @@
 BEGIN;
 
 # GridGate: assumes the default groups realm (os_groups), as os_groups_Store does.
-# GridGate: the join fee an invitation showed when it was sent. NULL means not known (older invitations, XmlRpc groups).
+# GridGate: the join fee an invitation showed when it was sent. NULL means not known (older invitations, XmlRpc groups, and a free invitation, which stores no fee).
 ALTER TABLE `os_groups_invites` ADD COLUMN `Fee` int NULL DEFAULT NULL;
 
 COMMIT;

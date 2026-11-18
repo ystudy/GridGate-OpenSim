@@ -469,8 +469,10 @@ namespace OpenSim.Groups
             invite.GroupID = groupID;
             invite.RoleID = roleID;
             invite.Data = new Dictionary<string, string>();
-            // GridGate: keep the fee the invitation showed; no key stores NULL, meaning not known
-            if (fee.HasValue)
+            // GridGate: keep the fee the invitation showed when it is a fee; no key stores NULL, meaning not known. A free
+            // invitation stores none: it reads back as not known, which a paid group answers the same way (it offers the
+            // fee first), and it never needs the Fee column.
+            if (fee.HasValue && fee.Value > 0)
                 invite.Data["Fee"] = fee.Value.ToString(CultureInfo.InvariantCulture);
 
             return m_Database.StoreInvitation(invite);

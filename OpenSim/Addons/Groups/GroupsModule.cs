@@ -393,7 +393,7 @@ namespace OpenSim.Groups
                         IFeeHold fee = null;
                         GroupRecord group = GetGroupRecord(inviteInfo.GroupID);
                         IMoneyModule money = scene.RequestModuleInterface<IMoneyModule>();
-                        int current = group == null ? 0 : JoinFeeOnAccept(group);
+                        int current = group == null || money == null ? 0 : JoinFeeOnAccept(group);
                         // GridGate: and one paid join at a time per person and group, so two accepts can't both charge.
                         bool joinBegun = false;
                         string reason = string.Empty;
@@ -402,8 +402,15 @@ namespace OpenSim.Groups
                         {
                             if (current > 0)
                             {
+                                // Only the invitee accepts for themselves: a forged sender id charges nobody and changes nothing.
+                                if (remoteClient.AgentId != invitee)
+                                    return;
+
                                 if (!m_joinsInProgress.TryBegin(remoteClient.AgentId, inviteInfo.GroupID))
+                                {
+                                    remoteClient.SendAgentAlertMessage(string.Format("Your request to join {0} is still being handled.", group.GroupName), false);
                                     return; // another join of theirs to this group is answering already
+                                }
                                 joinBegun = true;
 
                                 if (m_groupData.GetAgentGroupMembership(remoteAgentIDstr, invitee.ToString(), inviteInfo.GroupID) != null)
@@ -1204,10 +1211,7 @@ namespace OpenSim.Groups
             IFeeHold fee = null;
             bool paid = money != null && groupRecord.MembershipFee > 0;
             if (paid && !m_joinsInProgress.TryBegin(remoteClient.AgentId, groupID))
-            {
-                remoteClient.SendJoinGroupReply(groupID, false);
-                return;
-            }
+                return; // the join already going on answers for both
 
             string reason = string.Empty;
             string requestingAgentIDStr = GetRequestingAgentIDStr(remoteClient);

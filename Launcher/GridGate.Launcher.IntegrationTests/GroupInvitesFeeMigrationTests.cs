@@ -88,6 +88,12 @@ public sealed class GroupInvitesFeeMigrationTests(MoneyMariaDb maria) : IClassFi
         Assert.True(service.AddAgentToGroupInvite(owner.ToString(), withoutFee, group, UUID.Zero, UUID.Random().ToString(), null));
         Assert.Null(service.GetAgentToGroupInvite(owner.ToString(), withoutFee).Fee);
         Assert.Equal(1, await db.Scalar($"SELECT COUNT(*) FROM `robust`.`os_groups_invites` WHERE InviteID = '{withoutFee}' AND Fee IS NULL"));
+
+        // A free invitation stores no fee either: it reads back as not known.
+        var free = UUID.Random();
+        Assert.True(service.AddAgentToGroupInvite(owner.ToString(), free, group, UUID.Zero, UUID.Random().ToString(), 0));
+        Assert.Null(service.GetAgentToGroupInvite(owner.ToString(), free).Fee);
+        Assert.Equal(1, await db.Scalar($"SELECT COUNT(*) FROM `robust`.`os_groups_invites` WHERE InviteID = '{free}' AND Fee IS NULL"));
     }
 
     [Fact]

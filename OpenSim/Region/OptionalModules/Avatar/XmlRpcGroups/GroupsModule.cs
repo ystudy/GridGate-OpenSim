@@ -456,8 +456,15 @@ namespace OpenSim.Region.OptionalModules.Avatar.XmlRpcGroups
                         {
                             if (current > 0)
                             {
+                                // Only the invitee accepts for themselves: a forged sender id charges nobody and changes nothing.
+                                if (remoteAgentID != inviteInfo.AgentID)
+                                    return;
+
                                 if (!m_joinsInProgress.TryBegin(remoteAgentID, inviteInfo.GroupID))
+                                {
+                                    remoteClient.SendAgentAlertMessage(string.Format("Your request to join {0} is still being handled.", group.GroupName), false);
                                     return; // another join of theirs to this group is answering already
+                                }
                                 joinBegun = true;
 
                                 if (m_groupData.GetAgentGroupMembership(remoteAgentID, inviteInfo.AgentID, inviteInfo.GroupID) != null)
@@ -1306,10 +1313,7 @@ namespace OpenSim.Region.OptionalModules.Avatar.XmlRpcGroups
             bool paid = money != null && groupRecord != null && groupRecord.MembershipFee > 0;
             bool added;
             if (paid && !m_joinsInProgress.TryBegin(agentID, groupID))
-            {
-                remoteClient.SendJoinGroupReply(groupID, false);
-                return;
-            }
+                return; // the join already going on answers for both
             try
             {
                 if (paid)
