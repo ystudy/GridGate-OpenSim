@@ -476,6 +476,15 @@ namespace OpenSim.Region.ClientStack.Linden
                     }
                 }
 
+                // GridGate: what the model was priced for; completion refuses a model that holds more. Set whether or not
+                // the agent is in the region, so a model can't be stored with more than it was priced for.
+                if (isMeshModel)
+                {
+                    nreqtextures = llsdRequest.asset_resources?.texture_list?.Array.Count ?? 0;
+                    nreqmeshs = llsdRequest.asset_resources?.mesh_list?.Array.Count ?? 0;
+                    nreqinstances = llsdRequest.asset_resources?.instance_list?.Array.Count ?? 0;
+                }
+
                 // check test upload and funds
                 if (client is not null)
                 {
@@ -509,11 +518,6 @@ namespace OpenSim.Region.ClientStack.Linden
                             return errorResponse;
                         }
                         cost = modelcost;
-
-                        // GridGate: what the model was priced for; completion refuses a model that holds more
-                        nreqtextures = llsdRequest.asset_resources?.texture_list?.Array.Count ?? 0;
-                        nreqmeshs = llsdRequest.asset_resources?.mesh_list?.Array.Count ?? 0;
-                        nreqinstances = llsdRequest.asset_resources?.instance_list?.Array.Count ?? 0;
                     }
                     else
                     {
@@ -655,8 +659,9 @@ namespace OpenSim.Region.ClientStack.Linden
             string creatorIDstr = creatorID.ToString();
 
             // GridGate: a paid upload's fee is held before anything is stored, then taken once anything is stored (a texture,
-            // a mesh or the asset itself) or given back if the upload fails before that (FeeHolds: a money module without holds is checked now and charged after, as before). The
-            // item is then added at cost 0, so the fee isn't charged a second time.
+            // a mesh or the asset itself) or given back if the upload fails before that (FeeHolds: a money module without
+            // holds is checked now and charged after, as before). The item is then added at cost 0, so the fee isn't
+            // charged a second time.
             IFeeHold fee = null;
             IMoneyModule mm = m_Scene.RequestModuleInterface<IMoneyModule>();
             // GridGate: texture or sound data pays the upload fee whatever type the viewer declared (a texture uploaded as

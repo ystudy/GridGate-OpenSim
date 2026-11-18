@@ -84,7 +84,7 @@ public sealed class OpenSimMoneyPathTests
         region.Scene.InventoryService.GetFolderContent(Buyer, region.Scene.InventoryService.GetFolderForType(Buyer, folder).ID)
             .Items.Where(i => i.Name == "A texture").ToList();
 
-    /// <summary>money review 2026-11-15, R-10: a UDP upload asks the money module whether the fee is covered at the request and again when it is held, then charges it.</summary>
+    /// <summary>a UDP upload asks the money module whether the fee is covered at the request and again when it is held, then charges it.</summary>
     [Fact]
     public void A_udp_upload_checks_the_fee_is_covered_then_charges_it()
     {
@@ -505,12 +505,16 @@ public sealed class OpenSimMoneyPathTests
     {
         var (region, uploads, uploader) = UploadRegion(balance: 100, feeHolds: true);
         region.Service.Queue("hold", new MoneyAnswer("not_enough"));
-        var taskItem = new TaskInventoryItem { ItemID = UUID.Random(), Name = "A texture", Type = (int)AssetType.Texture, InvType = (int)InventoryType.Texture };
+        var part = SceneHelpers.AddSceneObject(region.Scene, 1, Buyer, "Box ", 0x50).RootPart;
+        var oldAsset = TestHelpers.ParseTail(0x203);
+        var taskItem = new TaskInventoryItem { ItemID = UUID.Random(), Name = "A texture", AssetID = oldAsset, Type = (int)AssetType.Texture, InvType = (int)InventoryType.Texture };
+        part.Inventory.AddInventoryItem(taskItem, true);
 
         Send(uploader, (sbyte)AssetType.Texture, storeLocal: false, temporary: false, data: TextureData);
-        uploads.HandleTaskItemUpdateFromTransaction(uploader, null!, UploadTransaction, taskItem);
+        uploads.HandleTaskItemUpdateFromTransaction(uploader, part, UploadTransaction, part.Inventory.GetInventoryItem(taskItem.ItemID));
 
         uploader.WaitForAlert("Insufficient funds");
+        Assert.Equal(oldAsset, part.Inventory.GetInventoryItem(taskItem.ItemID).AssetID);
         Assert.Null(region.Scene.AssetService.Get(UploadAssetId.ToString()));
         Assert.Empty(region.Service.Of("charge"));
         Assert.Empty(region.Service.Of("complete"));

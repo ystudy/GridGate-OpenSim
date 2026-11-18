@@ -93,6 +93,10 @@ namespace OpenSim.Region.CoreModules.Agent.AssetTransaction
         private bool m_itemWrittenEarly;
         private UUID m_itemOldAssetID = UUID.Zero;
 
+        // GridGate: the same for a task item, which RequestUpdateTaskInventoryItem points at the upload at once.
+        private SceneObjectPart m_taskPart;
+        private UUID m_taskItemOldAssetID = UUID.Zero;
+
         private UploadState m_uploadState = UploadState.New;
 
         private AssetBase m_asset;
@@ -391,7 +395,8 @@ namespace OpenSim.Region.CoreModules.Agent.AssetTransaction
                         // the AvatarAppearance structure.
                         // GridGate: remember the asset the item had, in case the update is refused.
                         InventoryItemBase current = m_Scene.InventoryService.GetItem(item.Owner, item.ID);
-                        if (current is not null)
+                        // GridGate: a second early update must not overwrite the asset recorded by the first.
+                        if (current is not null && !m_itemWrittenEarly)
                         {
                             m_itemWrittenEarly = true;
                             m_itemOldAssetID = current.AssetID;
@@ -412,7 +417,7 @@ namespace OpenSim.Region.CoreModules.Agent.AssetTransaction
             }
         }
 
-        public void RequestUpdateTaskInventoryItem(IClientAPI remoteClient, TaskInventoryItem taskItem)
+        public void RequestUpdateTaskInventoryItem(IClientAPI remoteClient, TaskInventoryItem taskItem, SceneObjectPart part = null)
         {
             // We must lock to avoid a race with a separate thread uploading the asset.
             lock (this)
@@ -420,6 +425,9 @@ namespace OpenSim.Region.CoreModules.Agent.AssetTransaction
                 m_asset.Name = taskItem.Name;
                 m_asset.Description = taskItem.Description;
                 m_asset.Type = (sbyte)taskItem.Type;
+                // GridGate: remember the asset the item had, in case the update is refused.
+                m_taskPart = part;
+                m_taskItemOldAssetID = taskItem.AssetID;
                 taskItem.AssetID = m_asset.FullID;
 
                 if (m_uploadState == UploadState.Complete)
@@ -458,6 +466,7 @@ namespace OpenSim.Region.CoreModules.Agent.AssetTransaction
                 string error = string.Format("Not enough permissions on asset(s) referenced by item '{0}', update failed", item.Name);
                 ourClient.SendAlertMessage(error);
                 m_transactions.RemoveXferUploader(m_transactionID);
+                // GridGate: the item was pointed at the upload before it was stored; put its old asset back.
                 RestoreItemAsset(item);
                 ourClient.SendBulkUpdateInventory(item); // invalid the change item on viewer cache
             }
@@ -497,6 +506,19 @@ namespace OpenSim.Region.CoreModules.Agent.AssetTransaction
         }
 
         /// <summary>
+        /// GridGate: a refused task item update puts back the asset the item had, on the prim's own item when it still
+        /// holds the upload's asset.
+        /// </summary>
+        private void RestoreTaskItemAsset(TaskInventoryItem taskItem)
+        {
+            TaskInventoryItem live = m_taskPart?.Inventory.GetInventoryItem(taskItem.ItemID) ?? taskItem;
+            if (live.AssetID.Equals(m_asset.FullID))
+                live.AssetID = m_taskItemOldAssetID;
+            if (!ReferenceEquals(live, taskItem) && taskItem.AssetID.Equals(m_asset.FullID))
+                taskItem.AssetID = m_taskItemOldAssetID;
+        }
+
+        /// <summary>
         /// Store the asset for the given task item when it has been uploaded.
         /// </summary>
         /// <param name="taskItem"></param>
@@ -508,11 +530,16 @@ namespace OpenSim.Region.CoreModules.Agent.AssetTransaction
 
             // GridGate: as for an inventory item update.
             if (RefuseTypeMismatch((sbyte)taskItem.Type))
+            {
+                RestoreTaskItemAsset(taskItem);
                 return false;
+            }
 
             if(ValidateAssets() == 0)
             {
                 m_transactions.RemoveXferUploader(m_transactionID);
+                // GridGate: the item was pointed at the upload before it was stored; put its old asset back.
+                RestoreTaskItemAsset(taskItem);
                 string error = string.Format("Not enough permissions on asset(s) referenced by task item '{0}', update failed", taskItem.Name);
                 ourClient.SendAlertMessage(error);
                 // force old asset to viewers ??
@@ -521,7 +548,10 @@ namespace OpenSim.Region.CoreModules.Agent.AssetTransaction
 
             // GridGate: as for an inventory item update.
             if (!StoreUploaded())
+            {
+                RestoreTaskItemAsset(taskItem);
                 return false;
+            }
             m_transactions.RemoveXferUploader(m_transactionID);
             return true;
         }
