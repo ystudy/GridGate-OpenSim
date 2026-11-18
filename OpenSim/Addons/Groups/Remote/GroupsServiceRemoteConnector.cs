@@ -531,7 +531,7 @@ namespace OpenSim.Groups
             MakeRequest("UPDATEMEMBERSHIP", sendData);
         }
 
-        public bool AddAgentToGroupInvite(string RequestingAgentID, UUID inviteID, UUID groupID, UUID roleID, string agentID)
+        public bool AddAgentToGroupInvite(string RequestingAgentID, UUID inviteID, UUID groupID, UUID roleID, string agentID, int? fee)
         {
             Dictionary<string, object> sendData = new Dictionary<string, object>();
             sendData["InviteID"] = inviteID.ToString();
@@ -540,6 +540,9 @@ namespace OpenSim.Groups
             sendData["AgentID"] = agentID.ToString();
             sendData["RequestingAgentID"] = RequestingAgentID;
             sendData["OP"] = "ADD";
+            // GridGate: send the fee only when it is known, so an older Robust sees the request it always saw
+            if (fee.HasValue)
+                sendData["Fee"] = fee.Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
 
             Dictionary<string, object> ret = MakeRequest("INVITE", sendData);
 

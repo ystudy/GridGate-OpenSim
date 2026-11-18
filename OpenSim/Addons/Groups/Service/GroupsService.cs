@@ -27,6 +27,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Reflection;
 using System.Timers;
 using log4net;
@@ -443,7 +444,7 @@ namespace OpenSim.Groups
             return true;
         }
 
-        public bool AddAgentToGroupInvite(string RequestingAgentID, UUID inviteID, UUID groupID, UUID roleID, string agentID)
+        public bool AddAgentToGroupInvite(string RequestingAgentID, UUID inviteID, UUID groupID, UUID roleID, string agentID, int? fee)
         {
             // Check whether the invitee is already a member of the group
             MembershipData m = m_Database.RetrieveMember(groupID, agentID);
@@ -468,6 +469,11 @@ namespace OpenSim.Groups
             invite.GroupID = groupID;
             invite.RoleID = roleID;
             invite.Data = new Dictionary<string, string>();
+            // GridGate: keep the fee the invitation showed when it is a fee; no key stores NULL, meaning not known. A free
+            // invitation stores none: it reads back as not known, which a paid group answers the same way (it offers the
+            // fee first), and it never needs the Fee column.
+            if (fee.HasValue && fee.Value > 0)
+                invite.Data["Fee"] = fee.Value.ToString(CultureInfo.InvariantCulture);
 
             return m_Database.StoreInvitation(invite);
         }
@@ -484,6 +490,10 @@ namespace OpenSim.Groups
             inviteInfo.GroupID = data.GroupID;
             inviteInfo.InviteID = data.InviteID;
             inviteInfo.RoleID = data.RoleID;
+            // GridGate: a NULL column reads as an empty string, which is not known
+            if (data.Data != null && data.Data.TryGetValue("Fee", out string feeText)
+                    && int.TryParse(feeText, NumberStyles.Integer, CultureInfo.InvariantCulture, out int fee))
+                inviteInfo.Fee = fee;
 
             return inviteInfo;
         }

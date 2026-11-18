@@ -448,12 +448,13 @@ namespace OpenSim.Groups
             m_LocalGroupsConnector.RemoveAgentFromGroup(AgentUUI(RequestingAgentID), AgentUUI(AgentID), GroupID);
         }
 
-        public bool AddAgentToGroupInvite(string RequestingAgentID, UUID inviteID, UUID groupID, UUID roleID, string agentID)
+        public bool AddAgentToGroupInvite(string RequestingAgentID, UUID inviteID, UUID groupID, UUID roleID, string agentID, int? fee)
         {
             string url = string.Empty, gname = string.Empty;
 
+            // GridGate: a local group keeps the fee; a foreign group has no call that takes one, so it is dropped here
             if (IsLocal(groupID, out url, out gname))
-                return m_LocalGroupsConnector.AddAgentToGroupInvite(AgentUUI(RequestingAgentID), inviteID, groupID, roleID, AgentUUI(agentID));
+                return m_LocalGroupsConnector.AddAgentToGroupInvite(AgentUUI(RequestingAgentID), inviteID, groupID, roleID, AgentUUI(agentID), fee);
             else
                 return false;
         }
