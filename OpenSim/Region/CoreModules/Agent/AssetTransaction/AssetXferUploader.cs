@@ -95,6 +95,7 @@ namespace OpenSim.Region.CoreModules.Agent.AssetTransaction
 
         // GridGate: the same for a task item, which RequestUpdateTaskInventoryItem points at the upload at once.
         private SceneObjectPart m_taskPart;
+        private bool m_taskItemTouched;
         private UUID m_taskItemOldAssetID = UUID.Zero;
 
         private UploadState m_uploadState = UploadState.New;
@@ -426,8 +427,13 @@ namespace OpenSim.Region.CoreModules.Agent.AssetTransaction
                 m_asset.Description = taskItem.Description;
                 m_asset.Type = (sbyte)taskItem.Type;
                 // GridGate: remember the asset the item had, in case the update is refused.
+                // (only the first update of the transaction records it)
                 m_taskPart = part;
-                m_taskItemOldAssetID = taskItem.AssetID;
+                if (!m_taskItemTouched)
+                {
+                    m_taskItemTouched = true;
+                    m_taskItemOldAssetID = taskItem.AssetID;
+                }
                 taskItem.AssetID = m_asset.FullID;
 
                 if (m_uploadState == UploadState.Complete)

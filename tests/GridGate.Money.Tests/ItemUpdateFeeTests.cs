@@ -119,6 +119,42 @@ public sealed class ItemUpdateFeeTests
         Assert.Equal(oldAsset, part.Inventory.GetInventoryItem(task.ItemID).AssetID);
     }
 
+    private static (MoneyScene Region, RecordingClient Client, SceneObjectPart Part, TaskInventoryItem Script) ScriptRegion()
+    {
+        var (region, client) = Region();
+        var part = SceneHelpers.AddSceneObject(region.Scene, 1, Buyer, "Box ", 0x50).RootPart;
+        var script = TaskInventoryHelpers.AddScript(region.Scene.AssetService, part, TestHelpers.ParseTail(0x605), TestHelpers.ParseTail(0x606), "A script", "default { state_entry() { } }");
+        return (region, client, part, script);
+    }
+
+    [Fact]
+    public void Texture_data_posted_as_a_task_script_update_is_refused_and_not_stored()
+    {
+        var (region, client, part, script) = ScriptRegion();
+        var oldAsset = script.AssetID;
+
+        var errors = region.Scene.CapsUpdateTaskInventoryScriptAsset(Buyer, script.ItemID, part.UUID, true, TextureData);
+
+        Assert.Equal([UploadData.ItemUpdateRefusedText], errors.Cast<object>());
+        Assert.Contains(UploadData.ItemUpdateRefusedText, client.Alerts);
+        Assert.Equal(oldAsset, part.Inventory.GetInventoryItem(script.ItemID).AssetID);
+    }
+
+    /// <summary>Compiling is not asserted: only that the new text was stored and the item points at it.</summary>
+    [Fact]
+    public void A_task_scripts_text_can_still_be_updated()
+    {
+        var (region, client, part, script) = ScriptRegion();
+        var oldAsset = script.AssetID;
+
+        region.Scene.CapsUpdateTaskInventoryScriptAsset(Buyer, script.ItemID, part.UUID, false, "default { state_entry() { } }"u8.ToArray());
+
+        var now = part.Inventory.GetInventoryItem(script.ItemID).AssetID;
+        Assert.NotEqual(oldAsset, now);
+        Assert.NotNull(region.Scene.AssetService.Get(now.ToString()));
+        Assert.DoesNotContain(UploadData.ItemUpdateRefusedText, client.Alerts);
+    }
+
     [Fact]
     public void A_task_notecards_text_can_still_be_updated()
     {
