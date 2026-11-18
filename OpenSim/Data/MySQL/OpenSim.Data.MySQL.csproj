@@ -202,6 +202,8 @@
     </EmbeddedResource>
     <EmbeddedResource Include="Resources\GridGateSessionStarts.migrations">
     </EmbeddedResource>
+    <EmbeddedResource Include="Resources\GridGateGroupInvites.migrations">
+    </EmbeddedResource>
     <EmbeddedResource Include="Resources\IM_Store.migrations">
     </EmbeddedResource>
     <EmbeddedResource Include="Resources\InventoryStore.migrations">

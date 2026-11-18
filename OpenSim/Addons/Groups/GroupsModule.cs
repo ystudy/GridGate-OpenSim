@@ -1353,7 +1353,7 @@ namespace OpenSim.Groups
             // Todo: Security check, probably also want to send some kind of notification
             UUID InviteID = UUID.Random();
 
-            if (m_groupData.AddAgentToGroupInvite(agentID.ToString(), InviteID, groupID, roleID, invitedAgentID.ToString()))
+            if (m_groupData.AddAgentToGroupInvite(agentID.ToString(), InviteID, groupID, roleID, invitedAgentID.ToString(), null)) // GridGate: the fee shown is passed here by a later change
             {
                 if (m_msgTransferModule != null)
                 {

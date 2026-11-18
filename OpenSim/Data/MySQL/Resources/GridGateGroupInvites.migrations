@@ -1,0 +1,8 @@
+:VERSION 1         # --------------------------
+
+BEGIN;
+
+# GridGate: the join fee an invitation showed when it was sent. NULL means not known (older invitations, XmlRpc groups).
+ALTER TABLE `os_groups_invites` ADD COLUMN `Fee` int NULL DEFAULT NULL;
+
+COMMIT;

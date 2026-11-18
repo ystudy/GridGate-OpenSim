@@ -428,25 +428,43 @@ namespace OpenSim.Groups
 
         public static Dictionary<string, object> GroupInviteInfo(GroupInviteInfo invite)
         {
-            return new Dictionary<string, object>()
+            var dict = new Dictionary<string, object>()
             {
                 ["InviteID"] = invite.InviteID.ToString(),
                 ["GroupID"] = invite.GroupID.ToString(),
                 ["RoleID"] = invite.RoleID.ToString(),
                 ["AgentID"] = invite.AgentID
             };
+            // GridGate: the fee goes only when it is known; a missing field means not known, never 0
+            if (invite.Fee.HasValue)
+                dict["Fee"] = invite.Fee.Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            return dict;
         }
 
         public static GroupInviteInfo GroupInviteInfo(Dictionary<string, object> dict)
         {
-            return dict == null ? null :
-                new GroupInviteInfo
-                {
-                    InviteID = new UUID(dict["InviteID"].ToString()),
-                    GroupID = new UUID(dict["GroupID"].ToString()),
-                    RoleID = new UUID(dict["RoleID"].ToString()),
-                    AgentID = Sanitize(dict["AgentID"].ToString())
-                };
+            if (dict == null)
+                return null;
+
+            return new GroupInviteInfo
+            {
+                InviteID = new UUID(dict["InviteID"].ToString()),
+                GroupID = new UUID(dict["GroupID"].ToString()),
+                RoleID = new UUID(dict["RoleID"].ToString()),
+                AgentID = Sanitize(dict["AgentID"].ToString()),
+                // GridGate: a missing or unreadable Fee is not known
+                Fee = ReadFee(dict)
+            };
+        }
+
+        // GridGate: the optional Fee of an invitation; null when absent or not a whole number
+        public static int? ReadFee(Dictionary<string, object> dict)
+        {
+            if (dict.TryGetValue("Fee", out object value) && value != null
+                    && int.TryParse(value.ToString(), System.Globalization.NumberStyles.Integer,
+                        System.Globalization.CultureInfo.InvariantCulture, out int fee))
+                return fee;
+            return null;
         }
 
         public static Dictionary<string, object> GroupNoticeData(ExtendedGroupNoticeData notice)

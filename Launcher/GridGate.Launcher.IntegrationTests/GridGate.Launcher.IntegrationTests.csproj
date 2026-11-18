@@ -22,6 +22,22 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Robust's groups service and its MySQL store, for the join fee kept with an invitation. -->
+    <ProjectReference Include="$(GgRoot)OpenSim/Addons/Groups/OpenSim.Addons.Groups.csproj" />
+    <ProjectReference Include="$(GgRoot)OpenSim/Data/MySQL/OpenSim.Data.MySQL.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="OpenMetaverseTypes"><HintPath>$(GgRoot)bin/OpenMetaverseTypes.dll</HintPath></Reference>
+    <Reference Include="OpenMetaverse"><HintPath>$(GgRoot)bin/OpenMetaverse.dll</HintPath></Reference>
+    <Reference Include="Nini"><HintPath>$(GgRoot)bin/Nini.dll</HintPath></Reference>
+    <Reference Include="log4net"><HintPath>$(GgRoot)bin/log4net.dll</HintPath></Reference>
+    <!-- MySql.Data (OpenSim's driver) loads these when it opens a connection. -->
+    <Reference Include="System.Security.Permissions"><HintPath>$(GgRoot)bin/System.Security.Permissions.dll</HintPath></Reference>
+    <Reference Include="System.Configuration.ConfigurationManager"><HintPath>$(GgRoot)bin/System.Configuration.ConfigurationManager.dll</HintPath></Reference>
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- The region module's service client, tested against the real money service (money plan 2, task 3). -->
     <Compile Include="$(GgRoot)addon-modules/GridGateMoney/MoneyServiceClient.cs" Link="Money/MoneyServiceClient.cs" />
   </ItemGroup>

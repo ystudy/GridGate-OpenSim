@@ -54,7 +54,9 @@ namespace OpenSim.Data.MySQL
             m_Membership = new MySqlGroupsMembershipHandler(connectionString, realm + "_membership");
             m_Roles = new MySqlGroupsRolesHandler(connectionString, realm + "_roles");
             m_RoleMembership = new MySqlGroupsRoleMembershipHandler(connectionString, realm + "_rolemembership");
-            m_Invites = new MySqlGroupsInvitesHandler(connectionString, realm + "_invites");
+            // GridGate: the invitations table gets its Fee column from GridGate's own migration store, run after
+            // os_groups_Store above has made the table, so upstream's versions never collide with it.
+            m_Invites = new MySqlGroupsInvitesHandler(connectionString, realm + "_invites", "GridGateGroupInvites");
             m_Notices = new MySqlGroupsNoticesHandler(connectionString, realm + "_notices");
             m_Principals = new MySqlGroupsPrincipalsHandler(connectionString, realm + "_principals");
         }
@@ -420,8 +422,8 @@ namespace OpenSim.Data.MySQL
             get { return GetType().Assembly; }
         }
 
-        public MySqlGroupsInvitesHandler(string connectionString, string realm)
-            : base(connectionString, realm, string.Empty)
+        public MySqlGroupsInvitesHandler(string connectionString, string realm, string store)
+            : base(connectionString, realm, store)
         {
         }
 
