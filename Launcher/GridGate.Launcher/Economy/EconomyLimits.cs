@@ -4,17 +4,19 @@ namespace GridGate.Launcher.Economy;
 
 /// <summary>
 /// What keeps the economy helper from flooding the shared database (money design §8.5): <see cref="PerMinute"/> calls over a
-/// rolling minute for one address, <see cref="PerSecond"/> calls over a rolling second for all addresses together, at most
-/// <see cref="MaxAddresses"/> addresses tracked, and at most <see cref="MaxLookups"/> session lookups at once. In memory only;
+/// rolling minute for one address, <see cref="PerSecond"/> session lookups over a rolling second for all addresses together
+/// (see <see cref="TryTakeLookupSecond"/>), at most <see cref="MaxAddresses"/> addresses tracked, and at most
+/// <see cref="MaxLookups"/> session lookups at once. A session that was looked up and found good is remembered for
+/// <see cref="CheckedFor"/>, so a viewer in use does not compete for the lookup limits. In memory only;
 /// an IPv4-mapped IPv6 address counts as its IPv4 address, and an unknown address counts nothing. Safe from any thread.
 /// </summary>
 public sealed class EconomyLimits(TimeProvider time, int maxAddresses = EconomyLimits.MaxAddresses,
-    int perSecond = EconomyLimits.PerSecond, int maxLookups = EconomyLimits.MaxLookups)
+    int perSecond = EconomyLimits.PerSecond, int maxLookups = EconomyLimits.MaxLookups, int checkedCapacity = EconomyLimits.CheckedSessions)
 {
     /// <summary>Calls one address may make over a rolling minute.</summary>
     public const int PerMinute = 60;
 
-    /// <summary>Calls all addresses together may make over a rolling second; only calls that passed their address's limit count.</summary>
+    /// <summary>Session lookups all addresses together may start over a rolling second.</summary>
     public const int PerSecond = 20;
 
     /// <summary>Addresses tracked. When the table is full after a due prune, a new address is refused.</summary>
@@ -23,12 +25,20 @@ public sealed class EconomyLimits(TimeProvider time, int maxAddresses = EconomyL
     /// <summary>Session lookups at once.</summary>
     public const int MaxLookups = 8;
 
+    /// <summary>Checked sessions remembered; the oldest is dropped first.</summary>
+    public const int CheckedSessions = 10_000;
+
+    /// <summary>How long a session that was looked up and found good is remembered.</summary>
+    public static readonly TimeSpan CheckedFor = TimeSpan.FromMinutes(10);
+
     public static readonly TimeSpan Window = TimeSpan.FromMinutes(1);
     private static readonly TimeSpan Second = TimeSpan.FromSeconds(1);
 
     private readonly Lock _gate = new();
     private readonly Dictionary<IPAddress, Queue<DateTimeOffset>> _calls = new();
     private readonly Queue<DateTimeOffset> _all = new();
+    private readonly Dictionary<(Guid, Guid), DateTimeOffset> _checked = new();
+    private readonly Queue<((Guid, Guid) Pair, DateTimeOffset At)> _checkedOrder = new();
     private DateTimeOffset _pruned = DateTimeOffset.MinValue;
     private int _lookups;
 
@@ -49,12 +59,47 @@ public sealed class EconomyLimits(TimeProvider time, int maxAddresses = EconomyL
             }
             while (times.Count > 0 && now - times.Peek() >= Window) times.Dequeue();
             if (times.Count >= PerMinute) return false;
-            while (_all.Count > 0 && now - _all.Peek() >= Second) _all.Dequeue();
-            if (_all.Count >= perSecond) return false;
             times.Enqueue(now);
-            _all.Enqueue(now);
             _calls[ip] = times;
             return true;
+        }
+    }
+
+    /// <summary>Counts one session lookup against the grid-wide second; false when that second is used up.</summary>
+    public bool TryTakeLookupSecond()
+    {
+        var now = time.GetUtcNow();
+        lock (_gate)
+        {
+            while (_all.Count > 0 && now - _all.Peek() >= Second) _all.Dequeue();
+            if (_all.Count >= perSecond) return false;
+            _all.Enqueue(now);
+            return true;
+        }
+    }
+
+    /// <summary>True while this agent and secure session were found good within <see cref="CheckedFor"/>.</summary>
+    public bool IsChecked(Guid agent, Guid secure)
+    {
+        var now = time.GetUtcNow();
+        lock (_gate) return _checked.TryGetValue((agent, secure), out var at) && now - at < CheckedFor;
+    }
+
+    /// <summary>Remembers a session that was looked up and found good. Past the capacity, the oldest goes first.</summary>
+    public void RememberChecked(Guid agent, Guid secure)
+    {
+        var now = time.GetUtcNow();
+        lock (_gate)
+        {
+            var key = (agent, secure);
+            _checked[key] = now;
+            _checkedOrder.Enqueue((key, now));
+            // A pair remembered again leaves an older entry in the queue; only the entry matching its time counts.
+            while (_checkedOrder.Count > 0 && (_checked.Count > checkedCapacity || now - _checkedOrder.Peek().At >= CheckedFor))
+            {
+                var (pair, at) = _checkedOrder.Dequeue();
+                if (_checked.TryGetValue(pair, out var current) && current == at) _checked.Remove(pair);
+            }
         }
     }
 

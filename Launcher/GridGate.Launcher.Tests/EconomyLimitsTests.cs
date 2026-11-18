@@ -26,14 +26,67 @@ public sealed class EconomyLimitsTests
     }
 
     [Fact]
-    public void Calls_past_twenty_in_a_second_are_refused_across_addresses()
+    public void Lookups_past_twenty_in_a_second_are_refused()
     {
         var l = new EconomyLimits(Clock);
-        for (var i = 1; i <= 20; i++) Assert.True(l.Allow(Ip(i)));
+        for (var i = 1; i <= 20; i++) Assert.True(l.TryTakeLookupSecond());
 
-        Assert.False(l.Allow(Ip(21)));
+        Assert.False(l.TryTakeLookupSecond());
         Clock.Advance(TimeSpan.FromSeconds(1));
-        Assert.True(l.Allow(Ip(21)));
+        Assert.True(l.TryTakeLookupSecond());
+    }
+
+    [Fact]
+    public void Calls_from_many_addresses_do_not_use_the_second_until_they_look_up()
+    {
+        var l = new EconomyLimits(Clock);
+        for (var i = 1; i <= 100; i++) Assert.True(l.Allow(Ip(i)));
+
+        for (var i = 1; i <= 20; i++) Assert.True(l.TryTakeLookupSecond());
+        Assert.False(l.TryTakeLookupSecond());
+    }
+
+    private static readonly Guid Agent = Guid.Parse("a0000000-0000-0000-0000-00000000000a");
+    private static readonly Guid Secure = Guid.Parse("60000000-0000-0000-0000-000000000006");
+
+    [Fact]
+    public void A_checked_session_skips_the_second_and_the_lookup_cap_for_ten_minutes()
+    {
+        var l = new EconomyLimits(Clock);
+        l.RememberChecked(Agent, Secure);
+        for (var i = 1; i <= 20; i++) Assert.True(l.TryTakeLookupSecond());
+        for (var i = 0; i < 8; i++) Assert.True(l.TryStartLookup());
+
+        Clock.Advance(TimeSpan.FromMinutes(9));
+
+        Assert.True(l.IsChecked(Agent, Secure));
+        Assert.False(l.IsChecked(Agent, Guid.NewGuid()));
+    }
+
+    [Fact]
+    public void A_checked_session_is_looked_up_again_after_ten_minutes()
+    {
+        var l = new EconomyLimits(Clock);
+        l.RememberChecked(Agent, Secure);
+
+        Clock.Advance(TimeSpan.FromMinutes(10));
+
+        Assert.False(l.IsChecked(Agent, Secure));
+    }
+
+    [Fact]
+    public void The_checked_session_cache_drops_the_oldest_past_its_capacity()
+    {
+        var l = new EconomyLimits(Clock, checkedCapacity: 3);
+        var ids = Enumerable.Range(1, 4).Select(_ => Guid.NewGuid()).ToList();
+        foreach (var id in ids)
+        {
+            l.RememberChecked(Agent, id);
+            Clock.Advance(TimeSpan.FromSeconds(1));
+        }
+
+        Assert.False(l.IsChecked(Agent, ids[0]));
+        foreach (var id in ids.Skip(1)) Assert.True(l.IsChecked(Agent, id));
     }
 
     [Fact]

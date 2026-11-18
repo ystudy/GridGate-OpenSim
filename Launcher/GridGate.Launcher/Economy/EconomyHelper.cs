@@ -46,12 +46,14 @@ public sealed class EconomyHelper(
         if (!Guid.TryParse(Text(call, "agentId"), out var agent) || !Guid.TryParse(Text(call, "secureSessionId"), out var secure)
             || agent == Guid.Empty || secure == Guid.Empty)
             return Refuse(s, t["Economy.LogInAgain"]);
-        if (!limits.TryStartLookup()) return Refuse(s, t["Economy.TooMany"]);
+        var known = limits.IsChecked(agent, secure);
+        if (!known && (!limits.TryTakeLookupSecond() || !limits.TryStartLookup())) return Refuse(s, t["Economy.TooMany"]);
         try
         {
-            switch (await sessions.HasSecureSessionAsync(agent, secure, ct))
+            switch (known ? PresenceOutcome.Ok : await sessions.HasSecureSessionAsync(agent, secure, ct))
             {
                 case PresenceOutcome.Ok:
+                    if (!known) limits.RememberChecked(agent, secure);
                     break;
                 case PresenceOutcome.Unavailable:
                     return Refuse(s, t["Economy.Unavailable"]);
@@ -61,7 +63,7 @@ public sealed class EconomyHelper(
         }
         finally
         {
-            limits.EndLookup();
+            if (!known) limits.EndLookup();
         }
 
         var mode = gate.Effective();

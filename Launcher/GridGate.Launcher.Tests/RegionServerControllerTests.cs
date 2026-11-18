@@ -183,6 +183,42 @@ public sealed class RegionServerControllerTests : OtherGridControllerRig
     }
 
     [Fact]
+    public async Task Region_server_whose_grid_goes_to_gloebit_and_back_without_running_it_does_not_restart()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        AddWelcome();
+        File.WriteAllBytes(Path.Combine(_paths.OpenSimProgram, "Gloebit.dll.Proto"), [7]);
+        _join.Result = Avalon with { Money = Core.Money.MoneyMode.Play };
+        Save(s => s with
+        {
+            Join = Avalon with { Money = Core.Money.MoneyMode.Play },
+            Money = s.Money with { Gloebit = GloebitApp },
+        });
+        var starts = 0;
+        var grid = NewGrid(watchEvery: TimeSpan.FromMilliseconds(50), moneyEffective: Core.Money.MoneyGate.Open,
+            programStart: _ => { Interlocked.Increment(ref starts); return StandIn(Path.Combine(_paths.RuntimeOpenSim, "OpenSim.dll")); });
+        await grid.StartAsync(ct);
+        Assert.Equal(1, starts);
+        // The stand-in leaves when told to quit, as OpenSim does, so a restart would show as a second start.
+        var pidFile = Path.Combine(_paths.Pids, "Welcome.pid");
+        _consoles.OnCommand = _ =>
+        {
+            if (PidFile.Read(pidFile) is not { } pid) return;
+            try { using var p = Process.GetProcessById(pid); p.Kill(); }
+            catch (Exception e) when (e is ArgumentException or InvalidOperationException) { }
+        };
+
+        // Gloebit is only saved, not running: no config is written for it before the grid changes back.
+        _join.Result = Avalon with { Money = Core.Money.MoneyMode.Gloebit };
+        await Until(() => _store.LoadOrCreate().Join?.Money == Core.Money.MoneyMode.Gloebit, ct);
+        _join.Result = Avalon with { Money = Core.Money.MoneyMode.Play };
+        await Until(() => _store.LoadOrCreate().Join?.Money == Core.Money.MoneyMode.Play, ct);
+
+        await Task.Delay(300, ct);
+        Assert.Equal(1, starts);
+    }
+
+    [Fact]
     public async Task Region_server_without_gloebit_only_saves_the_grids_new_mode()
     {
         var ct = TestContext.Current.CancellationToken;
