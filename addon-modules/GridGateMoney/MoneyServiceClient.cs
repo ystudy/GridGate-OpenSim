@@ -28,17 +28,21 @@ public sealed record MoneyAnswer(string Code, long? Balance = null, long? ToBala
 {
     public const string UnavailableCode = "unavailable";
 
+    /// <summary>The service's code for a commit it couldn't look up afterwards.</summary>
+    public const string OutcomeUnknownCode = "outcome_unknown";
+
     [JsonIgnore]
     public bool Ok => Code == "ok";
 
     /// <summary>
     /// No answer arrived (no response at all, an HTTP 5xx, or a 200 whose body couldn't be read): the call may have
     /// happened. A connection refused before anything was sent is not lost. A service that answers "unavailable" itself
-    /// almost always changed nothing: the exception is a database error at the commit, which the service can't tell
-    /// apart from a commit that didn't land.
+    /// changed nothing; one that answers "outcome_unknown" couldn't find out whether its commit landed, so that is lost too.
     /// </summary>
     [JsonIgnore]
-    public bool Lost { get; init; }
+    public bool Lost { get => _lost || Code == OutcomeUnknownCode; init => _lost = value; }
+
+    private readonly bool _lost;
 
     /// <summary>The call was turned away (an HTTP 4xx or another status without an answer): nothing happened, and sending it again won't help.</summary>
     [JsonIgnore]

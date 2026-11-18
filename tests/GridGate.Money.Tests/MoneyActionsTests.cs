@@ -604,6 +604,21 @@ public sealed class MoneyActionsTests
     }
 
     [Fact]
+    public async Task A_pay_answered_outcome_unknown_is_logged_as_unknown_and_the_payer_is_told_it_is_being_checked()
+    {
+        _service.Answer = _ => new MoneyAnswer("outcome_unknown");
+
+        await _actions.PayAvatarAsync(P, Me, ThemWho, 10);
+
+        var transfers = _service.Of("transfer").ToList();
+        Assert.Equal(4, transfers.Count); // retried with the same transaction id, then gave up
+        Assert.Single(transfers.Select(t => t.Txn).Distinct());
+        Assert.Contains(transfers[0].Txn.ToString(), Assert.Single(_view.Errors));
+        Assert.Equal(MoneyRules.CheckingText, Assert.Single(_view.Told).Text);
+        Assert.Empty(_view.Paid);
+    }
+
+    [Fact]
     public void A_pass_refused_after_a_lost_attempt_is_still_unknown()
     {
         _service.Queue("transfer", MoneyAnswer.NoAnswer, new MoneyAnswer("wrong_region"));

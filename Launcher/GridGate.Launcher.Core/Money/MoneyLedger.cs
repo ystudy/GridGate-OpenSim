@@ -314,10 +314,20 @@ public sealed partial class MoneyLedger(
                 await using var conn = await open(ct);
                 await using var tx = await conn.BeginTransactionAsync(IsolationLevel.ReadCommitted, ct);
                 var result = await work(conn, tx);
-                if (result.Outcome == MoneyOutcome.Ok)
-                    await tx.CommitAsync(ct);
-                else
+                if (result.Outcome != MoneyOutcome.Ok)
+                {
                     await tx.RollbackAsync(ct);
+                    return result;
+                }
+                try
+                {
+                    await CommitForTests(tx, ct);
+                }
+                catch (Exception e) when (e is MySqlException or TimeoutException or InvalidOperationException { Source: "MySqlConnector" })
+                {
+                    // The commit may have landed before the connection failed: look the transaction up again.
+                    return await AfterFailedCommitAsync(txn, ct);
+                }
                 return result;
             }
             catch (MySqlException e) when (e.Number is ErDeadlock or ErLockWaitTimeout or ErCheckRead && attempt < DeadlockRetries)
@@ -334,6 +344,30 @@ public sealed partial class MoneyLedger(
             {
                 return MoneyResult.Unavailable;
             }
+        }
+    }
+
+    /// <summary>Test-only: what runs the commit, so a test can make it fail after it landed or before.</summary>
+    internal Func<MySqlTransaction, CancellationToken, Task> CommitForTests { get; set; } = (tx, ct) => tx.CommitAsync(ct);
+
+    /// <summary>
+    /// What a failed commit answers. The commit may have landed, so the stored answer for the transaction id is read on a
+    /// fresh connection: found, that answer; not found, nothing landed (<see cref="MoneyOutcome.Unavailable"/>); and when
+    /// that read fails too, or there is no transaction id to look up, <see cref="MoneyOutcome.OutcomeUnknown"/>.
+    /// </summary>
+    private async Task<MoneyResult> AfterFailedCommitAsync((Guid Id, string Fingerprint)? txn, CancellationToken ct)
+    {
+        if (txn is not { } t) return MoneyResult.Of(MoneyOutcome.OutcomeUnknown);
+        try
+        {
+            await using var conn = await open(ct);
+            return await StoredAsync(conn, null, t.Id, ct) is { } stored
+                ? stored.Fingerprint == t.Fingerprint ? stored.Result : MoneyResult.Of(MoneyOutcome.DuplicateTxn)
+                : MoneyResult.Unavailable;
+        }
+        catch (Exception e) when (e is MySqlException or TimeoutException or InvalidOperationException { Source: "MySqlConnector" })
+        {
+            return MoneyResult.Of(MoneyOutcome.OutcomeUnknown);
         }
     }
 

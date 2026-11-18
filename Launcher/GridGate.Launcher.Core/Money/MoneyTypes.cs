@@ -44,6 +44,12 @@ public enum MoneyOutcome
 
     /// <summary>A region key's daily spending or payout limit is used up.</summary>
     OverKeyLimit,
+
+    /// <summary>
+    /// The commit failed and the transaction can't be looked up afterwards: the payment may or may not have happened.
+    /// The region treats it as lost.
+    /// </summary>
+    OutcomeUnknown,
 }
 
 /// <summary>

@@ -137,6 +137,7 @@ internal static class MoneyRules
         "account_frozen" => "Your coins are frozen. Please contact the grid's staff.",
         "visitors_off" => VisitorsOffText,
         UnpairedMoneyService.Code => "This region isn't connected to the grid's money yet.",
+        "outcome_unknown" => CheckingText,
         "unavailable" => "Money is unavailable right now. Please try again later.",
         "no_wallet" => "That person can't receive coins on this grid.",
         "no_session" or "wrong_region" => "Please log in again to use money here.",

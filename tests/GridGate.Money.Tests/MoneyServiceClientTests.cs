@@ -83,6 +83,17 @@ public sealed class MoneyServiceClientTests
         }
     }
 
+    [Fact]
+    public void An_outcome_unknown_answer_is_lost()
+    {
+        var answer = new MoneyAnswer("outcome_unknown");
+
+        Assert.True(answer.Lost);
+        Assert.False(answer.Ok);
+        Assert.False(answer.Final);
+        Assert.False(new MoneyAnswer("unavailable").Lost);
+    }
+
     [Theory]
     [InlineData(400)]
     [InlineData(401)]

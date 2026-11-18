@@ -396,7 +396,7 @@ internal sealed class MoneyActions(IMoneyService service, Guid regionId, Func<Ec
     }
 
     /// <summary>
-    /// Calls <paramref name="send"/>, which reuses one transaction id, until the answer isn't "unavailable", the call was
+    /// Calls <paramref name="send"/>, which reuses one transaction id, until the answer isn't "unavailable" or "outcome_unknown", the call was
     /// turned away (<see cref="MoneyAnswer.Final"/>), <see cref="Retries"/> run out, or <paramref name="budget"/> (the
     /// attempts and the waits between them together) is spent; an attempt the budget cuts short got no answer. Any final
     /// answer but Ok is <see cref="MoneyAnswer.Lost"/> when an attempt got no answer: that attempt may have gone through,
@@ -419,7 +419,7 @@ internal sealed class MoneyActions(IMoneyService service, Guid regionId, Func<Ec
                 answer = MoneyAnswer.NoAnswer;
             }
             if (answer.Ok) return answer;
-            if (answer.Code != MoneyAnswer.UnavailableCode) return lost ? answer with { Lost = true } : answer;
+            if (answer.Code is not (MoneyAnswer.UnavailableCode or MoneyAnswer.OutcomeUnknownCode)) return lost ? answer with { Lost = true } : answer;
             lost |= answer.Lost;
             if (answer.Final || attempt == Retries.Length || ct.IsCancellationRequested) return answer with { Lost = lost };
             try
