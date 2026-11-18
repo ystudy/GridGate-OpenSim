@@ -378,7 +378,7 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
             return;
         }
         // The price the land module validated is "at least the sale price"; GridGate takes exactly the sale price.
-        if (e.parcelPrice != land.LandData.SalePrice || land.LandData.OwnerID != e.parcelOwnerID)
+        if (e.parcelPrice != land.LandData.SalePrice || land.LandData.OwnerID != e.parcelOwnerID || land.LandData.Area != e.parcelArea)
         {
             client.SendAlertMessage(MoneyRules.Message(Refusal.PriceChanged));
             return;
@@ -421,6 +421,18 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
         {
             Run(() => actions.SettleLandAsync(payer, seller, holdId, false));
             client.SendAlertMessage(LandBusyText);
+            return;
+        }
+        // The parcel can change while the service holds the coins (a subdivide makes a new parcel object), so it is read
+        // again: what the buyer was shown has to be what is sold, or the hold goes back.
+        var after = scene.LandChannel?.GetLandObject(e.parcelLocalID)?.LandData;
+        if (after is null || after.OwnerID != e.parcelOwnerID || after.SalePrice != e.parcelPrice || after.Area != e.parcelArea
+            || (after.Flags & (uint)ParcelFlags.ForSale) == 0
+            || (after.AuthBuyerID != UUID.Zero && after.AuthBuyerID != e.agentId))
+        {
+            _landHolds.TryRemove(KeyValuePair.Create(key, mine with { HoldId = holdId }));
+            Run(() => actions.SettleLandAsync(payer, seller, holdId, false));
+            client.SendAlertMessage(MoneyRules.Message(Refusal.PriceChanged));
             return;
         }
         e.economyValidated = true;

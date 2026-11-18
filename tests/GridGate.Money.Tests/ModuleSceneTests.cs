@@ -159,6 +159,73 @@ public sealed class ModuleSceneTests
         Assert.Empty(l.Region.Service.Calls);
     }
 
+    /// <summary>Runs <paramref name="change"/> on the parcel while the money service is being asked to hold, then buys.</summary>
+    private static Land BuyWhileHolding(int price, Action<Land> change)
+    {
+        var l = LandForSale(price);
+        l.Region.Service.Gate = m =>
+        {
+            if (m == "hold") change(l);
+            return Task.CompletedTask;
+        };
+        Buy(l, price);
+        return l;
+    }
+
+    private static void AssertLandRefusedAndHoldReturned(Land l)
+    {
+        Assert.Equal(7L, l.Region.WaitFor("return").Args[0]);
+        Assert.Empty(l.Region.Service.Of("complete"));
+        Assert.Equal(Seller, Now(l).OwnerID);
+        l.Buyer.WaitForAlert(MoneyRules.Message(Refusal.PriceChanged));
+    }
+
+    [Fact]
+    public void Land_subdivided_during_the_hold_is_not_sold_and_the_hold_is_returned()
+    {
+        var l = BuyWhileHolding(100, x => x.Lmm.Subdivide(0, 0, 64, 64, Seller));
+
+        AssertLandRefusedAndHoldReturned(l);
+    }
+
+    [Fact]
+    public void Land_taken_off_sale_during_the_hold_is_not_sold_and_the_hold_is_returned()
+    {
+        var l = BuyWhileHolding(100, x => x.Parcel.LandData.Flags &= ~(uint)ParcelFlags.ForSale);
+
+        AssertLandRefusedAndHoldReturned(l);
+    }
+
+    [Fact]
+    public void Land_repriced_during_the_hold_is_not_sold_and_the_hold_is_returned()
+    {
+        var l = BuyWhileHolding(100, x => x.Parcel.LandData.SalePrice = 500);
+
+        AssertLandRefusedAndHoldReturned(l);
+    }
+
+    [Fact]
+    public void Land_sold_to_someone_else_only_during_the_hold_is_not_sold()
+    {
+        var l = BuyWhileHolding(100, x => x.Parcel.LandData.AuthBuyerID = Stranger);
+
+        AssertLandRefusedAndHoldReturned(l);
+    }
+
+    [Fact]
+    public void Land_whose_area_changed_before_the_buy_is_refused_before_any_hold()
+    {
+        var l = LandForSale(100);
+        l.Lmm.Subdivide(0, 0, 64, 64, Seller);
+        var wrongArea = l.Parcel.LandData.Area + 4096;
+
+        l.Region.Scene.ProcessParcelBuy(Buyer, UUID.Zero, true, false, false, l.Parcel.LandData.LocalID, wrongArea, 100, false);
+
+        Assert.Empty(l.Region.Service.Calls);
+        Assert.Equal(Seller, Now(l).OwnerID);
+        l.Buyer.WaitForAlert(MoneyRules.Message(Refusal.PriceChanged));
+    }
+
     [Fact]
     public void A_sixth_land_buy_in_a_minute_is_refused_without_asking_the_service()
     {
