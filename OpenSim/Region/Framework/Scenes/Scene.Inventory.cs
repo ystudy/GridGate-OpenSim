@@ -236,6 +236,14 @@ namespace OpenSim.Region.Framework.Scenes
                 return UUID.Zero;
             }
 
+            // GridGate: an item update can't store texture or sound data for free while an upload fee is in force. Both the
+            // agent item and the task item path pass here; the viewer is told by the alert the other refusals use.
+            if (UploadData.RefusesItemUpdate(RequestModuleInterface<IMoneyModule>(), data))
+            {
+                avatar.ControllingClient.SendAgentAlertMessage(UploadData.ItemUpdateRefusedText, false);
+                return UUID.Zero;
+            }
+
             if (objectID.IsZero())
             {
                 IInventoryAccessModule invAccess = RequestModuleInterface<IInventoryAccessModule>();

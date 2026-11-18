@@ -29,5 +29,16 @@ namespace OpenSim.Framework
 
             return span.IndexOf(OggPage) >= 0 && span.IndexOf(VorbisIdentification) >= 0;
         }
+
+        /// <summary>Shown when an item update is refused because its data is a texture or a sound.</summary>
+        public const string ItemUpdateRefusedText = "That upload isn't the kind of item it was saved to, so it wasn't saved.";
+
+        /// <summary>
+        /// True when an update of an existing inventory item (agent or task) must be refused: an upload fee is in force
+        /// and the data is a texture or a sound. Those are made by uploads, which pay the fee; updating a notecard or
+        /// script with them would store a free texture or sound.
+        /// </summary>
+        public static bool RefusesItemUpdate(IMoneyModule money, byte[] data) =>
+            money is not null && money.UploadCharge > 0 && IsTextureOrSound(data);
     }
 }
