@@ -1,3 +1,4 @@
+using System.Xml;
 using OpenMetaverse;
 using OpenSim.Region.ScriptEngine.Interfaces;
 using OpenSim.Region.ScriptEngine.Shared.ScriptBase;
@@ -23,12 +24,26 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
 
         /// <summary>
         /// Whether a script's saved state comes from this program's own running script: a region start, a crossing or a
-        /// teleport (<paramref name="source"/>), and not a state from outside this program
-        /// (<paramref name="stateFromOutside"/>, the object's <c>SceneObjectGroup.StateFromOutside</c>). Another
-        /// program's crossing or teleport, and an archive loaded as at a region start, can name anyone as the granter.
+        /// teleport (<paramref name="source"/>), not a state from outside this program (<paramref name="stateFromOutside"/>,
+        /// the object's <c>SceneObjectGroup.StateFromOutside</c>), and written by this version of the program
+        /// (<paramref name="stateIsMarked"/>, see <see cref="IsMarked"/>): a state saved before the mark existed brings
+        /// no grant back. Another program's crossing or teleport, and an archive loaded as at a region start, can name
+        /// anyone as the granter, and can copy the mark too, so the mark never lets a state from outside through.
         /// </summary>
-        public static bool FromRunningScript(StateSource source, bool stateFromOutside) =>
+        public static bool FromRunningScript(StateSource source, bool stateFromOutside, bool stateIsMarked) =>
             !stateFromOutside
+            && stateIsMarked
             && (source == StateSource.RegionStart || source == StateSource.PrimCrossing || source == StateSource.Teleporting);
+
+        /// <summary>The attribute on a saved state's <c>ScriptState</c> element that says this program wrote it.</summary>
+        public const string MarkAttribute = "GridGateState";
+
+        private const string MarkValue = "1";
+
+        /// <summary>Marks a <c>ScriptState</c> element as written by this version of the program.</summary>
+        public static void Mark(XmlElement scriptState) => scriptState.SetAttribute(MarkAttribute, MarkValue);
+
+        /// <summary>Whether a <c>ScriptState</c> element carries this program's mark.</summary>
+        public static bool IsMarked(XmlElement scriptState) => scriptState.GetAttribute(MarkAttribute) == MarkValue;
     }
 }

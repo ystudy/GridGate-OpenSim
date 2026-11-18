@@ -77,6 +77,8 @@ namespace OpenSim.Region.ScriptEngine.Yengine
             scriptStateN.SetAttribute("Engine", m_Engine.ScriptEngineName);
             scriptStateN.SetAttribute("Asset", m_Item.AssetID.ToString());
             scriptStateN.SetAttribute("SourceHash", m_ObjCode.sourceHash);
+            // GridGate: says this program wrote the state, so its debit permission may come back; see DebitPermission.
+            DebitPermission.Mark(scriptStateN);
 
             // Make sure we aren't executing part of the script so it stays 
             // stable.  Setting suspendOnCheckRun tells CheckRun() to suspend

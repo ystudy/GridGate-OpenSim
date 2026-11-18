@@ -174,7 +174,7 @@ public sealed class DebitStateIngressTests
         var loaded = Assert.Single(scene.GetSceneObjectGroups(), g => g.Name == packed.Name);
         Assert.True(loaded.StateFromOutside);
         Assert.Equal(Anim, DebitPermission.Restored(Debit | Anim, Owner, loaded.OwnerID,
-            DebitPermission.FromRunningScript(StateSource.RegionStart, loaded.StateFromOutside)));
+            DebitPermission.FromRunningScript(StateSource.RegionStart, loaded.StateFromOutside, stateIsMarked: true)));
     }
 
     [Fact]

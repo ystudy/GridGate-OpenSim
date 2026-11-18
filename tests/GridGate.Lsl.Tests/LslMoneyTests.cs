@@ -452,7 +452,7 @@ public sealed class LslMoneyTests
     /// <summary>What YEngine restores for an owner-granted DEBIT in <paramref name="group"/>'s saved state.</summary>
     private static int RestoredIn(SceneObjectGroup group, StateSource source) =>
         DebitPermission.Restored(Debit | Anim, Owner, group.OwnerID,
-            DebitPermission.FromRunningScript(source, group.StateFromOutside));
+            DebitPermission.FromRunningScript(source, group.StateFromOutside, stateIsMarked: true));
 
     [Fact]
     public void A_debit_from_another_programs_crossing_is_dropped()

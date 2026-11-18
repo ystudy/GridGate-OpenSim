@@ -145,7 +145,7 @@ public sealed class SavedDebitStateTests
         var reloaded = SceneHelpers.CreateSceneObject(1, Owner);
         var (granter, mask) = StoredPermissions(store.Stored[ScriptItem]);
         var restored = DebitPermission.Restored(mask, granter, reloaded.OwnerID,
-            DebitPermission.FromRunningScript(StateSource.RegionStart, reloaded.StateFromOutside));
+            DebitPermission.FromRunningScript(StateSource.RegionStart, reloaded.StateFromOutside, stateIsMarked: true));
 
         Assert.Equal(Anim, restored);
     }
