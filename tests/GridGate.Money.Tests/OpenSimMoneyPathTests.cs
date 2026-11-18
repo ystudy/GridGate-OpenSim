@@ -1204,7 +1204,7 @@ public sealed class OpenSimMoneyPathTests
     });
 
     /// <summary>A region whose uploader has caps, as <c>CapabilitiesModule</c> and <c>BunchOfCapsModule</c> make them.</summary>
-    private static (MoneyScene Region, BunchOfCaps Caps) CapsRegion(bool feeHolds = true, long balance = 100)
+    private static (MoneyScene Region, BunchOfCaps Caps) CapsRegion(bool feeHolds = true, long balance = 100, float meshFactor = 0f)
     {
         var region = Build(new EconomyInfo("C$", UploadFee, 0, true, true, 1_000_000, feeHolds));
         region.Service.Answer = _ => Balance(balance);
@@ -1214,7 +1214,7 @@ public sealed class OpenSimMoneyPathTests
         try
         {
             var caps = new Caps(MainServer.Instance, "localhost", MainServer.Instance.Port, "/" + UUID.Random() + "/", Buyer, region.Scene.RegionInfo.RegionName);
-            return (region, new BunchOfCaps(region.Scene, Buyer, caps, new BunchOfCapsConfigOptions { ModelCost = new ModelCost(region.Scene) }));
+            return (region, new BunchOfCaps(region.Scene, Buyer, caps, new BunchOfCapsConfigOptions { ModelCost = new ModelCost(region.Scene) { ModelMeshCostFactor = meshFactor } }));
         }
         finally
         {
@@ -1224,13 +1224,13 @@ public sealed class OpenSimMoneyPathTests
 
     /// <summary>The upload's data has arrived: what the caps uploader does with it. Returns the error it gives the viewer.</summary>
     private static string CapsUpload(MoneyScene region, BunchOfCaps caps, string inventoryType = "sound", string assetType = "sound", int cost = UploadFee,
-        byte[]? data = null, int nreqtextures = 0, int nreqinstances = 0, UUID? texturesFolder = null)
+        byte[]? data = null, int nreqtextures = 0, int nreqinstances = 0, UUID? texturesFolder = null, int nreqmeshs = 0)
     {
         var error = "";
         int next = 0, group = 0, everyone = 0;
         var folder = region.Scene.InventoryService.GetFolderForType(Buyer, FolderType.Sound).ID;
         caps.UploadCompleteHandler("A sound", "", CapsAssetId, CapsItemId, folder, data ?? new byte[64], inventoryType, assetType, cost,
-            texturesFolder ?? UUID.Zero, nreqtextures, 0, nreqinstances, false, ref error, ref next, ref group, ref everyone, null);
+            texturesFolder ?? UUID.Zero, nreqtextures, nreqmeshs, nreqinstances, false, ref error, ref next, ref group, ref everyone, null);
         return error;
     }
 
@@ -1247,8 +1247,70 @@ public sealed class OpenSimMoneyPathTests
         {
             ["texture_list"] = textureList,
             ["mesh_list"] = new OSDArray(),
-            ["instance_list"] = new OSDArray { OSD.FromString("x") },
+            // priced like any model, then fails once its textures are stored: an instance without a face list
+            ["instance_list"] = new OSDArray { new OSDMap { ["scale"] = new OSDArray { OSD.FromReal(1), OSD.FromReal(1), OSD.FromReal(1) } } },
         });
+    }
+
+    private static byte[] Zlib(byte[] raw)
+    {
+        using var output = new MemoryStream();
+        using (var z = new System.IO.Compression.ZLibStream(output, System.IO.Compression.CompressionLevel.Optimal, true))
+            z.Write(raw);
+        return output.ToArray();
+    }
+
+    /// <summary>A mesh asset OpenSim's model pricing can read: its blocks, then <paramref name="padding"/> extra bytes.</summary>
+    private static byte[] MeshAsset(int padding)
+    {
+        var hulls = Zlib(OSDParser.SerializeLLSDBinary(new OSDMap { ["BoundingVerts"] = OSD.FromBinary(new byte[12]) }));
+        var lod = Zlib(OSDParser.SerializeLLSDBinary(new OSDArray
+        {
+            new OSDMap { ["Position"] = OSD.FromBinary(new byte[12]), ["TriangleList"] = OSD.FromBinary(new byte[12]) },
+        }));
+
+        byte[] Header(int hullsAt, int lodAt) => OSDParser.SerializeLLSDBinary(new OSDMap
+        {
+            ["physics_convex"] = new OSDMap { ["offset"] = hullsAt, ["size"] = hulls.Length },
+            ["high_lod"] = new OSDMap { ["offset"] = lodAt, ["size"] = lod.Length },
+        });
+
+        var header = Header(0, hulls.Length);
+        Assert.Equal(Header(0, 0).Length, header.Length);
+        // offsets count from the end of the header, which the pricing finds by reading it
+        return [.. header, .. hulls, .. lod, .. new byte[padding]];
+    }
+
+    private static byte[] ModelWith(byte[] mesh) => OSDParser.SerializeLLSDXmlBytes(new OSDMap
+    {
+        ["texture_list"] = new OSDArray(),
+        ["mesh_list"] = new OSDArray { OSD.FromBinary(mesh) },
+        ["instance_list"] = new OSDArray
+        {
+            new OSDMap
+            {
+                ["scale"] = new OSDArray { OSD.FromReal(1), OSD.FromReal(1), OSD.FromReal(1) },
+                ["mesh"] = 0,
+                ["mesh_name"] = "m",
+                ["face_list"] = new OSDArray(),
+            },
+        },
+    });
+
+    /// <summary>What the viewer is quoted for a model of this mesh.</summary>
+    private static int ModelQuote(BunchOfCaps caps, byte[] mesh)
+    {
+        var request = new LLSDAssetUploadRequest { asset_type = "mesh", inventory_type = "object", name = "A model" };
+        request.asset_resources.mesh_list.Array.Add(mesh);
+        request.asset_resources.instance_list.Array.Add(new System.Collections.Hashtable
+        {
+            ["scale"] = new System.Collections.ArrayList { 1.0, 1.0, 1.0 },
+            ["mesh"] = 0,
+            ["mesh_name"] = "m",
+        });
+        var response = caps.NewAgentInventoryRequest(request);
+        Assert.True(response.state == "upload", response.error?.message);
+        return response.upload_price;
     }
 
     [Fact]
@@ -1417,7 +1479,7 @@ public sealed class OpenSimMoneyPathTests
     {
         var (region, caps) = CapsRegion();
 
-        Record.Exception(() => CapsUpload(region, caps, inventoryType: "object", assetType: "mesh", data: MalformedModel(), nreqtextures: 1, nreqinstances: 1));
+        Record.Exception(() => CapsUpload(region, caps, inventoryType: "object", assetType: "mesh", data: MalformedModel(), nreqtextures: 1, nreqinstances: 1, cost: UploadFee));
 
         region.WaitFor("complete");
         Assert.Empty(region.Service.Of("return"));
@@ -1436,6 +1498,94 @@ public sealed class OpenSimMoneyPathTests
         Assert.Empty(region.Service.Of("complete"));
         Assert.Empty(region.Scene.InventoryService.GetFolderContent(Buyer, textures).Items);
         Assert.Null(region.Scene.InventoryService.GetItem(Buyer, CapsItemId));
+    }
+
+    [Fact]
+    public void A_model_uploaded_as_it_was_quoted_is_stored_and_paid()
+    {
+        var (region, caps) = CapsRegion(meshFactor: 100f, balance: 100_000);
+        var mesh = MeshAsset(2000);
+        var quote = ModelQuote(caps, mesh);
+        Assert.True(quote > 0);
+
+        var error = CapsUpload(region, caps, inventoryType: "object", assetType: "mesh", data: ModelWith(mesh), cost: quote, nreqmeshs: 1, nreqinstances: 1);
+
+        Assert.Equal("", error);
+        region.WaitFor("complete");
+        Assert.Empty(region.Service.Of("return"));
+    }
+
+    [Fact]
+    public void A_model_uploaded_with_bigger_meshes_than_it_was_quoted_for_is_refused_and_the_hold_returned()
+    {
+        var (region, caps) = CapsRegion(meshFactor: 100f, balance: 100_000);
+        var quote = ModelQuote(caps, MeshAsset(2000));
+
+        var error = CapsUpload(region, caps, inventoryType: "object", assetType: "mesh", data: ModelWith(MeshAsset(400_000)), cost: quote, nreqmeshs: 1, nreqinstances: 1);
+
+        Assert.Equal("Upload and fee estimation information don't match", error);
+        region.WaitFor("return");
+        Assert.Empty(region.Service.Of("complete"));
+        Assert.Null(region.Scene.InventoryService.GetItem(Buyer, CapsItemId));
+        Assert.Empty(region.Service.Of("charge"));
+    }
+
+    [Fact]
+    public void A_model_that_cannot_be_priced_from_its_data_is_refused()
+    {
+        var (region, caps) = CapsRegion(meshFactor: 100f, balance: 100_000);
+
+        var error = CapsUpload(region, caps, inventoryType: "object", assetType: "mesh", data: ModelWith([1, 2, 3]), cost: 5, nreqmeshs: 1, nreqinstances: 1);
+
+        Assert.Equal("Upload and fee estimation information don't match", error);
+        region.WaitFor("return");
+        Assert.Empty(region.Service.Of("complete"));
+    }
+
+    private static byte[] AnimationData() =>
+    [
+        1, 0, 0, 0, 2, 0, 0, 0, .. BitConverter.GetBytes(3.5f), .. "emote"u8, 0,
+        .. BitConverter.GetBytes(0f), .. BitConverter.GetBytes(3.5f), .. BitConverter.GetBytes(1), .. BitConverter.GetBytes(0.8f),
+        .. BitConverter.GetBytes(0.8f), .. BitConverter.GetBytes(0u), .. BitConverter.GetBytes(0u),
+    ];
+
+    [Fact]
+    public void A_caps_animation_uploaded_as_clothing_pays_the_upload_fee()
+    {
+        var (region, caps) = CapsRegion();
+
+        Assert.Equal("", CapsUpload(region, caps, inventoryType: "wearable", assetType: "clothing", cost: 0, data: AnimationData()));
+
+        region.WaitFor("complete");
+        var hold = Assert.Single(region.Service.Of("hold"));
+        Assert.Equal((long)UploadFee, hold.Args[3]);
+    }
+
+    [Fact]
+    public void A_udp_animation_uploaded_under_a_free_type_pays_the_upload_fee()
+    {
+        var (region, uploads, uploader) = UploadRegion(100);
+
+        Assert.True(Upload(uploads, uploader, (sbyte)AssetType.Notecard, data: AnimationData()));
+
+        region.WaitFor("complete");
+        Assert.Equal((long)UploadFee, Assert.Single(region.Service.Of("hold")).Args[3]);
+    }
+
+    [Fact]
+    public void Temporary_uploads_stay_free_up_to_thirty_a_minute_then_are_refused()
+    {
+        var (region, uploads, uploader) = UploadRegion(100);
+
+        for (var i = 0; i < 30; i++)
+            Assert.True(Upload(uploads, uploader, storeLocal: true, create: false, temporary: true));
+        Assert.Empty(region.Service.Of("hold"));
+        var before = region.ClientOf(Buyer).Alerts.Count;
+
+        Send(uploader, (sbyte)AssetType.Texture, true, true);
+
+        Assert.Equal(before + 1, region.ClientOf(Buyer).Alerts.Count);
+        Assert.Empty(region.Service.Of("hold"));
     }
 }
 
