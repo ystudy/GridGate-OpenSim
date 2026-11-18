@@ -15,6 +15,19 @@ public sealed class EconomyLimitsTests
     private static IPAddress Ip(int n) => IPAddress.Parse($"203.0.113.{n}");
 
     [Fact]
+    public void An_unknown_caller_counts_toward_the_grid_wide_second()
+    {
+        var l = new EconomyLimits(Clock, perSecond: 3);
+
+        for (var i = 0; i < 3; i++) Assert.True(l.Allow(null));
+
+        Assert.False(l.Allow(null));
+        Assert.False(l.TryTakeLookupSecond());
+        Clock.Advance(TimeSpan.FromSeconds(1));
+        Assert.True(l.Allow(null));
+    }
+
+    [Fact]
     public void A_ninth_lookup_at_once_is_refused()
     {
         var l = new EconomyLimits(Clock);

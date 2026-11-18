@@ -28,7 +28,22 @@ internal static class MoneyApi
     };
 
     // Request bodies. Every field is nullable so a missing one is a 400 from Need, not a default value.
-    internal sealed record Who(Guid? AgentId, string? Home, Guid? SessionId, Guid? SecureSessionId);
+    internal sealed record Who(Guid? AgentId, string? Home, Guid? SessionId, Guid? SecureSessionId)
+    {
+        // What this record holds is never printed, so a log line or an exception that shows it can't leak it.
+        private bool PrintMembers(System.Text.StringBuilder sb)
+        {
+            sb.Append($"AgentId = {AgentId}, Home = {Home}, SessionId = hidden, SecureSessionId = hidden");
+            return true;
+        }
+
+        public override string ToString()
+        {
+            var sb = new System.Text.StringBuilder("Who { ");
+            PrintMembers(sb);
+            return sb.Append(" }").ToString();
+        }
+    }
     internal sealed record TransferBody(Guid? TxnId, string? Type, Who? From, Who? To, long? Amount, Guid? RegionId, Guid? ObjectId, string? ObjectName);
     internal sealed record PayoutBody(Guid? TxnId, Guid? OwnerId, Who? To, long? Amount, Guid? RegionId, Guid? ObjectId, string? ObjectName);
     internal sealed record ChargeBody(Guid? TxnId, string? Type, Who? Payer, long? Amount, Guid? PayTo, Guid? RegionId);
@@ -49,8 +64,38 @@ internal static class MoneyApi
         bool FeeHolds);
     internal sealed record HealthBody(int? Protocol, Guid[]? Regions);
     internal sealed record HealthAnswer(bool Ok, int Regions);
-    internal sealed record PairBody(string? Host, int? FirstPort, string? MachineId, string? Nonce, string? Proof);
-    internal sealed record PairAnswer(string Code, string Key, string Proof);
+    internal sealed record PairBody(string? Host, int? FirstPort, string? MachineId, string? Nonce, string? Proof)
+    {
+        // What this record holds is never printed, so a log line or an exception that shows it can't leak it.
+        private bool PrintMembers(System.Text.StringBuilder sb)
+        {
+            sb.Append($"Host = {Host}, FirstPort = {FirstPort}, MachineId = {MachineId}, Nonce = hidden, Proof = hidden");
+            return true;
+        }
+
+        public override string ToString()
+        {
+            var sb = new System.Text.StringBuilder("PairBody { ");
+            PrintMembers(sb);
+            return sb.Append(" }").ToString();
+        }
+    }
+    internal sealed record PairAnswer(string Code, string Key, string Proof)
+    {
+        // What this record holds is never printed, so a log line or an exception that shows it can't leak it.
+        private bool PrintMembers(System.Text.StringBuilder sb)
+        {
+            sb.Append($"Code = hidden, Key = hidden, Proof = hidden");
+            return true;
+        }
+
+        public override string ToString()
+        {
+            var sb = new System.Text.StringBuilder("PairAnswer { ");
+            PrintMembers(sb);
+            return sb.Append(" }").ToString();
+        }
+    }
 
     private sealed class BadRequest : Exception;
 

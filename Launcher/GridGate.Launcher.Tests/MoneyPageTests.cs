@@ -365,6 +365,28 @@ public sealed class MoneyPageTests
         Assert.NotNull((await ParseAsync(r)).QuerySelector(".alert-danger"));
     }
 
+    [Fact]
+    public void The_symbol_error_lists_every_character_the_rule_refuses()
+    {
+        var text = MoneyPageRules.Problem(new MoneySettings(CurrencySymbol: "{C}"), [MoneyMode.Off]);
+
+        Assert.NotNull(text);
+        foreach (var c in MoneySymbolRule.ForbiddenCharacters) Assert.Contains(c.ToString(), text);
+        Assert.Contains("#", MoneySymbolRule.ForbiddenCharacters.Select(c => c.ToString()));
+        Assert.Contains("{", MoneySymbolRule.ForbiddenCharacters.Select(c => c.ToString()));
+        Assert.Contains("}", MoneySymbolRule.ForbiddenCharacters.Select(c => c.ToString()));
+    }
+
+    [Fact]
+    public async Task The_gloebit_help_says_only_the_masked_key_appears()
+    {
+        await using var f = Make(new FakeBooks());
+
+        var doc = await PageAsync(await SignedInAsync(f), "/money");
+
+        Assert.Contains("last four characters of the app key", doc.QuerySelector("#money-gloebit-title")!.TextContent);
+    }
+
     [Theory]
     [InlineData("MaxPayment", "0")]
     [InlineData("WeeklyAllowance", "-1")]

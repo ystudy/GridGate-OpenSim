@@ -9,7 +9,22 @@ namespace GridGate.Launcher.Core.Iar;
 /// the guest session stamp it was made for, when the link expires, what was left out, and the item count and size.
 /// </summary>
 public sealed record IarReadyFile(Guid Owner, string File, string Token, string Stamp, DateTimeOffset Expires, IReadOnlyList<LeftOutItem> LeftOut,
-    int Items, long Bytes);
+    int Items, long Bytes)
+{
+    // What this record holds is never printed, so a log line or an exception that shows it can't leak it.
+    private bool PrintMembers(System.Text.StringBuilder sb)
+    {
+        sb.Append($"Owner = {Owner}, File = {File}, Token = hidden, Stamp = hidden, Expires = {Expires:O}, Items = {Items}, Bytes = {Bytes}");
+        return true;
+    }
+
+    public override string ToString()
+    {
+        var sb = new System.Text.StringBuilder("IarReadyFile { ");
+        PrintMembers(sb);
+        return sb.Append(" }").ToString();
+    }
+}
 
 /// <summary>
 /// Residents' finished backups and their download links (spec 2026-11-11-iar-backups-design §5.2). One file per resident: a new

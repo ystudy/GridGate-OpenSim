@@ -12,7 +12,22 @@ namespace GridGate.Launcher.Core.Guests;
 /// <param name="Token">What the form posts back with the answers (base64url).</param>
 /// <param name="First">The first number of the sum, so a page can write the question in its own language.</param>
 /// <param name="Second">The second number of the sum.</param>
-public sealed record CaptchaChallenge(string Svg, string Question, string Token, int First, int Second);
+public sealed record CaptchaChallenge(string Svg, string Question, string Token, int First, int Second)
+{
+    // What this record holds is never printed, so a log line or an exception that shows it can't leak it.
+    private bool PrintMembers(System.Text.StringBuilder sb)
+    {
+        sb.Append($"Token = hidden");
+        return true;
+    }
+
+    public override string ToString()
+    {
+        var sb = new System.Text.StringBuilder("CaptchaChallenge { ");
+        PrintMembers(sb);
+        return sb.Append(" }").ToString();
+    }
+}
 
 /// <summary>What <see cref="ImageCaptcha.Check"/> found.</summary>
 public enum CaptchaResult

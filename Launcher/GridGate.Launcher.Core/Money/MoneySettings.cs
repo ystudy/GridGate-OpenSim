@@ -27,7 +27,22 @@ public sealed record PairedServer(Guid Id, string Host, string KeyHash, DateTime
 /// A Region Server's own side of its pairing (money plan 3): which Grid Asset Server, the money certificate fingerprint it
 /// pinned, the key its regions use, and when. Kept in the owner-only settings file, like the local program keys.
 /// </summary>
-public sealed record ServerPairing(string GridHost, string Fingerprint, string Key, DateTimeOffset PairedAt);
+public sealed record ServerPairing(string GridHost, string Fingerprint, string Key, DateTimeOffset PairedAt)
+{
+    // What this record holds is never printed, so a log line or an exception that shows it can't leak it.
+    private bool PrintMembers(System.Text.StringBuilder sb)
+    {
+        sb.Append($"GridHost = {GridHost}, Fingerprint = {Fingerprint}, Key = hidden, PairedAt = {PairedAt:O}");
+        return true;
+    }
+
+    public override string ToString()
+    {
+        var sb = new System.Text.StringBuilder("ServerPairing { ");
+        PrintMembers(sb);
+        return sb.Append(" }").ToString();
+    }
+}
 
 /// <summary>
 /// The owner's money settings (money design §7.5). <paramref name="ProgramKeys"/> maps a region program's instance to its
@@ -56,6 +71,21 @@ public sealed record MoneySettings(
     long DailyKeySpendLimit = 100_000,
     long DailyKeyPayoutLimit = 20_000)
 {
+    // The program keys and the pairing key are secrets, so they are never printed; the Gloebit app prints its masked key.
+    private bool PrintMembers(System.Text.StringBuilder sb)
+    {
+        sb.Append($"Mode = {Mode}, CurrencySymbol = {CurrencySymbol}, CurrencyName = {CurrencyName}, ProgramKeys = {Keys.Count} hidden, ")
+            .Append($"PairedServers = {PairedServers?.Count ?? 0}, Pairing = {Pairing}, Gloebit = {Gloebit}");
+        return true;
+    }
+
+    public override string ToString()
+    {
+        var sb = new System.Text.StringBuilder("MoneySettings { ");
+        PrintMembers(sb);
+        return sb.Append(" }").ToString();
+    }
+
     private static readonly IReadOnlyDictionary<string, string> NoKeys = new Dictionary<string, string>();
 
     /// <summary><see cref="ProgramKeys"/>, never null.</summary>
