@@ -6,6 +6,7 @@ using System.Text;
 using GridGate.Region.Money;
 using OpenMetaverse;
 using OpenMetaverse.StructuredData;
+using LLSDAssetUploadRequest = OpenSim.Framework.Capabilities.LLSDAssetUploadRequest;
 using OpenSim.Framework;
 using Caps = OpenSim.Framework.Capabilities.Caps;
 using OpenSim.Framework.Servers;
@@ -41,10 +42,10 @@ public sealed class OpenSimMoneyPathTests
 
     private const int UploadFee = 10;
 
-    private static (MoneyScene Region, AssetTransactionModule Uploads, RecordingClient Uploader) UploadRegion(long balance, int fee = UploadFee)
+    private static (MoneyScene Region, AssetTransactionModule Uploads, RecordingClient Uploader) UploadRegion(long balance, int fee = UploadFee, bool feeHolds = false)
     {
         var uploads = new AssetTransactionModule();
-        var region = Build(new EconomyInfo("C$", fee, 0, true, true, 1_000_000), others: [uploads]);
+        var region = Build(new EconomyInfo("C$", fee, 0, true, true, 1_000_000, feeHolds), others: [uploads]);
         region.Service.Answer = _ => Balance(balance);
         return (region, uploads, region.Arrive(Buyer));
     }
@@ -52,9 +53,13 @@ public sealed class OpenSimMoneyPathTests
     private static readonly UUID UploadTransaction = TestHelpers.ParseTail(0x200);
     private static readonly UUID UploadAssetId = TestHelpers.ParseTail(0x201);
 
-    private static void Send(RecordingClient uploader, sbyte type, bool storeLocal, bool temporary) =>
+    private static void Send(RecordingClient uploader, sbyte type, bool storeLocal, bool temporary, byte[]? data = null) =>
         uploader.Raise(nameof(IClientAPI.OnAssetUploadRequest), uploader, UploadAssetId, UploadTransaction,
-            type, new byte[64], storeLocal, temporary);
+            type, data ?? new byte[64], storeLocal, temporary);
+
+    private static readonly byte[] TextureData = [0xFF, 0x4F, 0xFF, 0x51, .. new byte[60]];
+    private static readonly byte[] SoundData = [.. "OggS"u8, .. new byte[24], 0x01, .. "vorbis"u8, .. new byte[20]];
+    private static readonly byte[] NotecardData = "Linden text version 2\n{\nLLEmbeddedItems version 1\n{\ncount 0\n}\nText length 5\nhello}\n"u8.ToArray();
 
     private static bool CreateItem(AssetTransactionModule uploads, RecordingClient uploader, sbyte createAs)
     {
@@ -69,17 +74,17 @@ public sealed class OpenSimMoneyPathTests
     /// CreateInventoryItem that names its transaction (which the inventory access module hands to the upload module).
     /// </summary>
     private static bool Upload(AssetTransactionModule uploads, RecordingClient uploader, sbyte type = (sbyte)AssetType.Texture,
-        bool storeLocal = false, sbyte? createAs = null, bool create = true, bool temporary = false)
+        bool storeLocal = false, sbyte? createAs = null, bool create = true, bool temporary = false, byte[]? data = null)
     {
-        Send(uploader, type, storeLocal, temporary);
+        Send(uploader, type, storeLocal, temporary, data);
         return !create || CreateItem(uploads, uploader, createAs ?? type);
     }
 
-    private static List<InventoryItemBase> Textures(MoneyScene region) =>
-        region.Scene.InventoryService.GetFolderContent(Buyer, region.Scene.InventoryService.GetFolderForType(Buyer, FolderType.Texture).ID)
+    private static List<InventoryItemBase> Textures(MoneyScene region, FolderType folder = FolderType.Texture) =>
+        region.Scene.InventoryService.GetFolderContent(Buyer, region.Scene.InventoryService.GetFolderForType(Buyer, folder).ID)
             .Items.Where(i => i.Name == "A texture").ToList();
 
-    /// <summary>money review 2026-11-15, R-10: a UDP upload asks the money module whether the fee is covered, then charges it.</summary>
+    /// <summary>a UDP upload asks the money module whether the fee is covered at the request and again when it is held, then charges it.</summary>
     [Fact]
     public void A_udp_upload_checks_the_fee_is_covered_then_charges_it()
     {
@@ -93,7 +98,8 @@ public sealed class OpenSimMoneyPathTests
         Assert.Equal(Buyer.Guid, ((MoneyWho)charge.Args[1]!).AgentId);
         Assert.Equal(uploader.SessionId.Guid, ((MoneyWho)charge.Args[1]!).SessionId);
         Assert.Equal((long)UploadFee, charge.Args[2]);
-        lock (region.Service.Order) Assert.Equal(new[] { "balance", "charge" }, region.Service.Order);
+        // The check at the upload request, the check when the fee is held at store time, then the charge.
+        lock (region.Service.Order) Assert.Equal(new[] { "balance", "balance", "charge" }, region.Service.Order);
     }
 
     /// <summary>money review 2026-11-15, R-10: an uploader who can't pay the fee gets no upload and pays nothing.</summary>
@@ -342,6 +348,176 @@ public sealed class OpenSimMoneyPathTests
         lister.WaitForAlert("You do not have enough money to create this classified.");
         Assert.DoesNotContain("classified_update", server.Methods);
         Assert.Empty(region.Service.Of("charge"));
+    }
+
+    // --- UDP uploads: the fee is held before storing, and texture or sound data pays under any type -------------------
+
+    [Fact]
+    public void A_udp_upload_holds_the_fee_before_storing_and_completes_it_once_stored()
+    {
+        var (region, uploads, uploader) = UploadRegion(balance: 100, feeHolds: true);
+        var storedBeforeHold = new ConcurrentQueue<bool>();
+        region.Service.Gate = method =>
+        {
+            if (method == "hold") storedBeforeHold.Enqueue(region.Scene.AssetService.Get(UploadAssetId.ToString()) is not null);
+            return Task.CompletedTask;
+        };
+
+        Assert.True(Upload(uploads, uploader, data: TextureData));
+
+        region.WaitFor("complete");
+        Assert.Equal([false], storedBeforeHold);
+        var hold = Assert.Single(region.Service.Of("hold"));
+        Assert.Equal("upload_fee", hold.Args[0]);
+        Assert.Equal((long)UploadFee, hold.Args[3]);
+        Assert.Empty(region.Service.Of("charge"));
+        Assert.Single(Textures(region));
+    }
+
+    [Fact]
+    public void A_udp_upload_whose_coins_are_gone_when_it_is_stored_is_not_stored()
+    {
+        var (region, uploads, uploader) = UploadRegion(balance: 100, feeHolds: true);
+        region.Service.Queue("hold", new MoneyAnswer("not_enough"));
+
+        Upload(uploads, uploader, data: TextureData);
+
+        uploader.WaitForAlert("Insufficient funds");
+        Assert.Null(region.Scene.AssetService.Get(UploadAssetId.ToString()));
+        Assert.Empty(Textures(region));
+        Assert.Empty(region.Service.Of("charge"));
+        Assert.Empty(region.Service.Of("complete"));
+    }
+
+    [Fact]
+    public void Without_fee_holds_a_udp_upload_whose_coins_are_gone_when_it_is_stored_is_not_stored()
+    {
+        var (region, uploads, uploader) = UploadRegion(balance: 100);
+
+        Upload(uploads, uploader, create: false, data: TextureData);
+        region.Service.Answer = _ => Balance(0);
+        CreateItem(uploads, uploader, (sbyte)AssetType.Texture);
+
+        uploader.WaitForAlert("Insufficient funds");
+        Assert.Null(region.Scene.AssetService.Get(UploadAssetId.ToString()));
+        Assert.Empty(Textures(region));
+        Assert.Empty(region.Service.Of("charge"));
+    }
+
+    [Fact]
+    public void A_udp_texture_uploaded_as_a_notecard_pays_the_upload_fee()
+    {
+        var (region, uploads, uploader) = UploadRegion(balance: 100);
+
+        Upload(uploads, uploader, type: (sbyte)AssetType.Notecard, data: TextureData);
+
+        Assert.Single(Textures(region, FolderType.Notecard));
+        var charge = Assert.Single(region.Service.Of("charge"));
+        Assert.Equal("upload_fee", charge.Args[0]);
+        Assert.Equal((long)UploadFee, charge.Args[2]);
+    }
+
+    [Fact]
+    public void A_udp_sound_uploaded_as_a_notecard_pays_the_upload_fee()
+    {
+        var (region, uploads, uploader) = UploadRegion(balance: 100);
+
+        Upload(uploads, uploader, type: (sbyte)AssetType.Notecard, data: SoundData);
+
+        Assert.Single(Textures(region, FolderType.Notecard));
+        var charge = Assert.Single(region.Service.Of("charge"));
+        Assert.Equal("upload_fee", charge.Args[0]);
+        Assert.Equal((long)UploadFee, charge.Args[2]);
+    }
+
+    [Fact]
+    public void A_udp_notecard_upload_stays_free()
+    {
+        var (region, uploads, uploader) = UploadRegion(balance: 100, feeHolds: true);
+
+        Upload(uploads, uploader, type: (sbyte)AssetType.Notecard, data: NotecardData);
+
+        Assert.Single(Textures(region, FolderType.Notecard));
+        Assert.Empty(region.Service.Of("charge"));
+        Assert.Empty(region.Service.Of("hold"));
+    }
+
+    [Fact]
+    public void A_temporary_udp_texture_upload_stays_free_whatever_its_data()
+    {
+        var (region, uploads, uploader) = UploadRegion(balance: 100, feeHolds: true);
+
+        Upload(uploads, uploader, type: (sbyte)AssetType.Notecard, temporary: true, data: TextureData);
+
+        Assert.Empty(region.Service.Calls);
+    }
+
+    [Fact]
+    public void Without_an_upload_fee_a_texture_uploaded_as_a_notecard_is_created_and_not_charged()
+    {
+        var (region, uploads, uploader) = UploadRegion(balance: 100, fee: 0, feeHolds: true);
+
+        Upload(uploads, uploader, type: (sbyte)AssetType.Notecard, data: TextureData);
+
+        Assert.Single(Textures(region, FolderType.Notecard));
+        Assert.Empty(region.Service.Of("charge"));
+        Assert.Empty(region.Service.Of("hold"));
+    }
+
+    [Fact]
+    public void A_udp_item_update_whose_hold_is_refused_when_its_data_arrives_keeps_the_items_old_asset()
+    {
+        var (region, uploads, uploader) = UploadRegion(balance: 100, feeHolds: true);
+        var item = AddItem(region, AssetType.Texture, InventoryType.Texture, FolderType.Texture);
+        var oldAsset = TestHelpers.ParseTail(0x202);
+        item.AssetID = oldAsset;
+        Assert.True(region.Scene.InventoryService.UpdateItem(item));
+        region.Service.Queue("hold", new MoneyAnswer("not_enough"));
+
+        Send(uploader, (sbyte)AssetType.Texture, storeLocal: false, temporary: false, data: []);
+        uploads.HandleItemUpdateFromTransaction(uploader, UploadTransaction, item);
+        Assert.True(uploader.XferRequests.TryDequeue(out var xferId));
+        uploader.Raise(nameof(IClientAPI.OnXferReceive), uploader, xferId, 0x80000000u, new byte[] { 0, 0, 0, 0 }.Concat(TextureData).ToArray());
+
+        uploader.WaitForAlert("Insufficient funds");
+        Assert.Equal(oldAsset, region.Scene.InventoryService.GetItem(Buyer, item.ID).AssetID);
+        Assert.Null(region.Scene.AssetService.Get(UploadAssetId.ToString()));
+        Assert.Empty(region.Service.Of("charge"));
+        Assert.Empty(region.Service.Of("complete"));
+    }
+
+    [Fact]
+    public void A_store_only_udp_upload_whose_hold_is_refused_is_not_stored()
+    {
+        var (region, uploads, uploader) = UploadRegion(balance: 100, feeHolds: true);
+        region.Service.Queue("hold", new MoneyAnswer("not_enough"));
+
+        Upload(uploads, uploader, storeLocal: true, create: false, data: TextureData);
+
+        uploader.WaitForAlert("Insufficient funds");
+        Assert.Null(region.Scene.AssetService.Get(UploadAssetId.ToString()));
+        Assert.Empty(region.Service.Of("charge"));
+        Assert.Empty(region.Service.Of("complete"));
+    }
+
+    [Fact]
+    public void A_udp_task_item_update_whose_hold_is_refused_is_not_stored()
+    {
+        var (region, uploads, uploader) = UploadRegion(balance: 100, feeHolds: true);
+        region.Service.Queue("hold", new MoneyAnswer("not_enough"));
+        var part = SceneHelpers.AddSceneObject(region.Scene, 1, Buyer, "Box ", 0x50).RootPart;
+        var oldAsset = TestHelpers.ParseTail(0x203);
+        var taskItem = new TaskInventoryItem { ItemID = UUID.Random(), Name = "A texture", AssetID = oldAsset, Type = (int)AssetType.Texture, InvType = (int)InventoryType.Texture };
+        part.Inventory.AddInventoryItem(taskItem, true);
+
+        Send(uploader, (sbyte)AssetType.Texture, storeLocal: false, temporary: false, data: TextureData);
+        uploads.HandleTaskItemUpdateFromTransaction(uploader, part, UploadTransaction, part.Inventory.GetInventoryItem(taskItem.ItemID));
+
+        uploader.WaitForAlert("Insufficient funds");
+        Assert.Equal(oldAsset, part.Inventory.GetInventoryItem(taskItem.ItemID).AssetID);
+        Assert.Null(region.Scene.AssetService.Get(UploadAssetId.ToString()));
+        Assert.Empty(region.Service.Of("charge"));
+        Assert.Empty(region.Service.Of("complete"));
     }
 
     // --- classifieds with fee holds ------------------------------------------------------------------------------------
@@ -1016,14 +1192,32 @@ public sealed class OpenSimMoneyPathTests
     }
 
     /// <summary>The upload's data has arrived: what the caps uploader does with it. Returns the error it gives the viewer.</summary>
-    private static string CapsUpload(MoneyScene region, BunchOfCaps caps, string inventoryType = "sound", string assetType = "sound", int cost = UploadFee)
+    private static string CapsUpload(MoneyScene region, BunchOfCaps caps, string inventoryType = "sound", string assetType = "sound", int cost = UploadFee,
+        byte[]? data = null, int nreqtextures = 0, int nreqinstances = 0, UUID? texturesFolder = null)
     {
         var error = "";
         int next = 0, group = 0, everyone = 0;
         var folder = region.Scene.InventoryService.GetFolderForType(Buyer, FolderType.Sound).ID;
-        caps.UploadCompleteHandler("A sound", "", CapsAssetId, CapsItemId, folder, new byte[64], inventoryType, assetType, cost,
-            UUID.Zero, 0, 0, 0, false, ref error, ref next, ref group, ref everyone, null);
+        caps.UploadCompleteHandler("A sound", "", CapsAssetId, CapsItemId, folder, data ?? new byte[64], inventoryType, assetType, cost,
+            texturesFolder ?? UUID.Zero, nreqtextures, 0, nreqinstances, false, ref error, ref next, ref group, ref everyone, null);
         return error;
+    }
+
+    /// <summary>The price the viewer is quoted for an upload of these types.</summary>
+    private static int CapsQuote(BunchOfCaps caps, string assetType, string inventoryType) =>
+        caps.NewAgentInventoryRequest(new LLSDAssetUploadRequest { asset_type = assetType, inventory_type = inventoryType, name = "A thing" }).upload_price;
+
+    /// <summary>A mesh upload's data: one texture, no meshes, and an instance list that can't be read.</summary>
+    private static byte[] MalformedModel(int textures = 1)
+    {
+        var textureList = new OSDArray();
+        for (var i = 0; i < textures; i++) textureList.Add(OSD.FromBinary(TextureData));
+        return OSDParser.SerializeLLSDXmlBytes(new OSDMap
+        {
+            ["texture_list"] = textureList,
+            ["mesh_list"] = new OSDArray(),
+            ["instance_list"] = new OSDArray { OSD.FromString("x") },
+        });
     }
 
     [Fact]
@@ -1085,6 +1279,86 @@ public sealed class OpenSimMoneyPathTests
         Assert.NotNull(region.Scene.InventoryService.GetItem(Buyer, CapsItemId));
         lock (region.Service.Order) Assert.Equal(new[] { "balance", "charge" }, region.Service.Order);
         Assert.Equal((long)UploadFee, Assert.Single(region.Service.Of("charge")).Args[2]);
+    }
+
+    [Fact]
+    public void A_caps_upload_is_priced_by_the_type_it_is_stored_as()
+    {
+        var (_, caps) = CapsRegion();
+        Assert.Equal(UploadFee, CapsQuote(caps, "notecard", "texture"));
+    }
+
+    [Fact]
+    public void A_caps_sound_upload_is_priced_as_before()
+    {
+        var (_, caps) = CapsRegion();
+        Assert.Equal(UploadFee, CapsQuote(caps, "sound", "sound"));
+    }
+
+    [Fact]
+    public void A_caps_wearable_upload_is_still_free()
+    {
+        var (_, caps) = CapsRegion();
+        Assert.Equal(0, CapsQuote(caps, "clothing", "wearable"));
+    }
+
+    [Fact]
+    public void A_caps_notecard_declared_upload_is_priced_as_the_texture_it_is_stored_as()
+    {
+        var (_, caps) = CapsRegion();
+        Assert.Equal(UploadFee, CapsQuote(caps, "notecard", "notecard"));
+    }
+
+    [Fact]
+    public void Stored_asset_types_follow_the_inventory_type()
+    {
+        Assert.Equal((sbyte)AssetType.Sound, BunchOfCaps.StoredAssetType("sound", "sound"));
+        Assert.Equal((sbyte)AssetType.Texture, BunchOfCaps.StoredAssetType("snapshot", "texture"));
+        Assert.Equal((sbyte)AssetType.Clothing, BunchOfCaps.StoredAssetType("wearable", "clothing"));
+        Assert.Equal((sbyte)AssetType.Bodypart, BunchOfCaps.StoredAssetType("wearable", "bodypart"));
+        Assert.Equal((sbyte)AssetType.Texture, BunchOfCaps.StoredAssetType("wearable", "other"));
+        Assert.Equal((sbyte)AssetType.Object, BunchOfCaps.StoredAssetType("object", "mesh"));
+        Assert.Null(BunchOfCaps.StoredAssetType("object", "texture"));
+        Assert.Equal((sbyte)AssetType.Texture, BunchOfCaps.StoredAssetType("notecard", "notecard"));
+    }
+
+    [Fact]
+    public void A_caps_texture_uploaded_as_clothing_pays_the_upload_fee()
+    {
+        var (region, caps) = CapsRegion();
+
+        Assert.Equal("", CapsUpload(region, caps, inventoryType: "wearable", assetType: "clothing", cost: 0, data: TextureData));
+
+        region.WaitFor("complete");
+        var hold = Assert.Single(region.Service.Of("hold"));
+        Assert.Equal((long)UploadFee, hold.Args[3]);
+        Assert.NotNull(region.Scene.InventoryService.GetItem(Buyer, CapsItemId));
+    }
+
+    [Fact]
+    public void A_mesh_upload_that_fails_after_storing_its_textures_takes_the_fee()
+    {
+        var (region, caps) = CapsRegion();
+
+        Record.Exception(() => CapsUpload(region, caps, inventoryType: "object", assetType: "mesh", data: MalformedModel(), nreqtextures: 1, nreqinstances: 1));
+
+        region.WaitFor("complete");
+        Assert.Empty(region.Service.Of("return"));
+    }
+
+    [Fact]
+    public void A_mesh_upload_with_more_textures_than_it_was_priced_for_stores_nothing_and_returns_the_fee()
+    {
+        var (region, caps) = CapsRegion();
+        var textures = region.Scene.InventoryService.GetFolderForType(Buyer, FolderType.Texture).ID;
+
+        var error = CapsUpload(region, caps, inventoryType: "object", assetType: "mesh", data: MalformedModel(), nreqinstances: 1, texturesFolder: textures);
+
+        Assert.NotEmpty(error);
+        region.WaitFor("return");
+        Assert.Empty(region.Service.Of("complete"));
+        Assert.Empty(region.Scene.InventoryService.GetFolderContent(Buyer, textures).Items);
+        Assert.Null(region.Scene.InventoryService.GetItem(Buyer, CapsItemId));
     }
 }
 

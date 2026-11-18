@@ -183,7 +183,7 @@ namespace OpenSim.Region.CoreModules.Agent.AssetTransaction
                     uploader.SetOldData(oldAsset.Data);
             }
 
-            uploader.RequestUpdateTaskInventoryItem(remoteClient, item);
+            uploader.RequestUpdateTaskInventoryItem(remoteClient, item, part); // GridGate: the part lets a refused update restore the item's old asset
         }
 
         public void RequestUpdateInventoryItem(IClientAPI remoteClient,

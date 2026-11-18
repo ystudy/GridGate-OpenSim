@@ -172,6 +172,11 @@ internal sealed class RecordingClient(AgentCircuitData data, Scene scene) : Test
 
     public new void SendAgentAlertMessage(string message, bool modal) => Alerts.Enqueue(message);
 
+    /// <summary>The xfer ids the region asked this client to send an upload's data on.</summary>
+    public ConcurrentQueue<ulong> XferRequests { get; } = new();
+
+    public new void SendXferRequest(ulong xferID, short assetType, UUID fileID, byte filePath, byte[] fileName) => XferRequests.Enqueue(xferID);
+
     /// <summary>The instant messages delivered to this client directly (the invitee being in the region).</summary>
     public ConcurrentQueue<GridInstantMessage> Instant { get; } = new();
 

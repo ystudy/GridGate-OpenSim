@@ -88,6 +88,16 @@ namespace OpenSim.Region.CoreModules.Agent.AssetTransaction
         private bool m_feeDue;
         private bool m_charged;
 
+        // GridGate: RequestUpdateInventoryItem points the item at the new asset before it is stored. If the update is then
+        // refused, the item gets its old asset back.
+        private bool m_itemWrittenEarly;
+        private UUID m_itemOldAssetID = UUID.Zero;
+
+        // GridGate: the same for a task item, which RequestUpdateTaskInventoryItem points at the upload at once.
+        private SceneObjectPart m_taskPart;
+        private bool m_taskItemTouched;
+        private UUID m_taskItemOldAssetID = UUID.Zero;
+
         private UploadState m_uploadState = UploadState.New;
 
         private AssetBase m_asset;
@@ -286,7 +296,8 @@ namespace OpenSim.Region.CoreModules.Agent.AssetTransaction
                 }
                 else if (m_asset.Local)
                 {
-                    StoreUploaded();
+                    // GridGate: a store-only upload whose fee can't be held is not stored, and says so.
+                    sucess = StoreUploaded();
                 }
                 ourClient.SendAssetUploadCompleteMessage(m_asset.Type, sucess, m_asset.FullID);
             }
@@ -383,6 +394,15 @@ namespace OpenSim.Region.CoreModules.Agent.AssetTransaction
                         // We must always store the item at this point even if the asset hasn't finished uploading, in order
                         // to avoid a race condition when the appearance module retrieves the item to set the asset id in
                         // the AvatarAppearance structure.
+                        // GridGate: remember the asset the item had, in case the update is refused.
+                        InventoryItemBase current = m_Scene.InventoryService.GetItem(item.Owner, item.ID);
+                        // GridGate: a second early update must not overwrite the asset recorded by the first.
+                        if (current is not null && !m_itemWrittenEarly)
+                        {
+                            m_itemWrittenEarly = true;
+                            m_itemOldAssetID = current.AssetID;
+                        }
+
                         item.AssetID = m_asset.FullID;
                         m_Scene.InventoryService.UpdateItem(item);
                     }
@@ -398,7 +418,7 @@ namespace OpenSim.Region.CoreModules.Agent.AssetTransaction
             }
         }
 
-        public void RequestUpdateTaskInventoryItem(IClientAPI remoteClient, TaskInventoryItem taskItem)
+        public void RequestUpdateTaskInventoryItem(IClientAPI remoteClient, TaskInventoryItem taskItem, SceneObjectPart part = null)
         {
             // We must lock to avoid a race with a separate thread uploading the asset.
             lock (this)
@@ -406,6 +426,14 @@ namespace OpenSim.Region.CoreModules.Agent.AssetTransaction
                 m_asset.Name = taskItem.Name;
                 m_asset.Description = taskItem.Description;
                 m_asset.Type = (sbyte)taskItem.Type;
+                // GridGate: remember the asset the item had, in case the update is refused.
+                // (only the first update of the transaction records it)
+                m_taskPart = part;
+                if (!m_taskItemTouched)
+                {
+                    m_taskItemTouched = true;
+                    m_taskItemOldAssetID = taskItem.AssetID;
+                }
                 taskItem.AssetID = m_asset.FullID;
 
                 if (m_uploadState == UploadState.Complete)
@@ -433,6 +461,7 @@ namespace OpenSim.Region.CoreModules.Agent.AssetTransaction
             // GridGate: an update takes its asset from the upload, so it is held to the uploaded type too.
             if (RefuseTypeMismatch((sbyte)item.AssetType))
             {
+                RestoreItemAsset(item);
                 ourClient.SendBulkUpdateInventory(item); // invalid the change item on viewer cache
                 return false;
             }
@@ -443,11 +472,19 @@ namespace OpenSim.Region.CoreModules.Agent.AssetTransaction
                 string error = string.Format("Not enough permissions on asset(s) referenced by item '{0}', update failed", item.Name);
                 ourClient.SendAlertMessage(error);
                 m_transactions.RemoveXferUploader(m_transactionID);
+                // GridGate: the item was pointed at the upload before it was stored; put its old asset back.
+                RestoreItemAsset(item);
                 ourClient.SendBulkUpdateInventory(item); // invalid the change item on viewer cache
             }
             else
             {
-                StoreUploaded();
+                // GridGate: an update whose fee can't be held stores nothing and leaves the item as it was.
+                if (!StoreUploaded())
+                {
+                    RestoreItemAsset(item);
+                    ourClient.SendBulkUpdateInventory(item); // invalid the change item on viewer cache
+                    return false;
+                }
                 if (!m_asset.FullID.IsZero())
                 {
                     item.AssetID = m_asset.FullID;
@@ -462,6 +499,32 @@ namespace OpenSim.Region.CoreModules.Agent.AssetTransaction
         }
 
         /// <summary>
+        /// GridGate: a refused update puts back the asset the item had before RequestUpdateInventoryItem pointed it at the
+        /// upload, so the inventory never keeps an item whose asset was not stored.
+        /// </summary>
+        private void RestoreItemAsset(InventoryItemBase item)
+        {
+            if (!m_itemWrittenEarly)
+                return;
+            m_itemWrittenEarly = false;
+            item.AssetID = m_itemOldAssetID;
+            m_Scene.InventoryService.UpdateItem(item);
+        }
+
+        /// <summary>
+        /// GridGate: a refused task item update puts back the asset the item had, on the prim's own item when it still
+        /// holds the upload's asset.
+        /// </summary>
+        private void RestoreTaskItemAsset(TaskInventoryItem taskItem)
+        {
+            TaskInventoryItem live = m_taskPart?.Inventory.GetInventoryItem(taskItem.ItemID) ?? taskItem;
+            if (live.AssetID.Equals(m_asset.FullID))
+                live.AssetID = m_taskItemOldAssetID;
+            if (!ReferenceEquals(live, taskItem) && taskItem.AssetID.Equals(m_asset.FullID))
+                taskItem.AssetID = m_taskItemOldAssetID;
+        }
+
+        /// <summary>
         /// Store the asset for the given task item when it has been uploaded.
         /// </summary>
         /// <param name="taskItem"></param>
@@ -473,18 +536,28 @@ namespace OpenSim.Region.CoreModules.Agent.AssetTransaction
 
             // GridGate: as for an inventory item update.
             if (RefuseTypeMismatch((sbyte)taskItem.Type))
+            {
+                RestoreTaskItemAsset(taskItem);
                 return false;
+            }
 
             if(ValidateAssets() == 0)
             {
                 m_transactions.RemoveXferUploader(m_transactionID);
+                // GridGate: the item was pointed at the upload before it was stored; put its old asset back.
+                RestoreTaskItemAsset(taskItem);
                 string error = string.Format("Not enough permissions on asset(s) referenced by task item '{0}', update failed", taskItem.Name);
                 ourClient.SendAlertMessage(error);
                 // force old asset to viewers ??
                 return false;
             }
 
-            StoreUploaded();
+            // GridGate: as for an inventory item update.
+            if (!StoreUploaded())
+            {
+                RestoreTaskItemAsset(taskItem);
+                return false;
+            }
             m_transactions.RemoveXferUploader(m_transactionID);
             return true;
         }
@@ -503,7 +576,9 @@ namespace OpenSim.Region.CoreModules.Agent.AssetTransaction
                 return false;
             }
 
-            StoreUploaded();
+            // GridGate: an item is made only from an asset that was stored, with its fee held.
+            if (!StoreUploaded())
+                return false;
 
             InventoryItemBase item = new InventoryItemBase
             {
@@ -543,22 +618,44 @@ namespace OpenSim.Region.CoreModules.Agent.AssetTransaction
         }
 
         /// <summary>
-        /// GridGate: stores the uploaded asset and takes the upload fee for it, once. The UDP path checked the fee
-        /// (AssetTransactionModule.HandleUDPUploadRequest) but never took it; the caps path does (Scene.Inventory.cs).
-        /// Every place this uploader stores the asset comes through here.
+        /// GridGate: holds the upload fee, stores the uploaded asset and takes the fee once it is stored, or gives it back
+        /// if the store throws (FeeHolds: a money module without holds is checked now and charged after, as before). The
+        /// fee is due for the type that was checked at upload, or for data that is a texture or a sound whatever its type
+        /// (UploadData). Temporary uploads are free. Every place this uploader stores the asset comes through here. False
+        /// when the fee can't be paid: the asset is not stored, the uploader is removed and the viewer is told.
         /// </summary>
-        private void StoreUploaded()
+        private bool StoreUploaded()
         {
-            m_Scene.AssetService.Store(m_asset);
-
-            if (!m_feeDue || m_charged)
-                return;
-            IMoneyModule mm = m_Scene.RequestModuleInterface<IMoneyModule>();
-            if (mm is not null && mm.UploadCharge > 0)
+            IFeeHold fee = null;
+            if (!m_charged && !m_asset.Temporary && (m_feeDue || UploadData.IsTextureOrSound(m_asset.Data)))
             {
-                m_charged = true;
-                mm.ApplyUploadCharge(ourClient.AgentId, mm.UploadCharge, "Asset upload");
+                IMoneyModule mm = m_Scene.RequestModuleInterface<IMoneyModule>();
+                if (mm is not null && mm.UploadCharge > 0)
+                {
+                    fee = FeeHolds.Take(mm, ourClient.AgentId, mm.UploadCharge, MoneyTransactionType.UploadCharge);
+                    if (fee is null)
+                    {
+                        m_transactions.RemoveXferUploader(m_transactionID);
+                        ourClient.SendAgentAlertMessage("Unable to upload asset. Insufficient funds.", false);
+                        return false;
+                    }
+                }
             }
+
+            bool stored = false;
+            try
+            {
+                m_Scene.AssetService.Store(m_asset);
+                stored = true;
+            }
+            finally
+            {
+                fee?.Settle(stored);
+            }
+
+            if (fee is not null)
+                m_charged = true;
+            return true;
         }
 
         /// <summary>

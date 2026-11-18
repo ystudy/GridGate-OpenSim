@@ -236,6 +236,16 @@ namespace OpenSim.Region.Framework.Scenes
                 return UUID.Zero;
             }
 
+            // GridGate: an item update can't store texture or sound data for free while an upload fee is in force. Every
+            // item update cap except the task script one (UpdateScriptTask, which has its own check in
+            // CapsUpdateTaskInventoryScriptAsset) reaches here, for an agent's item or a prim's; the viewer is told by the
+            // alert the other refusals use.
+            if (UploadData.RefusesItemUpdate(RequestModuleInterface<IMoneyModule>(), data))
+            {
+                avatar.ControllingClient.SendAgentAlertMessage(UploadData.ItemUpdateRefusedText, false);
+                return UUID.Zero;
+            }
+
             if (objectID.IsZero())
             {
                 IInventoryAccessModule invAccess = RequestModuleInterface<IInventoryAccessModule>();
@@ -345,6 +355,13 @@ namespace OpenSim.Region.Framework.Scenes
         public ArrayList CapsUpdateTaskInventoryScriptAsset(IClientAPI remoteClient, UUID itemId,
                                                        UUID primId, bool isScriptRunning, byte[] data)
         {
+            // GridGate: as in CapsUpdateItemAsset. The viewer reads a non-empty error list as a failed update.
+            if (UploadData.RefusesItemUpdate(RequestModuleInterface<IMoneyModule>(), data))
+            {
+                remoteClient.SendAgentAlertMessage(UploadData.ItemUpdateRefusedText, false);
+                return [UploadData.ItemUpdateRefusedText];
+            }
+
             if (!Permissions.CanEditScript(itemId, primId, remoteClient.AgentId))
             {
                 remoteClient.SendAgentAlertMessage("Insufficient permissions to edit script", false);
