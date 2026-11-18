@@ -307,6 +307,9 @@
     <Compile Include="JoinsInProgress.cs">
       <SubType>Code</SubType>
     </Compile>
+    <Compile Include="UploadData.cs">
+      <SubType>Code</SubType>
+    </Compile>
     <Compile Include="IVisitorMoneyModule.cs">
       <SubType>Code</SubType>
     </Compile>

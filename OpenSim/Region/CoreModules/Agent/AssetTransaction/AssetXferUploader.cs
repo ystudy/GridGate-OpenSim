@@ -286,7 +286,8 @@ namespace OpenSim.Region.CoreModules.Agent.AssetTransaction
                 }
                 else if (m_asset.Local)
                 {
-                    StoreUploaded();
+                    // GridGate: a store-only upload whose fee can't be held is not stored, and says so.
+                    sucess = StoreUploaded();
                 }
                 ourClient.SendAssetUploadCompleteMessage(m_asset.Type, sucess, m_asset.FullID);
             }
@@ -447,7 +448,12 @@ namespace OpenSim.Region.CoreModules.Agent.AssetTransaction
             }
             else
             {
-                StoreUploaded();
+                // GridGate: an update whose fee can't be held stores nothing and leaves the item as it was.
+                if (!StoreUploaded())
+                {
+                    ourClient.SendBulkUpdateInventory(item); // invalid the change item on viewer cache
+                    return false;
+                }
                 if (!m_asset.FullID.IsZero())
                 {
                     item.AssetID = m_asset.FullID;
@@ -484,7 +490,9 @@ namespace OpenSim.Region.CoreModules.Agent.AssetTransaction
                 return false;
             }
 
-            StoreUploaded();
+            // GridGate: as for an inventory item update.
+            if (!StoreUploaded())
+                return false;
             m_transactions.RemoveXferUploader(m_transactionID);
             return true;
         }
@@ -503,7 +511,9 @@ namespace OpenSim.Region.CoreModules.Agent.AssetTransaction
                 return false;
             }
 
-            StoreUploaded();
+            // GridGate: an item is made only from an asset that was stored, with its fee held.
+            if (!StoreUploaded())
+                return false;
 
             InventoryItemBase item = new InventoryItemBase
             {
@@ -543,22 +553,44 @@ namespace OpenSim.Region.CoreModules.Agent.AssetTransaction
         }
 
         /// <summary>
-        /// GridGate: stores the uploaded asset and takes the upload fee for it, once. The UDP path checked the fee
-        /// (AssetTransactionModule.HandleUDPUploadRequest) but never took it; the caps path does (Scene.Inventory.cs).
-        /// Every place this uploader stores the asset comes through here.
+        /// GridGate: holds the upload fee, stores the uploaded asset and takes the fee once it is stored, or gives it back
+        /// if the store throws (FeeHolds: a money module without holds is checked now and charged after, as before). The
+        /// fee is due for the type that was checked at upload, or for data that is a texture or a sound whatever its type
+        /// (UploadData). Temporary uploads are free. Every place this uploader stores the asset comes through here. False
+        /// when the fee can't be paid: the asset is not stored, the uploader is removed and the viewer is told.
         /// </summary>
-        private void StoreUploaded()
+        private bool StoreUploaded()
         {
-            m_Scene.AssetService.Store(m_asset);
-
-            if (!m_feeDue || m_charged)
-                return;
-            IMoneyModule mm = m_Scene.RequestModuleInterface<IMoneyModule>();
-            if (mm is not null && mm.UploadCharge > 0)
+            IFeeHold fee = null;
+            if (!m_charged && !m_asset.Temporary && (m_feeDue || UploadData.IsTextureOrSound(m_asset.Data)))
             {
-                m_charged = true;
-                mm.ApplyUploadCharge(ourClient.AgentId, mm.UploadCharge, "Asset upload");
+                IMoneyModule mm = m_Scene.RequestModuleInterface<IMoneyModule>();
+                if (mm is not null && mm.UploadCharge > 0)
+                {
+                    fee = FeeHolds.Take(mm, ourClient.AgentId, mm.UploadCharge, MoneyTransactionType.UploadCharge);
+                    if (fee is null)
+                    {
+                        m_transactions.RemoveXferUploader(m_transactionID);
+                        ourClient.SendAgentAlertMessage("Unable to upload asset. Insufficient funds.", false);
+                        return false;
+                    }
+                }
             }
+
+            bool stored = false;
+            try
+            {
+                m_Scene.AssetService.Store(m_asset);
+                stored = true;
+            }
+            finally
+            {
+                fee?.Settle(stored);
+            }
+
+            if (fee is not null)
+                m_charged = true;
+            return true;
         }
 
         /// <summary>
