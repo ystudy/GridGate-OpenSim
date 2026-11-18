@@ -256,6 +256,22 @@ internal static class MoneyApi
                                         e.GetType().Name);
                                 }
                             }
+                        // Regions Robust already lists at the new server wait for the owner to confirm them: pairing never
+                        // hands a region over. The same machine's carried pins were confirmed already. If this fails the
+                        // pairing stands and first sight pins those regions confirmed later.
+                        if (c.Pins is { } waitingPins)
+                        {
+                            try
+                            {
+                                var after = (c.Settings().Money.PairedServers ?? []).ToList();
+                                await waitingPins.PinWaitingAsync(server, server.FirstPort, RegionKeyRing.NextFirstPort(after, server), ct);
+                            }
+                            catch (MoneyUnavailableException e)
+                            {
+                                c.Log.LogWarning("A Region Server's listed regions couldn't be set to wait for confirmation at {Host} ({Error}); they are pinned when first seen.",
+                                    LogText.Clean(host), e.GetType().Name);
+                            }
+                        }
                     }
                     catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidOperationException)
                     {

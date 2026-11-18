@@ -344,10 +344,13 @@ All on the Money page (§9), stored in the launcher settings under the money mod
   - a region pinned to one server that now registers from another is covered by **neither**. The Money page shows it as
     "Moved, waiting for you", with **Approve move** (it is pinned to the server it registers from now) and **Keep off** (it
     stays with its server, and money comes back if that server registers it again). Both are owner-only and audited;
-  - a brand-new region on a paired server is pinned to it automatically;
+  - a brand-new region on a paired server is pinned to it automatically. Regions Robust already lists at a server's address
+    and ports **when it pairs** are pinned to it too, but they **wait**: they cover nothing until the owner presses
+    **Confirm its regions** on that server (owner-only, audited). Pairing never hands a region over by itself;
   - pairing again carries a server's pins over only when it is the same computer (the same machine id). A different computer
     taking over the same address and ports gets none, so its regions show as moved until the owner approves them;
-  - removing a paired server ends its key and its coverage at once.
+  - removing a paired server ends its key and its coverage at once, and keeps its pins. A region of it that another server
+    lists shows as a move for the owner to decide, and its waiting regions stay waiting.
 - **Verified regions.** Each region program's money module checks in with the service (the health call) when a region
   starts and every 3 minutes, saying which money protocol it speaks and which regions it runs. A region is **verified**
   when it is covered by a key whose module speaks a protocol that reports handoffs (§7.2) and checked in within the last 10

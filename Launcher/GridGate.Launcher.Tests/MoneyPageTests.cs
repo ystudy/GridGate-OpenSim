@@ -178,6 +178,21 @@ internal sealed class FakeMoneyRegions : IMoneyRegions
         return Task.CompletedTask;
     }
 
+    public Task<int> ConfirmWaitingAsync(Guid serverId, CancellationToken ct)
+    {
+        Up($"confirm {serverId}");
+        return Task.FromResult(Waiting(serverId).Count);
+    }
+
+    public Task<IReadOnlyList<Guid>> WaitingAsync(Guid serverId, CancellationToken ct)
+    {
+        Up($"waiting {serverId}");
+        return Task.FromResult<IReadOnlyList<Guid>>(Waiting(serverId));
+    }
+
+    private List<Guid> Waiting(Guid serverId) =>
+        States.Where(r => r.Status == RegionStatus.Waiting && r.KeyId == "server:" + serverId.ToString("N")).Select(r => r.RegionId).ToList();
+
     public Task<SessionLocation?> WhereAgentAsync(Guid agentId, CancellationToken ct)
     {
         Up($"where {agentId}");
@@ -1433,6 +1448,88 @@ public sealed class MoneyPageTests
         Assert.Contains($"approve {Market} {Sam}", f.MoneyRegions.Calls);
         Assert.Equal(["kept off", "approved"], Results(f, "money-region-move"));
         Assert.All(Targets(f, "money-region-move"), t => Assert.Equal("Market Square", t));
+    }
+
+    private static readonly Guid Cove = Guid.Parse("e0000000-0000-0000-0000-000000000011");
+    private static readonly Guid Reef = Guid.Parse("e0000000-0000-0000-0000-000000000012");
+    private static readonly Guid Lagoon = Guid.Parse("e0000000-0000-0000-0000-000000000013");
+
+    private static LauncherFactory MakeGridWithWaiting()
+    {
+        var f = MakeGrid();
+        f.MoneyRegions.States.AddRange(
+        [
+            new RegionState(Cove, "Cove", "10.0.0.5", 9002, KeyOf(Sam), RegionStatus.Waiting),
+            new RegionState(Reef, "Reef", "10.0.0.5", 9003, KeyOf(Sam), RegionStatus.Waiting),
+            new RegionState(Lagoon, "Lagoon", "10.0.0.6", 9002, KeyOf(Jo), RegionStatus.Waiting),
+        ]);
+        return f;
+    }
+
+    [Fact]
+    public async Task Waiting_regions_show_a_confirm_button_to_the_owner_only()
+    {
+        await using var f = MakeGridWithWaiting();
+
+        var doc = await PageAsync(await SignedInAsync(f), "/money");
+
+        var sam = doc.QuerySelector($"#money-server-{Sam} form[action*='handler=ConfirmRegions']")!;
+        Assert.Equal(Sam.ToString(), sam.QuerySelector("input[name=Server]")?.GetAttribute("value"));
+        Assert.Equal("Confirm its 2 regions", sam.QuerySelector("button")!.TextContent.Trim());
+        Assert.Equal("Confirm its region", doc.QuerySelector($"#money-server-{Jo} form[action*='handler=ConfirmRegions'] button")!.TextContent.Trim());
+        // A server with nothing waiting has no button.
+        await using var clear = MakeGrid();
+        Assert.Null((await PageAsync(await SignedInAsync(clear), "/money")).QuerySelector("form[action*='handler=ConfirmRegions']"));
+        // The region rows say what they wait for, and offer no keep-off.
+        var row = doc.QuerySelector($"#money-region-{Cove}")!;
+        Assert.Contains("Waiting for you to confirm: listed at Region Server at 10.0.0.5 when it paired", row.TextContent);
+        Assert.Empty(row.QuerySelectorAll("form"));
+
+        foreach (var role in new[] { "admin", "supervisor" })
+            Assert.Empty((await PageAsync(await SignedInAsync(f, role), "/money")).QuerySelectorAll("form[action*='handler=ConfirmRegions']"));
+    }
+
+    [Fact]
+    public async Task Confirming_regions_is_audited_and_refused_to_admins()
+    {
+        await using var f = MakeGridWithWaiting();
+        foreach (var role in new[] { "admin", "supervisor" })
+        {
+            using var denied = await PostAsync(await SignedInAsync(f, role), "/money", "ConfirmRegions", new() { ["Server"] = Sam.ToString() });
+            Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
+        }
+        Assert.DoesNotContain(f.MoneyRegions.Calls, x => x.StartsWith("confirm"));
+        var owner = await SignedInAsync(f);
+
+        // A server that isn't paired, or has nothing waiting, confirms nothing.
+        using (var gone = await PostAsync(owner, "/money", "ConfirmRegions", new() { ["Server"] = Guid.NewGuid().ToString() }))
+            Assert.NotNull(ErrorText(await ParseAsync(gone)));
+        f.MoneyRegions.States.RemoveAll(r => r.Status == RegionStatus.Waiting && r.KeyId == KeyOf(Jo));
+        using (var none = await PostAsync(owner, "/money", "ConfirmRegions", new() { ["Server"] = Jo.ToString() }))
+            Assert.NotNull(ErrorText(await ParseAsync(none)));
+        Assert.DoesNotContain(f.MoneyRegions.Calls, x => x.StartsWith("confirm"));
+
+        using var ok = await PostAsync(owner, "/money", "ConfirmRegions", new() { ["Server"] = Sam.ToString() });
+
+        Assert.Equal(HttpStatusCode.OK, ok.StatusCode);
+        Assert.Contains($"confirm {Sam}", f.MoneyRegions.Calls);
+        Assert.Equal(["2 regions"], Results(f, "money-region-confirm"));
+        Assert.Equal(["10.0.0.5"], Targets(f, "money-region-confirm"));
+    }
+
+    [Fact]
+    public async Task Removing_a_server_no_longer_touches_the_money_database()
+    {
+        await using var f = MakeGrid();
+        f.MoneyRegions.Down = true; // every money call fails; the page's own region list reads fail too, so removal must not need them
+        var owner = await SignedInAsync(f);
+        f.MoneyRegions.Calls.Clear();
+
+        using var r = await PostAsync(owner, "/money", "RemoveServer", new() { ["Server"] = Sam.ToString() });
+
+        Assert.DoesNotContain(f.Grid.CurrentSettings().Money.PairedServers!, p => p.Id == Sam);
+        Assert.DoesNotContain("pins were kept", await r.Content.ReadAsStringAsync(Ct));
+        Assert.Contains(Audit(f), a => a.GetProperty("action").GetString() == "money-pairing-remove");
     }
 
     [Fact]

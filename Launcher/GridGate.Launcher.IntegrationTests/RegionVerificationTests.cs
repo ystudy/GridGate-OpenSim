@@ -129,6 +129,22 @@ public sealed class RegionVerificationTests(MoneyMariaDb maria) : IClassFixture<
     }
 
     [Fact]
+    public async Task Waiting_region_is_waiting()
+    {
+        var rig = await StartAsync();
+        var (a, region) = (Server(HostA, ServerKeyA), Guid.NewGuid());
+        rig.Settings = rig.Settings with { Money = rig.Settings.Money with { PairedServers = [a] } };
+        await rig.Db.AddRegion(region, HostA);
+        await rig.Db.Sql($"INSERT INTO `money`.`region_pins` (region_id, server_id, machine_id, pinned, waiting) VALUES ('{region}', '{a.Id:N}', NULL, UTC_TIMESTAMP(6), 1)");
+
+        var state = (await rig.Verification.AllAsync(rig.Settings, Ct)).Single(r => r.RegionId == region);
+
+        Assert.Equal(RegionStatus.Waiting, state.Status);
+        Assert.Equal("server:" + a.Id.ToString("N"), state.KeyId);
+        Assert.Null(state.PinnedKeyId);
+    }
+
+    [Fact]
     public async Task Health_cannot_claim_regions_the_key_doesnt_cover()
     {
         var rig = await StartAsync();

@@ -67,7 +67,17 @@ A few things that work the same way:
   in the usual way.
 - **Pairing a server again:** if it is the same computer, its regions stay with it. If a different computer takes over the
   same address and ports, its regions show as moved until you approve them.
-- **Removing a paired server** ends its key at once, and its regions show as not paired.
+- **Removing a paired server** ends its key at once, and its regions show as not paired. Its pins stay, so a region of it
+  that another server lists later shows as moved until you decide.
+
+### Waiting for you to confirm
+
+When a Region Server pairs, the regions the grid already lists at its address and ports are pinned to it, but they wait.
+Pairing never hands a region over by itself, so money is off in them until you confirm them.
+
+**What to do (owner only):** under **Region Servers**, press **Confirm its regions** on that server. Every waiting region of
+that server then belongs to it. This is written to the audit log. There is no keep-off for these: if the regions aren't
+really that server's, remove the server; its regions stay pinned and waiting, so they stay off.
 
 ### No GridGate money
 

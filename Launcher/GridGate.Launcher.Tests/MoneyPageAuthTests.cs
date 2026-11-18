@@ -41,7 +41,7 @@ public sealed class MoneyPageAuthTests
     public enum Site { GridAsset, RegionCoins, RegionGloebit }
 
     /// <summary>What an allowed caller's POST does, so the refusals below are known to guard something.</summary>
-    private enum Effect { Books, Settings, Pending, PairClient, Regions, Alerts }
+    private enum Effect { Books, Settings, Pending, PairClient, Regions, Confirms, Alerts }
 
     /// <summary>
     /// One POST handler, with a form that would act if the caller were allowed. <paramref name="OwnerOnly"/>: an admin is
@@ -78,6 +78,7 @@ public sealed class MoneyPageAuthTests
         new("/money", "RemoveGrid", Site.GridAsset, new() { ["Address"] = ListedGrid }, Effect.Settings),
         new("/money", "KeyLimits", Site.GridAsset, Why(new() { ["KeyId"] = ServerKey, ["DailySpend"] = "5" }), Effect.Books, "set-limits", OwnerOnly: true),
         new("/money", "ApproveMove", Site.GridAsset, new() { ["Region"] = Moved.ToString(), ["Server"] = Server.ToString() }, Effect.Regions, OwnerOnly: true),
+        new("/money", "ConfirmRegions", Site.GridAsset, new() { ["Server"] = Server.ToString() }, Effect.Confirms, OwnerOnly: true),
         new("/money", "KeepOff", Site.GridAsset, new() { ["Region"] = Moved.ToString() }, Effect.Alerts, OwnerOnly: true),
         new("/money", "ClearAlert", Site.GridAsset, new() { ["Id"] = "5" }, Effect.Alerts),
         new(AnnPage, "Give", Site.GridAsset, Why(new() { ["Amount"] = "5" }), Effect.Books, "give"),
@@ -193,6 +194,7 @@ public sealed class MoneyPageAuthTests
         f.Robust.Add("Ann", "Smith", 0, "pw", Ann);
         // Market Square is pinned to another server but now registers from the paired one: waiting for the owner.
         f.MoneyRegions.States.Add(new RegionState(Moved, "Market Square", "192.168.1.20", 9000, ServerKey, RegionStatus.Moved, "server:" + Guid.NewGuid().ToString("N")));
+        f.MoneyRegions.States.Add(new RegionState(Guid.NewGuid(), "Cove", "192.168.1.20", 9001, ServerKey, RegionStatus.Waiting));
         return new Host(f, books, pair, alerts);
     }
 
@@ -242,7 +244,7 @@ public sealed class MoneyPageAuthTests
     /// it isn't counted.
     /// </summary>
     private sealed record Seen(int BooksCalls, int PairCalls, int SettingsUpdates, string SettingsHash, DateTimeOffset? Pending, string Actions,
-        int Approvals, int AlertsCleared);
+        int Approvals, int Confirms, int AlertsCleared);
 
     private static Seen Look(Host h)
     {
@@ -252,9 +254,10 @@ public sealed class MoneyPageAuthTests
             using var s = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
             return new StreamReader(s).ReadToEnd();
         }
-        int books, pair, updates, approvals, cleared;
+        int books, pair, updates, approvals, confirms, cleared;
         lock (h.Books.Calls) books = h.Books.Calls.Count;
         lock (h.F.MoneyRegions.Calls) approvals = h.F.MoneyRegions.Calls.Count(c => c.StartsWith("approve", StringComparison.Ordinal));
+        lock (h.F.MoneyRegions.Calls) confirms = h.F.MoneyRegions.Calls.Count(c => c.StartsWith("confirm", StringComparison.Ordinal));
         lock (h.Alerts.Calls) cleared = h.Alerts.Calls.Count(c => c.StartsWith("clear", StringComparison.Ordinal));
         lock (h.Pair.Calls) pair = h.Pair.Calls.Count;
         lock (h.F.Grid.UpdateWriteConfig) updates = h.F.Grid.UpdateWriteConfig.Count;
@@ -262,7 +265,7 @@ public sealed class MoneyPageAuthTests
             .Select(l => JsonDocument.Parse(l).RootElement.GetProperty("action").GetString())
             .Where(a => a != "request"));
         return new Seen(books, pair, updates, Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(Read(h.F.Paths.SettingsFile))))[..16], h.F.Services.GetRequiredService<MoneyPairing>().PendingUntil, actions,
-            approvals, cleared);
+            approvals, confirms, cleared);
     }
 
     private static List<string> BooksSince(Host h, Seen before)
@@ -360,6 +363,9 @@ public sealed class MoneyPageAuthTests
                 break;
             case Effect.Regions:
                 Assert.True(after.Approvals > before.Approvals, $"no move was approved; {after}");
+                break;
+            case Effect.Confirms:
+                Assert.True(after.Confirms > before.Confirms, $"no region was confirmed; {after}");
                 break;
             case Effect.Alerts:
                 Assert.True(after.AlertsCleared > before.AlertsCleared, $"no alert was cleared; {after}");

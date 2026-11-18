@@ -25,7 +25,8 @@
                 @foreach (var r in Model.Regions)
                 {
                     var verified = r.Status == RegionStatus.Verified;
-                    var movedFrom = r.PinnedKeyId is { } pinned ? MoneyVerifyText.KeyName(pinned, s) : null;
+                    var movedFrom = r.PinnedKeyId is { } pinned ? MoneyVerifyText.KeyName(pinned, s)
+                        : r.Status == RegionStatus.Waiting && r.KeyId is { } listed ? MoneyVerifyText.KeyName(listed, s) : null;
                     // A moved region is approved to the paired server Robust lists it at now.
                     var listedAt = r.Status == RegionStatus.Moved ? s.Money.PairedServers?.FirstOrDefault(p => MoneyVerifyText.KeyOf(p) == r.KeyId) : null;
                     <tr id="money-region-@r.RegionId">

@@ -19,6 +19,12 @@ public interface IMoneyRegions
     /// <summary>Pins a moved region to the server Robust now lists it at (<see cref="RegionPins.ApproveMoveAsync"/>). The caller audits it.</summary>
     Task ApproveMoveAsync(Guid regionId, Guid toServerId, CancellationToken ct);
 
+    /// <summary>The owner confirms a server's waiting regions (<see cref="RegionPins.ConfirmWaitingAsync"/>); how many. The caller audits it.</summary>
+    Task<int> ConfirmWaitingAsync(Guid serverId, CancellationToken ct);
+
+    /// <summary>The regions pinned to the server that wait for the owner (<see cref="RegionPins.WaitingAsync"/>).</summary>
+    Task<IReadOnlyList<Guid>> WaitingAsync(Guid serverId, CancellationToken ct);
+
     /// <summary>The person's newest location whose session is still logged in (<see cref="MoneyLocations.WhereAgentAsync"/>).</summary>
     Task<SessionLocation?> WhereAgentAsync(Guid agentId, CancellationToken ct);
 }
@@ -31,6 +37,10 @@ public sealed class MoneyRegions(RegionVerification verification, RegionPins pin
     public Task<IReadOnlyDictionary<string, KeyHeard>> KeysAsync(CancellationToken ct) => verification.KeysAsync(ct);
 
     public Task ApproveMoveAsync(Guid regionId, Guid toServerId, CancellationToken ct) => pins.ApproveMoveAsync(regionId, toServerId, ct);
+
+    public Task<int> ConfirmWaitingAsync(Guid serverId, CancellationToken ct) => pins.ConfirmWaitingAsync(serverId, ct);
+
+    public Task<IReadOnlyList<Guid>> WaitingAsync(Guid serverId, CancellationToken ct) => pins.WaitingAsync(serverId, ct);
 
     public Task<SessionLocation?> WhereAgentAsync(Guid agentId, CancellationToken ct) => locations.WhereAgentAsync(agentId, ct);
 }
