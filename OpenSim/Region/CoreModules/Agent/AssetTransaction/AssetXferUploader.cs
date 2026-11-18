@@ -88,6 +88,11 @@ namespace OpenSim.Region.CoreModules.Agent.AssetTransaction
         private bool m_feeDue;
         private bool m_charged;
 
+        // GridGate: RequestUpdateInventoryItem points the item at the new asset before it is stored. If the update is then
+        // refused, the item gets its old asset back.
+        private bool m_itemWrittenEarly;
+        private UUID m_itemOldAssetID = UUID.Zero;
+
         private UploadState m_uploadState = UploadState.New;
 
         private AssetBase m_asset;
@@ -384,6 +389,14 @@ namespace OpenSim.Region.CoreModules.Agent.AssetTransaction
                         // We must always store the item at this point even if the asset hasn't finished uploading, in order
                         // to avoid a race condition when the appearance module retrieves the item to set the asset id in
                         // the AvatarAppearance structure.
+                        // GridGate: remember the asset the item had, in case the update is refused.
+                        InventoryItemBase current = m_Scene.InventoryService.GetItem(item.Owner, item.ID);
+                        if (current is not null)
+                        {
+                            m_itemWrittenEarly = true;
+                            m_itemOldAssetID = current.AssetID;
+                        }
+
                         item.AssetID = m_asset.FullID;
                         m_Scene.InventoryService.UpdateItem(item);
                     }
@@ -434,6 +447,7 @@ namespace OpenSim.Region.CoreModules.Agent.AssetTransaction
             // GridGate: an update takes its asset from the upload, so it is held to the uploaded type too.
             if (RefuseTypeMismatch((sbyte)item.AssetType))
             {
+                RestoreItemAsset(item);
                 ourClient.SendBulkUpdateInventory(item); // invalid the change item on viewer cache
                 return false;
             }
@@ -444,6 +458,7 @@ namespace OpenSim.Region.CoreModules.Agent.AssetTransaction
                 string error = string.Format("Not enough permissions on asset(s) referenced by item '{0}', update failed", item.Name);
                 ourClient.SendAlertMessage(error);
                 m_transactions.RemoveXferUploader(m_transactionID);
+                RestoreItemAsset(item);
                 ourClient.SendBulkUpdateInventory(item); // invalid the change item on viewer cache
             }
             else
@@ -451,6 +466,7 @@ namespace OpenSim.Region.CoreModules.Agent.AssetTransaction
                 // GridGate: an update whose fee can't be held stores nothing and leaves the item as it was.
                 if (!StoreUploaded())
                 {
+                    RestoreItemAsset(item);
                     ourClient.SendBulkUpdateInventory(item); // invalid the change item on viewer cache
                     return false;
                 }
@@ -465,6 +481,19 @@ namespace OpenSim.Region.CoreModules.Agent.AssetTransaction
             }
 
             return perms != 0;
+        }
+
+        /// <summary>
+        /// GridGate: a refused update puts back the asset the item had before RequestUpdateInventoryItem pointed it at the
+        /// upload, so the inventory never keeps an item whose asset was not stored.
+        /// </summary>
+        private void RestoreItemAsset(InventoryItemBase item)
+        {
+            if (!m_itemWrittenEarly)
+                return;
+            m_itemWrittenEarly = false;
+            item.AssetID = m_itemOldAssetID;
+            m_Scene.InventoryService.UpdateItem(item);
         }
 
         /// <summary>

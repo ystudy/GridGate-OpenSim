@@ -83,7 +83,7 @@ public sealed class OpenSimMoneyPathTests
         region.Scene.InventoryService.GetFolderContent(Buyer, region.Scene.InventoryService.GetFolderForType(Buyer, folder).ID)
             .Items.Where(i => i.Name == "A texture").ToList();
 
-    /// <summary>money review 2026-11-15, R-10: a UDP upload asks the money module whether the fee is covered, then charges it.</summary>
+    /// <summary>money review 2026-11-15, R-10: a UDP upload asks the money module whether the fee is covered at the request and again when it is held, then charges it.</summary>
     [Fact]
     public void A_udp_upload_checks_the_fee_is_covered_then_charges_it()
     {
@@ -461,6 +461,58 @@ public sealed class OpenSimMoneyPathTests
         Assert.Single(Textures(region, FolderType.Notecard));
         Assert.Empty(region.Service.Of("charge"));
         Assert.Empty(region.Service.Of("hold"));
+    }
+
+    [Fact]
+    public void A_udp_item_update_whose_hold_is_refused_when_its_data_arrives_keeps_the_items_old_asset()
+    {
+        var (region, uploads, uploader) = UploadRegion(balance: 100, feeHolds: true);
+        var item = AddItem(region, AssetType.Texture, InventoryType.Texture, FolderType.Texture);
+        var oldAsset = TestHelpers.ParseTail(0x202);
+        item.AssetID = oldAsset;
+        Assert.True(region.Scene.InventoryService.UpdateItem(item));
+        region.Service.Queue("hold", new MoneyAnswer("not_enough"));
+
+        Send(uploader, (sbyte)AssetType.Texture, storeLocal: false, temporary: false, data: []);
+        uploads.HandleItemUpdateFromTransaction(uploader, UploadTransaction, item);
+        Assert.True(uploader.XferRequests.TryDequeue(out var xferId));
+        uploader.Raise(nameof(IClientAPI.OnXferReceive), uploader, xferId, 0x80000000u, new byte[] { 0, 0, 0, 0 }.Concat(TextureData).ToArray());
+
+        uploader.WaitForAlert("Insufficient funds");
+        Assert.Equal(oldAsset, region.Scene.InventoryService.GetItem(Buyer, item.ID).AssetID);
+        Assert.Null(region.Scene.AssetService.Get(UploadAssetId.ToString()));
+        Assert.Empty(region.Service.Of("charge"));
+        Assert.Empty(region.Service.Of("complete"));
+    }
+
+    [Fact]
+    public void A_store_only_udp_upload_whose_hold_is_refused_is_not_stored()
+    {
+        var (region, uploads, uploader) = UploadRegion(balance: 100, feeHolds: true);
+        region.Service.Queue("hold", new MoneyAnswer("not_enough"));
+
+        Upload(uploads, uploader, storeLocal: true, create: false, data: TextureData);
+
+        uploader.WaitForAlert("Insufficient funds");
+        Assert.Null(region.Scene.AssetService.Get(UploadAssetId.ToString()));
+        Assert.Empty(region.Service.Of("charge"));
+        Assert.Empty(region.Service.Of("complete"));
+    }
+
+    [Fact]
+    public void A_udp_task_item_update_whose_hold_is_refused_is_not_stored()
+    {
+        var (region, uploads, uploader) = UploadRegion(balance: 100, feeHolds: true);
+        region.Service.Queue("hold", new MoneyAnswer("not_enough"));
+        var taskItem = new TaskInventoryItem { ItemID = UUID.Random(), Name = "A texture", Type = (int)AssetType.Texture, InvType = (int)InventoryType.Texture };
+
+        Send(uploader, (sbyte)AssetType.Texture, storeLocal: false, temporary: false, data: TextureData);
+        uploads.HandleTaskItemUpdateFromTransaction(uploader, null!, UploadTransaction, taskItem);
+
+        uploader.WaitForAlert("Insufficient funds");
+        Assert.Null(region.Scene.AssetService.Get(UploadAssetId.ToString()));
+        Assert.Empty(region.Service.Of("charge"));
+        Assert.Empty(region.Service.Of("complete"));
     }
 
     // --- classifieds with fee holds ------------------------------------------------------------------------------------
