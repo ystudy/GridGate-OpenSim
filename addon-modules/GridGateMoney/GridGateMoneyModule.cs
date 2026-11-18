@@ -25,7 +25,7 @@ namespace GridGate.Region.Money;
 /// only while money is on.
 /// </summary>
 [Extension(Path = "/OpenSim/RegionModules", NodeName = "RegionModule", Id = "GridGateMoneyModule")]
-public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVisitorMoneyModule, IClassifiedFeeModule, IFeeHoldModule
+public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVisitorMoneyModule, IClassifiedFeeModule, IFeeHoldModule, IMoneyModuleTellsPayer
 {
     public const string ModuleName = "GridGateMoneyModule";
     private static readonly ILog Log = LogManager.GetLogger(MethodBase.GetCurrentMethod()!.DeclaringType);
@@ -601,8 +601,13 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
     public bool MoveMoney(UUID fromUser, UUID toUser, int amount, MoneyTransactionType type, string text)
     {
         if (type != MoneyTransactionType.LandPassSale) return false;
-        return FindClient(fromUser) is { } c && ActionsFor(c) is { } actions
-            && actions.MovePass(PayerOf(c), WhoOf(toUser), amount, groupLand: GroupLand(c, toUser));
+        if (FindClient(fromUser) is not { } c) return false; // nobody here to tell
+        if (ActionsFor(c) is not { } actions)
+        {
+            c.SendAlertMessage(MoneyRules.Message("unavailable"));
+            return false;
+        }
+        return actions.MovePass(PayerOf(c), WhoOf(toUser), amount, groupLand: GroupLand(c, toUser));
     }
 
     public void MoveMoney(UUID fromUser, UUID toUser, int amount, string text) =>

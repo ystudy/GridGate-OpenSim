@@ -219,7 +219,11 @@ internal sealed class MoneyActions(IMoneyService service, Guid regionId, Func<Ec
     /// <summary>A parcel pass, for the land module's synchronous <c>MoveMoney</c>; true only when the coins moved.</summary>
     public bool MovePass(Payer p, MoneyWho parcelOwner, int amount, bool groupLand = false)
     {
-        if (amount < 0) return false;
+        if (amount < 0)
+        {
+            view.Tell(p.AgentId, MoneyRules.Message("unavailable"));
+            return false;
+        }
         // A group holds no coins on this grid (money design §7.3; money review 2026-11-15, R-9). OpenSim's land module
         // refuses this first today; this doesn't rely on it.
         if (groupLand)

@@ -558,6 +558,20 @@ namespace OpenSim.Region.CoreModules.World.Land
             }
         }
 
+        // GridGate: paid passes being bought, by buyer and parcel, so a second purchase of the same pass waits for the first.
+        private readonly HashSet<(UUID Agent, UUID Parcel)> m_passesInFlight = new();
+
+        // GridGate: the buyer's own Access entry, found again under the list's lock: the list changes while a payment waits.
+        private static LandAccessEntry TakeOwnPass(LandData ldata, UUID buyer)
+        {
+            int at = ldata.ParcelAccessList.FindIndex(e => e.Flags == AccessList.Access && e.AgentID.Equals(buyer));
+            if (at == -1)
+                return null;
+            LandAccessEntry old = ldata.ParcelAccessList[at];
+            ldata.ParcelAccessList.RemoveAt(at);
+            return old;
+        }
+
         public void ClientParcelBuyPass(IClientAPI remote_client, UUID targetID, int landLocalID)
         {
             ILandObject land;
@@ -628,48 +642,78 @@ namespace OpenSim.Region.CoreModules.World.Land
                 }
             }
 
-            LandAccessEntry entry = new()
+            // GridGate: the entry is built from the buyer's entry as it is when the pass is added, so two renewals stack.
+            LandAccessEntry NewEntry(LandAccessEntry existing)
             {
-                AgentID = targetID,
-                Flags = AccessList.Access,
-                Expires = now + expires
-            };
-            if (currenttime > 0)
-                entry.Expires += currenttime;
+                int stamp = Util.UnixTimeSinceEpoch();
+                LandAccessEntry made = new()
+                {
+                    AgentID = targetID,
+                    Flags = AccessList.Access,
+                    Expires = stamp + expires
+                };
+                if (existing is not null && existing.Expires - stamp > 0)
+                    made.Expires += existing.Expires - stamp;
+                return made;
+            }
+
             IMoneyModule mm = m_scene.RequestModuleInterface<IMoneyModule>();
             if(cost != 0 && mm is not null)
             {
+                // GridGate: one paid purchase of a pass at a time.
+                (UUID, UUID) key = (remote_client.AgentId, ldata.GlobalID);
+                lock (m_passesInFlight)
+                {
+                    if (!m_passesInFlight.Add(key))
+                    {
+                        remote_client.SendAgentAlertMessage("Your pass for this parcel is still being bought.", false);
+                        return;
+                    }
+                }
                 WorkManager.RunInThreadPool(
                 delegate
                 {
-                    string regionName = m_scene.RegionInfo.RegionName;
-
-                    if (!mm.AmountCovered(remote_client.AgentId, cost))
+                    try
                     {
-                        remote_client.SendAgentAlertMessage($"Insufficient funds in region '{regionName}' money system", true); 
-                        return;
+                        string regionName = m_scene.RegionInfo.RegionName;
+
+                        if (!mm.AmountCovered(remote_client.AgentId, cost))
+                        {
+                            remote_client.SendAgentAlertMessage($"Insufficient funds in region '{regionName}' money system", true);
+                            return;
+                        }
+
+                        string payDescription = String.Format("Parcel '{0}' at region '{1} {2:0.###} hours access pass", ldata.Name, regionName, ldata.PassHours);
+
+                        if(!mm.MoveMoney(remote_client.AgentId, ldata.OwnerID, cost,MoneyTransactionType.LandPassSale, payDescription))
+                        {
+                            // GridGate: a money module that tells the payer why has said so already.
+                            if (mm is not IMoneyModuleTellsPayer)
+                                remote_client.SendAgentAlertMessage("Sorry pass payment processing failed, please try again later", true);
+                            return;
+                        }
+
+                        lock (ldata.ParcelAccessList)
+                        {
+                            LandAccessEntry existing = TakeOwnPass(ldata, targetID);
+                            ldata.ParcelAccessList.Add(NewEntry(existing));
+                        }
+                        m_scene.EventManager.TriggerLandObjectUpdated((uint)land.LandData.LocalID, land);
                     }
-
-                    string payDescription = String.Format("Parcel '{0}' at region '{1} {2:0.###} hours access pass", ldata.Name, regionName, ldata.PassHours);
-
-                    if(!mm.MoveMoney(remote_client.AgentId, ldata.OwnerID, cost,MoneyTransactionType.LandPassSale, payDescription))
+                    finally
                     {
-                        remote_client.SendAgentAlertMessage("Sorry pass payment processing failed, please try again later", true); 
-                        return;
+                        lock (m_passesInFlight)
+                            m_passesInFlight.Remove(key);
                     }
-
-                    if (idx != -1)
-                        ldata.ParcelAccessList.RemoveAt(idx);
-                    ldata.ParcelAccessList.Add(entry);
-                    m_scene.EventManager.TriggerLandObjectUpdated((uint)land.LandData.LocalID, land);
-                    return;
                 }, null, "ParcelBuyPass");
             }
             else
             {
-                if (idx != -1)
-                    ldata.ParcelAccessList.RemoveAt(idx);
-                ldata.ParcelAccessList.Add(entry);
+                lock (ldata.ParcelAccessList)
+                {
+                    LandAccessEntry existing = TakeOwnPass(ldata, targetID);
+                    ldata.ParcelAccessList.Add(NewEntry(existing));
+                }
                 m_scene.EventManager.TriggerLandObjectUpdated((uint)land.LandData.LocalID, land);
             }
         }
