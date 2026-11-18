@@ -175,7 +175,7 @@ marked in the code with a `GridGate:` comment. When an upstream pick touches the
 | `fix(opensim): item update caps refuse texture and sound data while an upload fee is in force` | `Scene.Inventory.cs` (`CapsUpdateItemAsset`, which the agent-item and task-item update caps both pass through), `OpenSim/Framework/UploadData.cs` (`RefusesItemUpdate`) |
 | `fix(opensim): a parcel pass is bought once at a time, a renewal replaces only the buyer's own entry, and a pass being checked isn't told to try again` | `OpenSim/Framework/IMoneyModuleTellsPayer.cs` (new), `OpenSim.Framework.csproj`, `LandManagementModule.cs` (`ClientParcelBuyPass`, `TakeOwnPass`, `m_passesInFlight`) |
 | `fix(opensim): script payouts run on their own queue, pause for thirty seconds after one gets no answer, and are limited to sixty a minute per owner` | `Plugins/Payouts.cs` (new), `AsyncCommandManager.cs` (`PayoutsPlugin`), `LSL_Api.cs` (`llGiveMoney`, `llTransferLindenDollars`: payouts go to the payout queue, not the dataserver pool) |
-| `fix(opensim): a parcel pass paid during a parcel edit is added to the parcel as it is then` | `LandManagementModule.cs` (`ClientParcelBuyPass`: the paid job reads the parcel's `LandData` again) |
+| `fix(opensim): a pass paid during a parcel edit lands on the live parcel, a land re-check accepts every for-sale flag, payouts the pause refuses don't use the owner's allowance` | `LandManagementModule.cs` (`ClientParcelBuyPass`: the paid job reads the parcel's `LandData` again) |
 
 The script changes (the six `LSL_Api.cs` rows) are tried against a real `LSL_Api` in a test region by
 `tests/GridGate.Lsl.Tests`, which CI runs on Linux and Windows, and so are the places the saved-debit row marks an
