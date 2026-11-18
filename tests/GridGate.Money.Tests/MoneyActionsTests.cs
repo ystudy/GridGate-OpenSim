@@ -489,6 +489,20 @@ public sealed class MoneyActionsTests
     }
 
     [Fact]
+    public void Payouts_report_paused_for_30_seconds_after_one_got_no_answer()
+    {
+        var time = new Microsoft.Extensions.Time.Testing.FakeTimeProvider();
+        var actions = new MoneyActions(_service, Region, () => _economy, _view) { Time = time };
+        Assert.False(actions.PayoutsPaused);
+        _service.Answer = _ => MoneyAnswer.NoAnswer;
+        Assert.False(actions.Payout(Me, ThemWho, 5, PartId, "slot", Guid.NewGuid(), out _));
+
+        Assert.True(actions.PayoutsPaused);
+        time.Advance(TimeSpan.FromSeconds(31));
+        Assert.False(actions.PayoutsPaused);
+    }
+
+    [Fact]
     public async Task A_pay_still_works_while_payouts_are_paused()
     {
         var actions = new MoneyActions(_service, Region, () => _economy, _view);

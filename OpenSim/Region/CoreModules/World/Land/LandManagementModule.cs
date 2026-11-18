@@ -693,12 +693,14 @@ namespace OpenSim.Region.CoreModules.World.Land
                             return;
                         }
 
-                        lock (ldata.ParcelAccessList)
+                        // GridGate: the parcel's data as it is now: an edit during the payment replaces the object's LandData.
+                        LandData live = land.LandData;
+                        lock (live.ParcelAccessList)
                         {
-                            LandAccessEntry existing = TakeOwnPass(ldata, targetID);
-                            ldata.ParcelAccessList.Add(NewEntry(existing));
+                            LandAccessEntry existing = TakeOwnPass(live, targetID);
+                            live.ParcelAccessList.Add(NewEntry(existing));
                         }
-                        m_scene.EventManager.TriggerLandObjectUpdated((uint)land.LandData.LocalID, land);
+                        m_scene.EventManager.TriggerLandObjectUpdated((uint)live.LocalID, land);
                     }
                     finally
                     {

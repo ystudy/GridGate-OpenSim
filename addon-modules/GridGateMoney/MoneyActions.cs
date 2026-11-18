@@ -76,6 +76,9 @@ internal sealed class MoneyActions(IMoneyService service, Guid regionId, Func<Ec
         public long Until;
     }
 
+    /// <summary>True while script payouts are failing at once because the money service didn't answer one.</summary>
+    public bool PayoutsPaused => Interlocked.Read(ref Pause.Until) is var until && until != 0 && Time.GetTimestamp() < until;
+
     public async Task PayAvatarAsync(Payer p, Guid source, MoneyWho to, int amount)
     {
         if (MoneyRules.CheckPayAvatar(p.AgentId, source, amount) is var refusal && refusal != Refusal.None)
@@ -276,7 +279,7 @@ internal sealed class MoneyActions(IMoneyService service, Guid regionId, Func<Ec
             reason = "LINDENDOLLAR_ENTITYDOESNOTEXIST";
             return false;
         }
-        if (Interlocked.Read(ref Pause.Until) is var until && until != 0 && Time.GetTimestamp() < until)
+        if (PayoutsPaused)
         {
             reason = "SERVICE_ERROR";
             return false;

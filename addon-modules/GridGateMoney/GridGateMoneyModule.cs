@@ -429,7 +429,7 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
         // again: what the buyer was shown has to be what is sold, or the hold goes back.
         var after = scene.LandChannel?.GetLandObject(e.parcelLocalID)?.LandData;
         if (after is null || after.OwnerID != e.parcelOwnerID || after.SalePrice != e.parcelPrice || after.Area != e.parcelArea
-            || (after.Flags & (uint)ParcelFlags.ForSale) == 0
+            || (after.Flags & (uint)(ParcelFlags.ForSale | ParcelFlags.ForSaleObjects | ParcelFlags.SellParcelObjects)) == 0
             || (after.AuthBuyerID != UUID.Zero && after.AuthBuyerID != e.agentId))
         {
             _landHolds.TryRemove(KeyValuePair.Create(key, mine with { HoldId = holdId }));
@@ -634,6 +634,12 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
         if (MoneyRules.CheckPayout(Info(root), fromID.Guid) is { } refused)
         {
             reason = refused;
+            return false;
+        }
+        // A payout the pause refuses anyway doesn't use up the owner's allowance.
+        if (actions.PayoutsPaused)
+        {
+            reason = "SERVICE_ERROR";
             return false;
         }
         if (!_payoutLimit.TryTake(fromID.Guid, out var warn))
