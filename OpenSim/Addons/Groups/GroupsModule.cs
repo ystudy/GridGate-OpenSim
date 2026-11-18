@@ -52,6 +52,9 @@ namespace OpenSim.Groups
 
         private IMessageTransferModule m_msgTransferModule = null;
 
+        // GridGate: the join fee each invitation showed (see JoinFeeOffers), one per module.
+        private readonly JoinFeeOffers m_joinFeeOffers = new JoinFeeOffers();
+
         private IGroupsServicesConnector m_groupData = null;
         private IUserManagement m_UserManagement;
 
@@ -383,13 +386,34 @@ namespace OpenSim.Groups
                         //m_log.DebugFormat("[XXX]: Received an accept invite notice.");
 
                         // GridGate: joining through an invitation pays the group's join fee too, held before the member is
-                        // added and settled as JoinGroupRequest settles it (OpenSim charged nothing here).
+                        // added and settled as JoinGroupRequest settles it (OpenSim charged nothing here). It charges at
+                        // most the fee the invitation showed, and never a member who is already in the group.
                         IFeeHold fee = null;
                         GroupRecord group = GetGroupRecord(inviteInfo.GroupID);
                         IMoneyModule money = scene.RequestModuleInterface<IMoneyModule>();
-                        if (money != null && group != null && group.MembershipFee > 0)
+                        int current = group == null ? 0 : JoinFeeOnAccept(group);
+                        if (current > 0)
                         {
-                            fee = FeeHolds.Take(money, remoteClient.AgentId, group.MembershipFee, MoneyTransactionType.GroupJoin, group.GroupName);
+                            if (m_groupData.GetAgentGroupMembership(remoteAgentIDstr, invitee.ToString(), inviteInfo.GroupID) != null)
+                            {
+                                m_groupData.RemoveAgentToGroupInvite(remoteAgentIDstr, inviteID);
+                                m_joinFeeOffers.Forget(inviteID);
+                                remoteClient.SendAgentAlertMessage(string.Format("You are already a member of {0}.", group.GroupName), false);
+                                return;
+                            }
+
+                            // The fee this invitation showed: a fee offered again by this module replaces the stored one
+                            // (the stored one is the fee before it went up), otherwise the stored fee, otherwise unknown.
+                            int? offered = m_joinFeeOffers.Find(inviteID) ?? inviteInfo.Fee;
+                            if (offered == null || current > offered.Value)
+                            {
+                                // The fee is not the one shown: add nobody, hold nothing, and ask again at today's fee.
+                                m_joinFeeOffers.Remember(inviteID, current);
+                                SendFeeOffer(inviteID, group, inviteInfo.RoleID, invitee, current);
+                                return;
+                            }
+
+                            fee = FeeHolds.Take(money, remoteClient.AgentId, current, MoneyTransactionType.GroupJoin, group.GroupName);
                             if (fee == null)
                             {
                                 remoteClient.SendAgentAlertMessage("Insufficient funds to join the group.", false);
@@ -436,6 +460,7 @@ namespace OpenSim.Groups
                         }
 
                         m_groupData.RemoveAgentToGroupInvite(remoteAgentIDstr, inviteID);
+                        m_joinFeeOffers.Forget(inviteID); // GridGate
                     }
 
                     // Reject
@@ -445,6 +470,7 @@ namespace OpenSim.Groups
                             m_log.DebugFormat("[Groups]: Received a reject invite notice.");
 
                         m_groupData.RemoveAgentToGroupInvite(remoteAgentIDstr, inviteID);
+                        m_joinFeeOffers.Forget(inviteID); // GridGate: a declined invitation's fee is forgotten
                         m_groupData.RemoveAgentFromGroup(remoteAgentIDstr, inviteInfo.AgentID, inviteInfo.GroupID);
                     }
                 }
@@ -1157,9 +1183,17 @@ namespace OpenSim.Groups
 
             // GridGate: the join fee is held before the member is added, then taken if they were added or given back if
             // not (FeeHolds: a money module without holds is checked now and charged after, as before).
+            // Someone who is a member already pays nothing again: the reply says the join worked.
             IFeeHold fee = null;
             if (money != null && groupRecord.MembershipFee > 0)
             {
+                string memberIDStr = GetRequestingAgentIDStr(remoteClient);
+                if (m_groupData.GetAgentGroupMembership(memberIDStr, memberIDStr, groupID) != null)
+                {
+                    remoteClient.SendJoinGroupReply(groupID, true);
+                    return;
+                }
+
                 fee = FeeHolds.Take(money, remoteClient.AgentId, groupRecord.MembershipFee, MoneyTransactionType.GroupJoin, groupRecord.GroupName);
                 if (fee == null)
                 {
@@ -1353,8 +1387,12 @@ namespace OpenSim.Groups
             // Todo: Security check, probably also want to send some kind of notification
             UUID InviteID = UUID.Random();
 
-            if (m_groupData.AddAgentToGroupInvite(agentID.ToString(), InviteID, groupID, roleID, invitedAgentID.ToString(), null)) // GridGate: the fee shown is passed here by a later change
+            // GridGate: the fee the invitation shows is kept with it (and here), so accepting charges no more than that.
+            int fee = JoinFeeOnAccept(group);
+            if (m_groupData.AddAgentToGroupInvite(agentID.ToString(), InviteID, groupID, roleID, invitedAgentID.ToString(), fee))
             {
+                m_joinFeeOffers.Remember(InviteID, fee);
+
                 if (m_msgTransferModule != null)
                 {
                     Guid inviteUUID = InviteID.Guid;
@@ -1372,7 +1410,6 @@ namespace OpenSim.Groups
                     // GridGate: accepting pays the join fee now, so a paid group's invitation says what it costs and puts the
                     // fee and the role in the bucket, where viewers read them to ask before the invitee pays. A free group's
                     // invitation is as OpenSim sent it.
-                    int fee = JoinFeeOnAccept(group);
                     msg.message = fee > 0
                         ? string.Format("{0} has invited you to join a group called {1}. There is a fee of {2} to join this group.", agentName, group.GroupName, fee)
                         : string.Format("{0} has invited you to join a group called {1}. There is no cost to join this group.", agentName, group.GroupName);
@@ -1387,6 +1424,29 @@ namespace OpenSim.Groups
                     OutgoingInstantMessage(msg, invitedAgentID);
                 }
             }
+        }
+
+        /// <summary>
+        /// GridGate: asks the invitee again, for the same invitation, at the fee the group charges now: an accept found it
+        /// higher than the one shown. Accepting this one agrees to it.
+        /// </summary>
+        private void SendFeeOffer(UUID inviteID, GroupRecord group, UUID roleID, UUID invitee, int fee)
+        {
+            GridInstantMessage msg = new GridInstantMessage();
+            msg.imSessionID = inviteID.Guid;
+            msg.fromAgentID = group.GroupID.Guid;
+            msg.toAgentID = invitee.Guid;
+            msg.timestamp = 0;
+            msg.fromAgentName = group.GroupName;
+            msg.message = string.Format("The fee to join {0} is now {1}. There is a fee of {1} to join this group.", group.GroupName, fee);
+            msg.dialog = (byte)OpenMetaverse.InstantMessageDialog.GroupInvitation;
+            msg.fromGroup = true;
+            msg.offline = (byte)0;
+            msg.ParentEstateID = 0;
+            msg.Position = Vector3.Zero;
+            msg.RegionID = m_sceneList[0].RegionInfo.RegionID.Guid;
+            msg.binaryBucket = InvitationBucket(fee, roleID);
+            OutgoingInstantMessage(msg, invitee);
         }
 
         /// <summary>

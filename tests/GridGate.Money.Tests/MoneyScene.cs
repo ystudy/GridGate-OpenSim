@@ -172,6 +172,16 @@ internal sealed class RecordingClient(AgentCircuitData data, Scene scene) : Test
 
     public new void SendAgentAlertMessage(string message, bool modal) => Alerts.Enqueue(message);
 
+    /// <summary>The instant messages delivered to this client directly (the invitee being in the region).</summary>
+    public ConcurrentQueue<GridInstantMessage> Instant { get; } = new();
+
+    public new void SendInstantMessage(GridInstantMessage im) => Instant.Enqueue(im);
+
+    /// <summary>What the client was told about each join: the group and whether it worked.</summary>
+    public ConcurrentQueue<(UUID Group, bool Success)> JoinReplies { get; } = new();
+
+    public new void SendJoinGroupReply(UUID groupID, bool success) => JoinReplies.Enqueue((groupID, success));
+
     /// <summary>Raises one of the client's packet events, as OpenSim's UDP stack does when the viewer's packet arrives.</summary>
     public void Raise(string clientEvent, params object?[] args)
     {

@@ -496,10 +496,10 @@ public sealed class OpenSimMoneyPathTests
     }
 
     /// <summary>The viewer accepting an invitation to "Club", as an instant message.</summary>
-    private static void AcceptInvitation(RecordingClient joiner) =>
+    private static void AcceptInvitation(RecordingClient joiner, InstantMessageDialog answer = InstantMessageDialog.GroupInvitationAccept) =>
         joiner.Raise(nameof(IClientAPI.OnInstantMessage), joiner, new GridInstantMessage
         {
-            dialog = (byte)InstantMessageDialog.GroupInvitationAccept, imSessionID = InviteId.Guid, fromAgentID = Buyer.Guid,
+            dialog = (byte)answer, imSessionID = InviteId.Guid, fromAgentID = Buyer.Guid,
             toAgentID = GroupId.Guid, message = "", fromAgentName = "", binaryBucket = [],
         });
 
@@ -573,6 +573,158 @@ public sealed class OpenSimMoneyPathTests
         AcceptInvitation(g.Joiner);
 
         AssertHeldThenCompleted(g, added);
+    }
+
+    // --- join fees follow the invitation (V2; the Flotsam module takes the same rows next) -------------------------------
+
+    private static void AssertNoHoldAndNotAdded(GroupsRig g)
+    {
+        Assert.Empty(g.Region.Service.Of("hold"));
+        Assert.Empty(g.Region.Service.Of("charge"));
+        Assert.DoesNotContain(Buyer, g.Service.Members);
+    }
+
+    /// <summary>The one fresh invitation the invitee was sent.</summary>
+    private static GridInstantMessage FreshInvitation(GroupsRig g) =>
+        Assert.Single(g.Joiner.Instant, m => m.dialog == (byte)InstantMessageDialog.GroupInvitation);
+
+    private static void AssertOffersFee(GridInstantMessage invitation, int fee)
+    {
+        Assert.Equal(InviteId.Guid, invitation.imSessionID);
+        Assert.Equal(GroupId.Guid, invitation.fromAgentID);
+        Assert.Equal("Club", invitation.fromAgentName);
+        Assert.Equal($"The fee to join Club is now {fee}. There is a fee of {fee} to join this group.", invitation.message);
+        Assert.Equal(20, invitation.binaryBucket.Length);
+        Assert.Equal(fee, System.Buffers.Binary.BinaryPrimitives.ReadInt32BigEndian(invitation.binaryBucket));
+        Assert.Equal(GroupsService.InviteRole, new UUID(invitation.binaryBucket, 4));
+    }
+
+    [Fact]
+    public void A_paid_invitation_accepted_after_the_fee_went_up_adds_nobody_and_offers_the_new_fee()
+    {
+        var g = GroupsRegion(V2, balance: 100000);
+        Invite(g);
+        g.Service.Fee = 5000;
+
+        AcceptInvitation(g.Joiner);
+
+        AssertNoHoldAndNotAdded(g);
+        AssertOffersFee(FreshInvitation(g), 5000);
+        Assert.DoesNotContain("RemoveAgentToGroupInvite", g.Service.Order);
+
+        // Accepting the fresh invitation agrees to the new fee.
+        AcceptInvitation(g.Joiner);
+
+        g.Region.WaitFor("complete");
+        var hold = Assert.Single(g.Region.Service.Of("hold"));
+        Assert.Equal((long)5000, hold.Args[3]);
+        Assert.Contains(Buyer, g.Service.Members);
+    }
+
+    [Fact]
+    public void A_paid_invitation_accepted_after_the_fee_went_down_charges_the_lower_fee()
+    {
+        var g = GroupsRegion(V2);
+        Invite(g);
+        g.Service.Fee = 5;
+
+        AcceptInvitation(g.Joiner);
+
+        g.Region.WaitFor("complete");
+        var hold = Assert.Single(g.Region.Service.Of("hold"));
+        Assert.Equal((long)5, hold.Args[3]);
+        Assert.Contains(Buyer, g.Service.Members);
+        Assert.DoesNotContain(g.Joiner.Instant, m => m.dialog == (byte)InstantMessageDialog.GroupInvitation);
+    }
+
+    [Fact]
+    public void An_invitation_with_no_known_fee_to_a_paid_group_offers_the_fee_first()
+    {
+        var g = GroupsRegion(V2);
+        g.Service.StoredFee = null; // as an older region stored it; this module never offered it either
+
+        AcceptInvitation(g.Joiner);
+
+        AssertNoHoldAndNotAdded(g);
+        AssertOffersFee(FreshInvitation(g), JoinFee);
+    }
+
+    [Fact]
+    public void An_invitation_made_free_charges_nothing()
+    {
+        var g = GroupsRegion(V2);
+        Invite(g);
+        g.Service.Fee = 0;
+
+        AcceptInvitation(g.Joiner);
+
+        Assert.Empty(g.Region.Service.Of("hold"));
+        Assert.Empty(g.Region.Service.Of("charge"));
+        Assert.Contains(Buyer, g.Service.Members);
+    }
+
+    [Fact]
+    public void A_free_invitation_to_a_group_that_became_paid_offers_the_fee_first()
+    {
+        var g = GroupsRegion(V2);
+        g.Service.Fee = 0;
+        Invite(g);
+        g.Service.Fee = JoinFee;
+
+        AcceptInvitation(g.Joiner);
+
+        AssertNoHoldAndNotAdded(g);
+        AssertOffersFee(FreshInvitation(g), JoinFee);
+    }
+
+    [Fact]
+    public void A_member_accepting_an_old_invitation_pays_nothing()
+    {
+        var g = GroupsRegion(V2);
+        Invite(g);
+        g.Groups.JoinGroupRequest(g.Joiner, GroupId);
+        g.Region.WaitFor("complete");
+
+        AcceptInvitation(g.Joiner);
+
+        Assert.Single(g.Region.Service.Of("hold"));
+        Assert.Empty(g.Region.Service.Of("charge"));
+        Assert.Contains("RemoveAgentToGroupInvite", g.Service.Order);
+        Assert.Contains("You are already a member of Club.", g.Joiner.Alerts);
+        Assert.Empty(g.Joiner.Instant);
+    }
+
+    [Fact]
+    public void Joining_twice_charges_once()
+    {
+        var g = GroupsRegion(V2);
+
+        g.Groups.JoinGroupRequest(g.Joiner, GroupId);
+        g.Groups.JoinGroupRequest(g.Joiner, GroupId);
+
+        g.Region.WaitFor("complete");
+        Assert.Single(g.Region.Service.Of("hold"));
+        Assert.Single(g.Region.Service.Of("complete"));
+        Assert.Empty(g.Region.Service.Of("charge"));
+        Assert.Equal([(GroupId, true), (GroupId, true)], g.Joiner.JoinReplies);
+    }
+
+    [Fact]
+    public void Declining_an_invitation_forgets_the_fee_it_was_re_offered_at()
+    {
+        var g = GroupsRegion(V2, balance: 100000);
+        g.Service.StoredFee = null;
+        AcceptInvitation(g.Joiner);
+        FreshInvitation(g);
+
+        AcceptInvitation(g.Joiner, InstantMessageDialog.GroupInvitationDecline);
+        AcceptInvitation(g.Joiner);
+
+        // Had the offer been kept, this accept would have charged it.
+        AssertNoHoldAndNotAdded(g);
+        var invitations = g.Joiner.Instant.Where(m => m.dialog == (byte)InstantMessageDialog.GroupInvitation).ToList();
+        Assert.Equal(2, invitations.Count);
+        AssertOffersFee(invitations[1], JoinFee);
     }
 
     [Fact]
@@ -778,6 +930,12 @@ internal sealed class GroupsService
     /// <summary>What joining "Club" costs.</summary>
     public int Fee { get; set; } = 20;
 
+    /// <summary>
+    /// The fee the invitation to "Club" holds, as the invitation stored it: 20 until an invitation is made (which stores
+    /// the fee the module passed); null when an older region stored none.
+    /// </summary>
+    public int? StoredFee { get; set; } = 20;
+
     /// <summary>When set, the service adds nobody: the V2 connector says no, Flotsam's adds no membership.</summary>
     public bool Refuse { get; set; }
 
@@ -808,11 +966,15 @@ internal sealed class GroupsService
                 args[5] = Refuse ? "refused" : "";
                 return (true, !Refuse);
             case "AddAgentToGroupInvite":
+                if (args.Length > 5) StoredFee = (int?)args[5];
                 return (true, method.ReturnType == typeof(bool) ? true : null);
             case "GetAgentGroupMembership":
                 return (true, MembersById.ContainsKey(Id(args[1])) ? Make(method.ReturnType, ("GroupID", MoneyScene.GroupId), ("GroupName", "Club")) : null);
             case "GetAgentToGroupInvite":
-                return (true, Make(method.ReturnType, ("GroupID", MoneyScene.GroupId), ("RoleID", InviteRole), ("AgentID", MoneyScene.Buyer), ("InviteID", Id(args[1]))));
+                var invite = Make(method.ReturnType, ("GroupID", MoneyScene.GroupId), ("RoleID", InviteRole), ("AgentID", MoneyScene.Buyer), ("InviteID", Id(args[1])));
+                // Only the V2 invitation record carries a fee.
+                if (StoredFee is { } stored && method.ReturnType.GetField("Fee") is { } feeField) feeField.SetValue(invite, stored);
+                return (true, invite);
             default:
                 return (false, null);
         }
