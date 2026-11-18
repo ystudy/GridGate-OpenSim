@@ -79,6 +79,17 @@ internal sealed class MoneyActions(IMoneyService service, Guid regionId, Func<Ec
     /// <summary>True while script payouts are failing at once because the money service didn't answer one.</summary>
     public bool PayoutsPaused => Interlocked.Read(ref Pause.Until) is var until && until != 0 && Time.GetTimestamp() < until;
 
+    /// <summary>How long land buys in this region fail at once after a land hold ran out of time.</summary>
+    public static readonly TimeSpan LandPause = TimeSpan.FromSeconds(30);
+
+    private long _landPauseUntil;
+
+    /// <summary>
+    /// True while land buys in this region fail at once because a land hold got no answer in time: each one holds the
+    /// region's packet thread while it waits, so a slow money service would otherwise stall it for every buyer.
+    /// </summary>
+    public bool LandPaused => Interlocked.Read(ref _landPauseUntil) is var until && until != 0 && Time.GetTimestamp() < until;
+
     public async Task PayAvatarAsync(Payer p, Guid source, MoneyWho to, int amount)
     {
         if (MoneyRules.CheckPayAvatar(p.AgentId, source, amount) is var refusal && refusal != Refusal.None)
@@ -205,17 +216,32 @@ internal sealed class MoneyActions(IMoneyService service, Guid regionId, Func<Ec
     public async Task<long?> HoldLandAsync(Payer p, MoneyWho seller, int price, int parcelLocalId, TimeSpan? limit = null)
     {
         if (price <= 0) return 0;
-        using var cts = new CancellationTokenSource(limit ?? MoneyServiceClient.Timeout);
+        if (LandPaused)
+        {
+            view.Tell(p.AgentId, MoneyRules.Message(MoneyAnswer.UnavailableCode));
+            return null;
+        }
+        // The call has its own bound and carries on when the wait for it runs out; a hold it places then is returned.
+        var cts = new CancellationTokenSource(MoneyServiceClient.Timeout);
+        var call = service.HoldAsync(Guid.NewGuid(), "land", p.Who, seller, price, regionId, null, $"parcel {parcelLocalId}", cts.Token);
         MoneyAnswer hold;
         try
         {
-            hold = await service.HoldAsync(Guid.NewGuid(), "land", p.Who, seller, price, regionId, null, $"parcel {parcelLocalId}", cts.Token);
+            hold = await call.WaitAsync(limit ?? MoneyServiceClient.Timeout).ConfigureAwait(false);
         }
-        catch (OperationCanceledException) when (cts.IsCancellationRequested)
+        catch (TimeoutException)
         {
-            // A hold the service did place after all is returned to the buyer when it expires.
+            Interlocked.Exchange(ref _landPauseUntil, Time.GetTimestamp() + (long)(LandPause.TotalSeconds * Time.TimestampFrequency));
+            view.Warn($"The money service didn't answer a land hold in time; land buys here fail at once for {LandPause.TotalSeconds:0} seconds.");
+            _ = ReturnLateLandHoldAsync(call, cts, p, seller);
+            view.Tell(p.AgentId, MoneyRules.Message(MoneyAnswer.UnavailableCode));
+            return null;
+        }
+        catch (OperationCanceledException)
+        {
             hold = MoneyAnswer.Unavailable;
         }
+        cts.Dispose();
         if (!hold.Ok || hold.HoldId is not { } holdId)
         {
             view.Tell(p.AgentId, MoneyRules.Message(hold.Ok ? MoneyAnswer.UnavailableCode : hold.Code));
@@ -224,6 +250,32 @@ internal sealed class MoneyActions(IMoneyService service, Guid regionId, Func<Ec
         if (hold.Balance is { } after)
             view.PushBalance(p.AgentId, after, new BalanceNote((int)MoneyTransactionType.LandSale, p.AgentId, seller.AgentId, price, ""));
         return holdId;
+    }
+
+    /// <summary>
+    /// A land hold the buyer was told was unavailable may still have been placed. When its answer comes it is returned at
+    /// once, so the buyer's coins aren't locked until the hold expires.
+    /// </summary>
+    private async Task ReturnLateLandHoldAsync(Task<MoneyAnswer> call, CancellationTokenSource cts, Payer p, MoneyWho seller)
+    {
+        try
+        {
+            var late = await call.ConfigureAwait(false);
+            if (late.Ok && late.HoldId is { } holdId and not 0)
+            {
+                view.Warn($"Land hold {holdId} was placed after the wait ran out; returning it.");
+                await SettleLandAsync(p, seller, holdId, false).ConfigureAwait(false);
+            }
+        }
+        catch (Exception e)
+        {
+            // Cancelled or failed with no answer: no hold is known, and one placed anyway is returned when it expires.
+            view.Warn($"A late land hold ended with {e.GetType().Name}.");
+        }
+        finally
+        {
+            cts.Dispose();
+        }
     }
 
     /// <summary>After the land module ran: complete when the buyer is now the owner, otherwise return the coins.</summary>
@@ -342,6 +394,12 @@ internal sealed class MoneyActions(IMoneyService service, Guid regionId, Func<Ec
     {
         if (!FeesKnown(p)) return null;
         if (amount <= 0) return 0;
+        // A service from before fee holds can't hold one: fees are unavailable until it is updated.
+        if (!FeeHolds)
+        {
+            view.Tell(p.AgentId, MoneyRules.Message(MoneyAnswer.UnavailableCode));
+            return null;
+        }
         var founder = payTo is { } f ? new MoneyWho(f, "") : null;
         var hold = Wait(service.HoldAsync(Guid.NewGuid(), type, p.Who, founder, amount, regionId, null, null, CancellationToken.None));
         if (!hold.Ok || hold.HoldId is not { } holdId)

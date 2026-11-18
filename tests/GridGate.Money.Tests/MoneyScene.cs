@@ -120,12 +120,36 @@ internal sealed class MoneyScene
         }
     }
 
-    /// <summary>A resident with an account and inventory, in the region as a root agent, on a client that records alerts.</summary>
-    public RecordingClient Arrive(UUID id)
+    /// <summary>Puts the module back to before its service ever answered: no settings known, and none asked for in the next minute.</summary>
+    public void ForgetEconomy()
+    {
+        var flags = BindingFlags.NonPublic | BindingFlags.Instance;
+        typeof(GridGateMoneyModule).GetField("_economy", flags)!.SetValue(Module, null);
+        typeof(GridGateMoneyModule).GetField("_economyAt", flags)!.SetValue(Module, DateTime.UtcNow);
+    }
+
+    /// <summary>Gives the module these settings as if the service had just answered them.</summary>
+    public void SetEconomy(EconomyInfo economy)
+    {
+        var flags = BindingFlags.NonPublic | BindingFlags.Instance;
+        typeof(GridGateMoneyModule).GetField("_economy", flags)!.SetValue(Module, economy);
+        typeof(GridGateMoneyModule).GetField("_economyAt", flags)!.SetValue(Module, DateTime.UtcNow);
+    }
+
+    /// <summary>The recording client of an avatar that has arrived here.</summary>
+    public RecordingClient ClientOf(UUID id) =>
+        Scene.TryGetScenePresence(id, out ScenePresence sp) ? (RecordingClient)sp.ControllingClient : throw new InvalidOperationException("Not here.");
+
+    /// <summary>
+    /// A resident with an account and inventory, in the region as a root agent, on a client that records alerts. With a
+    /// <paramref name="home"/> the login names that home grid, as a visitor's does.
+    /// </summary>
+    public RecordingClient Arrive(UUID id, string? home = null)
     {
         if (Scene.UserAccountService.GetUserAccount(Scene.RegionInfo.ScopeID, id) is null)
             UserAccountHelpers.CreateUserWithInventory(Scene, id);
         var data = SceneHelpers.GenerateAgentData(id);
+        if (home is not null) (data.ServiceURLs ??= new Dictionary<string, object>())["HomeURI"] = home;
         var client = new RecordingClient(data, Scene);
         SceneHelpers.AddScenePresence(Scene, client, data);
         return client;
@@ -222,7 +246,30 @@ internal class OneGroup : DispatchProxy
     private GroupRecord? _record;
 
     protected override object? Invoke(MethodInfo? targetMethod, object?[]? args) =>
-        targetMethod?.Name == nameof(IGroupsModule.GetGroupRecord) && args is [string name]
-            ? name == _record!.GroupName ? _record : null
-            : throw new NotSupportedException(targetMethod?.Name);
+        targetMethod?.Name != nameof(IGroupsModule.GetGroupRecord) ? throw new NotSupportedException(targetMethod?.Name)
+        : args is [string name] ? name == _record!.GroupName ? _record : null
+        : args is [UUID id] ? id == _record!.GroupID ? _record : null
+        : throw new NotSupportedException(targetMethod?.Name);
+}
+
+/// <summary>A user management module for visitors known only by what its name cache says: each has a home address there.</summary>
+internal class CachedVisitors : DispatchProxy
+{
+    public const string CachedHome = "http://cache.example:8002/";
+
+    public static IUserManagement Create(params UUID[] visitors)
+    {
+        var proxy = Create<IUserManagement, CachedVisitors>();
+        ((CachedVisitors)(object)proxy)._visitors = [.. visitors];
+        return proxy;
+    }
+
+    private HashSet<UUID> _visitors = [];
+
+    protected override object? Invoke(MethodInfo? targetMethod, object?[]? args) => targetMethod?.Name switch
+    {
+        nameof(IUserManagement.IsLocalGridUser) => !_visitors.Contains((UUID)args![0]!),
+        nameof(IUserManagement.GetUserHomeURL) => _visitors.Contains((UUID)args![0]!) ? CachedHome : "",
+        _ => targetMethod is { ReturnType: { IsValueType: true } t } && t != typeof(void) ? Activator.CreateInstance(t) : null,
+    };
 }

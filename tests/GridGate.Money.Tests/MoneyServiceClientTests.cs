@@ -129,7 +129,26 @@ public sealed class MoneyServiceClientTests
         Assert.Equal(1, server.Requests);
     }
 
-    /// <summary>An HTTPS listener on loopback that answers every request with <c>status</c> and an empty body.</summary>
+    [Fact]
+    public async Task A_call_read_in_full_and_then_dropped_is_lost_and_is_not_sent_again()
+    {
+        // The service took the whole POST, then the connection died: it may have been processed, so the client must say
+        // so, and must not send it a second time on its own.
+        await using var server = StatusServer.Start(0);
+        using var client = new MoneyServiceClient(server.Uri, "key", server.Fingerprint);
+
+        var answer = await Transfer(client);
+
+        Assert.Equal("unavailable", answer.Code);
+        Assert.True(answer.Lost);
+        Assert.False(answer.Final);
+        Assert.Equal(1, server.Requests);
+    }
+
+    /// <summary>
+    /// An HTTPS listener on loopback that answers every request with <c>status</c> and an empty body; status 0 reads the
+    /// whole request and then drops the connection without an answer.
+    /// </summary>
     private sealed class StatusServer : IAsyncDisposable
     {
         private readonly TcpListener _listener = new(IPAddress.Loopback, 0);
@@ -172,6 +191,7 @@ public sealed class MoneyServiceClientTests
                     await tls.AuthenticateAsServerAsync(new SslServerAuthenticationOptions { ServerCertificate = _cert }, _stop.Token);
                     await ReadRequestAsync(tls);
                     Interlocked.Increment(ref _requests);
+                    if (_status == 0) continue;
                     var reply = $"HTTP/1.1 {_status} Status\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
                     await tls.WriteAsync(Encoding.ASCII.GetBytes(reply), _stop.Token);
                     await tls.FlushAsync(_stop.Token);

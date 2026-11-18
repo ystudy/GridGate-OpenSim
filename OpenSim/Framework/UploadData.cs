@@ -36,9 +36,11 @@ namespace OpenSim.Framework
         /// <summary>
         /// True when an update of an existing inventory item (agent or task) must be refused: an upload fee is in force
         /// and the data is a texture or a sound. Those are made by uploads, which pay the fee; updating a notecard or
-        /// script with them would store a free texture or sound.
+        /// script with them would store a free texture or sound. Also true while the money module doesn't know the fee yet
+        /// (<see cref="IUploadFeeKnown"/>): it would read as no fee.
         /// </summary>
         public static bool RefusesItemUpdate(IMoneyModule money, byte[] data) =>
-            money is not null && money.UploadCharge > 0 && IsTextureOrSound(data);
+            // GridGate: fail closed until the fee is known
+            money is not null && (money.UploadCharge > 0 || money is IUploadFeeKnown { UploadFeeKnown: false }) && IsTextureOrSound(data);
     }
 }

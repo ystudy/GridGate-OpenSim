@@ -485,6 +485,22 @@ namespace OpenSim.Region.ClientStack.Linden
                     nreqinstances = llsdRequest.asset_resources?.instance_list?.Array.Count ?? 0;
                 }
 
+                // GridGate: a money module that doesn't know the upload fee yet reads it as 0: answer with an error, not a price of 0
+                if (m_Scene.RequestModuleInterface<IMoneyModule>() is IUploadFeeKnown { UploadFeeKnown: false })
+                {
+                    LLSDAssetUploadError feeUnknown = new LLSDAssetUploadError();
+                    feeUnknown.message = "The upload fee isn't known yet. Please try again in a minute.";
+                    feeUnknown.identifier = UUID.Zero;
+
+                    LLSDAssetUploadResponse feeUnknownResponse = new LLSDAssetUploadResponse();
+                    feeUnknownResponse.uploader = "";
+                    feeUnknownResponse.state = "error";
+                    feeUnknownResponse.error = feeUnknown;
+                    lock (m_ModelCost)
+                        m_FileAgentInventoryState = FileAgentInventoryState.idle;
+                    return feeUnknownResponse;
+                }
+
                 // check test upload and funds
                 if (client is not null)
                 {

@@ -45,6 +45,7 @@ internal static class MoneyRules
     public const string GroupPassText = "Passes to group-owned land can't be bought with coins on this grid.";
     public const string NoEconomyText = "Fees can't be paid yet: this region hasn't reached the grid's money service. Try again in a minute.";
     public const string VisitorsOffText = "Visitors can't pay or be paid on this grid.";
+    public const string AbsentVisitorText = "That person is a visitor who isn't here, and this grid can't tell which grid their account is on, so they can't be paid right now.";
     public const string CheckingText = "This payment is being checked: the money service didn't answer in time. Please look at your balance before you pay again.";
 
     public static Refusal CheckPayAvatar(Guid clientAgent, Guid source, int amount) =>
