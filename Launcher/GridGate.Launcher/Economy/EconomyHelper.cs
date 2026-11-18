@@ -46,12 +46,23 @@ public sealed class EconomyHelper(
         if (!Guid.TryParse(Text(call, "agentId"), out var agent) || !Guid.TryParse(Text(call, "secureSessionId"), out var secure)
             || agent == Guid.Empty || secure == Guid.Empty)
             return Refuse(s, t["Economy.LogInAgain"]);
-        if (!limits.TryStartLookup()) return Refuse(s, t["Economy.TooMany"]);
+        var known = limits.IsChecked(agent, secure);
+        // The lookup cap is asked first, so a refusal there doesn't use up the grid-wide second.
+        if (!known)
+        {
+            if (!limits.TryStartLookup()) return Refuse(s, t["Economy.TooMany"]);
+            if (!limits.TryTakeLookupSecond())
+            {
+                limits.EndLookup();
+                return Refuse(s, t["Economy.TooMany"]);
+            }
+        }
         try
         {
-            switch (await sessions.HasSecureSessionAsync(agent, secure, ct))
+            switch (known ? PresenceOutcome.Ok : await sessions.HasSecureSessionAsync(agent, secure, ct))
             {
                 case PresenceOutcome.Ok:
+                    if (!known) limits.RememberChecked(agent, secure);
                     break;
                 case PresenceOutcome.Unavailable:
                     return Refuse(s, t["Economy.Unavailable"]);
@@ -61,7 +72,7 @@ public sealed class EconomyHelper(
         }
         finally
         {
-            limits.EndLookup();
+            if (!known) limits.EndLookup();
         }
 
         var mode = gate.Effective();

@@ -3271,7 +3271,8 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
                                         toID, amount, UUID.Zero, out _);
             }
 
-            m_AsyncCommands.DataserverPlugin.RegisterRequest(m_host.LocalId, m_item.ItemID, act);
+            // GridGate: payouts run on their own queue, so money never holds up the dataserver pool.
+            m_AsyncCommands.PayoutsPlugin.Enqueue(act);
             return 0;
         }
 
@@ -17709,7 +17710,8 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
                 }
             }
 
-            m_AsyncCommands.DataserverPlugin.RegisterRequest(m_host.LocalId, m_item.ItemID, act);
+            // GridGate: payouts run on their own queue, so money never holds up the dataserver pool.
+            m_AsyncCommands.PayoutsPlugin.Enqueue(act);
             return txn.ToString();
         }
 

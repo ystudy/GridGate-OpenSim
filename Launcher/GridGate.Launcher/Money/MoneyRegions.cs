@@ -19,6 +19,12 @@ public interface IMoneyRegions
     /// <summary>Pins a moved region to the server Robust now lists it at (<see cref="RegionPins.ApproveMoveAsync"/>). The caller audits it.</summary>
     Task ApproveMoveAsync(Guid regionId, Guid toServerId, CancellationToken ct);
 
+    /// <summary>The owner confirms a server's waiting regions that Robust lists at it now (<see cref="RegionPins.ConfirmWaitingAsync"/>); how many. The caller audits it.</summary>
+    Task<int> ConfirmWaitingAsync(PairedServer server, int fromPort, int toPort, IReadOnlySet<Guid> ownRegions, CancellationToken ct);
+
+    /// <summary>The server's waiting regions that Robust lists at it now (<see cref="RegionPins.WaitingListedAsync"/>).</summary>
+    Task<IReadOnlyList<Guid>> WaitingAsync(PairedServer server, int fromPort, int toPort, IReadOnlySet<Guid> ownRegions, CancellationToken ct);
+
     /// <summary>The person's newest location whose session is still logged in (<see cref="MoneyLocations.WhereAgentAsync"/>).</summary>
     Task<SessionLocation?> WhereAgentAsync(Guid agentId, CancellationToken ct);
 }
@@ -31,6 +37,12 @@ public sealed class MoneyRegions(RegionVerification verification, RegionPins pin
     public Task<IReadOnlyDictionary<string, KeyHeard>> KeysAsync(CancellationToken ct) => verification.KeysAsync(ct);
 
     public Task ApproveMoveAsync(Guid regionId, Guid toServerId, CancellationToken ct) => pins.ApproveMoveAsync(regionId, toServerId, ct);
+
+    public Task<int> ConfirmWaitingAsync(PairedServer server, int fromPort, int toPort, IReadOnlySet<Guid> ownRegions, CancellationToken ct) =>
+        pins.ConfirmWaitingAsync(server, fromPort, toPort, ownRegions, ct);
+
+    public Task<IReadOnlyList<Guid>> WaitingAsync(PairedServer server, int fromPort, int toPort, IReadOnlySet<Guid> ownRegions, CancellationToken ct) =>
+        pins.WaitingListedAsync(server, fromPort, toPort, ownRegions, ct);
 
     public Task<SessionLocation?> WhereAgentAsync(Guid agentId, CancellationToken ct) => locations.WhereAgentAsync(agentId, ct);
 }

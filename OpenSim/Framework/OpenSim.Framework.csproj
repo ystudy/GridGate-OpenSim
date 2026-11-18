@@ -301,6 +301,9 @@
     <Compile Include="IFeeHoldModule.cs">
       <SubType>Code</SubType>
     </Compile>
+    <Compile Include="IMoneyModuleTellsPayer.cs">
+      <SubType>Code</SubType>
+    </Compile>
     <Compile Include="JoinFeeOffers.cs">
       <SubType>Code</SubType>
     </Compile>

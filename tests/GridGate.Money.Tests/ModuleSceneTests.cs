@@ -159,6 +159,73 @@ public sealed class ModuleSceneTests
         Assert.Empty(l.Region.Service.Calls);
     }
 
+    /// <summary>Runs <paramref name="change"/> on the parcel while the money service is being asked to hold, then buys.</summary>
+    private static Land BuyWhileHolding(int price, Action<Land> change)
+    {
+        var l = LandForSale(price);
+        l.Region.Service.Gate = m =>
+        {
+            if (m == "hold") change(l);
+            return Task.CompletedTask;
+        };
+        Buy(l, price);
+        return l;
+    }
+
+    private static void AssertLandRefusedAndHoldReturned(Land l)
+    {
+        Assert.Equal(7L, l.Region.WaitFor("return").Args[0]);
+        Assert.Empty(l.Region.Service.Of("complete"));
+        Assert.Equal(Seller, Now(l).OwnerID);
+        l.Buyer.WaitForAlert(MoneyRules.Message(Refusal.PriceChanged));
+    }
+
+    [Fact]
+    public void Land_subdivided_during_the_hold_is_not_sold_and_the_hold_is_returned()
+    {
+        var l = BuyWhileHolding(100, x => x.Lmm.Subdivide(0, 0, 64, 64, Seller));
+
+        AssertLandRefusedAndHoldReturned(l);
+    }
+
+    [Fact]
+    public void Land_taken_off_sale_during_the_hold_is_not_sold_and_the_hold_is_returned()
+    {
+        var l = BuyWhileHolding(100, x => x.Parcel.LandData.Flags &= ~(uint)ParcelFlags.ForSale);
+
+        AssertLandRefusedAndHoldReturned(l);
+    }
+
+    [Fact]
+    public void Land_repriced_during_the_hold_is_not_sold_and_the_hold_is_returned()
+    {
+        var l = BuyWhileHolding(100, x => x.Parcel.LandData.SalePrice = 500);
+
+        AssertLandRefusedAndHoldReturned(l);
+    }
+
+    [Fact]
+    public void Land_sold_to_someone_else_only_during_the_hold_is_not_sold()
+    {
+        var l = BuyWhileHolding(100, x => x.Parcel.LandData.AuthBuyerID = Stranger);
+
+        AssertLandRefusedAndHoldReturned(l);
+    }
+
+    [Fact]
+    public void Land_whose_area_changed_before_the_buy_is_refused_before_any_hold()
+    {
+        var l = LandForSale(100);
+        l.Lmm.Subdivide(0, 0, 64, 64, Seller);
+        var wrongArea = l.Parcel.LandData.Area + 4096;
+
+        l.Region.Scene.ProcessParcelBuy(Buyer, UUID.Zero, true, false, false, l.Parcel.LandData.LocalID, wrongArea, 100, false);
+
+        Assert.Empty(l.Region.Service.Calls);
+        Assert.Equal(Seller, Now(l).OwnerID);
+        l.Buyer.WaitForAlert(MoneyRules.Message(Refusal.PriceChanged));
+    }
+
     [Fact]
     public void A_sixth_land_buy_in_a_minute_is_refused_without_asking_the_service()
     {
@@ -445,6 +512,91 @@ public sealed class ModuleSceneTests
         Assert.DoesNotContain(parcel.LandData.ParcelAccessList, e => e.AgentID == Buyer);
     }
 
+    private const string TryAgainLater = "Sorry pass payment processing failed, please try again later";
+
+    [Fact]
+    public void A_second_pass_bought_while_the_first_is_in_flight_is_refused_and_not_paid()
+    {
+        var (region, lmm, parcel, buyer) = PassParcel();
+        var release = new TaskCompletionSource();
+        region.Service.Gate = m => m == "transfer" ? release.Task : Task.CompletedTask;
+
+        lmm.ClientParcelBuyPass(buyer, Buyer, parcel.LandData.LocalID);
+        region.WaitFor("transfer");
+        lmm.ClientParcelBuyPass(buyer, Buyer, parcel.LandData.LocalID);
+
+        buyer.WaitForAlert("Your pass for this parcel is still being bought.");
+        release.SetResult();
+        WaitUntil(() => parcel.LandData.ParcelAccessList.Any(e => e.AgentID == Buyer));
+        Thread.Sleep(200);
+        Assert.Single(region.Service.Of("transfer"));
+    }
+
+    [Fact]
+    public void A_pass_renewal_replaces_only_the_buyers_own_entry()
+    {
+        var (region, lmm, parcel, buyer) = PassParcel();
+        var other = UUID.Random();
+        var early = UUID.Random();
+        var list = parcel.LandData.ParcelAccessList;
+        list.Add(new LandAccessEntry { AgentID = other, Flags = AccessList.Access, Expires = 0 });
+        list.Add(new LandAccessEntry { AgentID = Buyer, Flags = AccessList.Access, Expires = Util.UnixTimeSinceEpoch() + 100 });
+        var release = new TaskCompletionSource();
+        region.Service.Gate = m => m == "transfer" ? release.Task : Task.CompletedTask;
+
+        lmm.ClientParcelBuyPass(buyer, Buyer, parcel.LandData.LocalID);
+        region.WaitFor("transfer");
+        lock (list) list.Insert(0, new LandAccessEntry { AgentID = early, Flags = AccessList.Access, Expires = 0 });
+        release.SetResult();
+
+        WaitUntil(() => list.Any(e => e.AgentID == Buyer && e.Expires > Util.UnixTimeSinceEpoch() + 3000));
+        lock (list)
+        {
+            Assert.Single(list, e => e.AgentID == Buyer);
+            Assert.Single(list, e => e.AgentID == other);
+            Assert.Single(list, e => e.AgentID == early);
+            Assert.Equal(3, list.Count);
+        }
+    }
+
+    [Fact]
+    public void A_pass_whose_payment_is_being_checked_does_not_tell_the_buyer_to_try_again()
+    {
+        var (region, lmm, parcel, buyer) = PassParcel();
+        region.Service.Answer = m => m == "transfer" ? MoneyAnswer.NoAnswer : Rich;
+
+        lmm.ClientParcelBuyPass(buyer, Buyer, parcel.LandData.LocalID);
+
+        buyer.WaitForAlert(MoneyRules.CheckingText);
+        Thread.Sleep(300);
+        Assert.DoesNotContain(buyer.Alerts, a => a.Contains("try again later", StringComparison.Ordinal));
+        Assert.DoesNotContain(parcel.LandData.ParcelAccessList, e => e.AgentID == Buyer);
+    }
+
+    [Fact]
+    public void A_pass_refused_for_too_few_coins_is_explained_once()
+    {
+        var (region, lmm, parcel, buyer) = PassParcel();
+        region.Service.Answer = m => m == "balance" ? new MoneyAnswer("ok", 5, 0, 1, 7) : Rich;
+
+        lmm.ClientParcelBuyPass(buyer, Buyer, parcel.LandData.LocalID);
+
+        buyer.WaitForAlert("Insufficient funds");
+        Thread.Sleep(300);
+        Assert.Single(buyer.Alerts);
+        Assert.Empty(region.Service.Of("transfer"));
+    }
+
+    private static void WaitUntil(Func<bool> done)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(15);
+        while (!done())
+        {
+            Assert.True(DateTime.UtcNow < deadline, "The condition was not met in time.");
+            Thread.Sleep(10);
+        }
+    }
+
     // --- ObjectGiveMoney: script payouts -----------------------------------------------------------------------------
 
     /// <summary>money review 2026-11-15, R-10: a script payout from a group-owned object is refused before the service.</summary>
@@ -505,6 +657,32 @@ public sealed class ModuleSceneTests
 
         Assert.Equal("SERVICE_ERROR", reason);
         Assert.Empty(region.Service.Calls);
+    }
+
+    [Fact]
+    public void An_owner_past_sixty_payouts_a_minute_is_refused()
+    {
+        var region = Build();
+        var obj = SceneHelpers.AddSceneObject(region.Scene, 1, Seller, "Vendor ", 0x80);
+        for (var i = 0; i < PayoutLimit.PerWindow; i++)
+            Assert.True(region.Module.ObjectGiveMoney(obj.RootPart.UUID, Seller, Buyer, 1, UUID.Zero, out _));
+
+        Assert.False(region.Module.ObjectGiveMoney(obj.RootPart.UUID, Seller, Buyer, 1, UUID.Zero, out var reason));
+
+        Assert.Equal("SERVICE_ERROR", reason);
+        Assert.Equal(PayoutLimit.PerWindow, region.Service.Of("payout").Count());
+    }
+
+    [Fact]
+    public void Payouts_by_different_owners_have_their_own_limits()
+    {
+        var region = Build();
+        var mine = SceneHelpers.AddSceneObject(region.Scene, 1, Seller, "Vendor ", 0x81);
+        var theirs = SceneHelpers.AddSceneObject(region.Scene, 1, Stranger, "Vendor ", 0x82);
+        for (var i = 0; i < PayoutLimit.PerWindow; i++)
+            region.Module.ObjectGiveMoney(mine.RootPart.UUID, Seller, Buyer, 1, UUID.Zero, out _);
+
+        Assert.True(region.Module.ObjectGiveMoney(theirs.RootPart.UUID, Stranger, Buyer, 1, UUID.Zero, out _));
     }
 
     // --- ApplyCharge: where each fee goes ----------------------------------------------------------------------------

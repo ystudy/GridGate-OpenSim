@@ -188,7 +188,9 @@ public sealed partial class GridController
         catch (Exception e) when (e is GridJoinException or HttpRequestException && !ct.IsCancellationRequested) { return; }
         if (read.Money == joined.Money) return;
 
-        var gloebitBefore = MoneyPlace.GloebitHere(s, _money);
+        // What the regions were last configured with, not what is saved: a change that was only saved never ran Gloebit.
+        bool gloebitBefore;
+        lock (_configGate) gloebitBefore = _gloebitWritten ?? MoneyPlace.GloebitHere(s, _money);
         // Saved only while the join still names the server this check read, as at start.
         var latest = UpdateSettings(l => l.Join is not { } current || current.Host != joined.Host || current.PublicPort != joined.PublicPort
             ? l

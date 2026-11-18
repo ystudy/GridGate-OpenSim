@@ -25,7 +25,7 @@ namespace GridGate.Region.Money;
 /// only while money is on.
 /// </summary>
 [Extension(Path = "/OpenSim/RegionModules", NodeName = "RegionModule", Id = "GridGateMoneyModule")]
-public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVisitorMoneyModule, IClassifiedFeeModule, IFeeHoldModule
+public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVisitorMoneyModule, IClassifiedFeeModule, IFeeHoldModule, IMoneyModuleTellsPayer
 {
     public const string ModuleName = "GridGateMoneyModule";
     private static readonly ILog Log = LogManager.GetLogger(MethodBase.GetCurrentMethod()!.DeclaringType);
@@ -46,6 +46,8 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
     // Land purchases between the hold (validate) and the settle (buy), by region and parcel.
     private readonly ConcurrentDictionary<(UUID Region, int Parcel), LandHold> _landHolds = new();
     private readonly ParcelBuyLimit _buyLimit = new(TimeProvider.System);
+    private readonly PayoutLimit _payoutLimit = new(TimeProvider.System);
+    private readonly MoneyActions.PayoutPauseState _payoutPause = new();
     private readonly object _economyGate = new();
 
     private IMoneyService? _client;
@@ -134,7 +136,7 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
             _healthTimer ??= TimeProvider.System.CreateTimer(_ => TimedHealth(), null, HealthEvery, HealthEvery);
         }
         var regionId = scene.RegionInfo.RegionID;
-        _actions[regionId] = new MoneyActions(_client!, regionId.Guid, KnownEconomy, new View(this));
+        _actions[regionId] = new MoneyActions(_client!, regionId.Guid, KnownEconomy, new View(this)) { Pause = _payoutPause };
         scene.EventManager.OnNewClient += OnNewClient;
         scene.EventManager.OnClientClosed += OnClientClosed;
         // Where avatars are: reported in the background, never holding up a teleport or crossing. A teleport or crossing is
@@ -378,7 +380,7 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
             return;
         }
         // The price the land module validated is "at least the sale price"; GridGate takes exactly the sale price.
-        if (e.parcelPrice != land.LandData.SalePrice || land.LandData.OwnerID != e.parcelOwnerID)
+        if (e.parcelPrice != land.LandData.SalePrice || land.LandData.OwnerID != e.parcelOwnerID || land.LandData.Area != e.parcelArea)
         {
             client.SendAlertMessage(MoneyRules.Message(Refusal.PriceChanged));
             return;
@@ -421,6 +423,18 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
         {
             Run(() => actions.SettleLandAsync(payer, seller, holdId, false));
             client.SendAlertMessage(LandBusyText);
+            return;
+        }
+        // The parcel can change while the service holds the coins (a subdivide makes a new parcel object), so it is read
+        // again: what the buyer was shown has to be what is sold, or the hold goes back.
+        var after = scene.LandChannel?.GetLandObject(e.parcelLocalID)?.LandData;
+        if (after is null || after.OwnerID != e.parcelOwnerID || after.SalePrice != e.parcelPrice || after.Area != e.parcelArea
+            || (after.Flags & (uint)(ParcelFlags.ForSale | ParcelFlags.ForSaleObjects | ParcelFlags.SellParcelObjects)) == 0
+            || (after.AuthBuyerID != UUID.Zero && after.AuthBuyerID != e.agentId))
+        {
+            _landHolds.TryRemove(KeyValuePair.Create(key, mine with { HoldId = holdId }));
+            Run(() => actions.SettleLandAsync(payer, seller, holdId, false));
+            client.SendAlertMessage(MoneyRules.Message(Refusal.PriceChanged));
             return;
         }
         e.economyValidated = true;
@@ -589,8 +603,13 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
     public bool MoveMoney(UUID fromUser, UUID toUser, int amount, MoneyTransactionType type, string text)
     {
         if (type != MoneyTransactionType.LandPassSale) return false;
-        return FindClient(fromUser) is { } c && ActionsFor(c) is { } actions
-            && actions.MovePass(PayerOf(c), WhoOf(toUser), amount, groupLand: GroupLand(c, toUser));
+        if (FindClient(fromUser) is not { } c) return false; // nobody here to tell
+        if (ActionsFor(c) is not { } actions)
+        {
+            c.SendAlertMessage(MoneyRules.Message("unavailable"));
+            return false;
+        }
+        return actions.MovePass(PayerOf(c), WhoOf(toUser), amount, groupLand: GroupLand(c, toUser));
     }
 
     public void MoveMoney(UUID fromUser, UUID toUser, int amount, string text) =>
@@ -615,6 +634,18 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
         if (MoneyRules.CheckPayout(Info(root), fromID.Guid) is { } refused)
         {
             reason = refused;
+            return false;
+        }
+        // A payout the pause refuses anyway doesn't use up the owner's allowance.
+        if (actions.PayoutsPaused)
+        {
+            reason = "SERVICE_ERROR";
+            return false;
+        }
+        if (!_payoutLimit.TryTake(fromID.Guid, out var warn))
+        {
+            if (warn) Log.Warn($"[GRIDGATE MONEY]: {fromID} has made {PayoutLimit.PerWindow} script payouts in a minute; more are refused until it eases.");
+            reason = "SERVICE_ERROR";
             return false;
         }
         return actions.Payout(fromID.Guid, WhoOf(toID), amount, root.UUID.Guid, root.Name, txn.Guid, out reason);

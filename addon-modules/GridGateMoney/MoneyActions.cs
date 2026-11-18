@@ -60,6 +60,25 @@ internal sealed class MoneyActions(IMoneyService service, Guid regionId, Func<Ec
     /// </summary>
     public TimeSpan SyncBudget { get; init; } = MoneyServiceClient.Timeout;
 
+    /// <summary>How long script payouts fail at once after one got no answer from the service.</summary>
+    public static readonly TimeSpan PayoutPause = TimeSpan.FromSeconds(30);
+
+    public TimeProvider Time { get; init; } = TimeProvider.System;
+
+    /// <summary>
+    /// When the pause ends, as a <see cref="TimeProvider.GetTimestamp"/> value. Shared by every region of a Region Server
+    /// (the module passes one to each), so one dead money service is noticed once, not once per region.
+    /// </summary>
+    public PayoutPauseState Pause { get; init; } = new();
+
+    internal sealed class PayoutPauseState
+    {
+        public long Until;
+    }
+
+    /// <summary>True while script payouts are failing at once because the money service didn't answer one.</summary>
+    public bool PayoutsPaused => Interlocked.Read(ref Pause.Until) is var until && until != 0 && Time.GetTimestamp() < until;
+
     public async Task PayAvatarAsync(Payer p, Guid source, MoneyWho to, int amount)
     {
         if (MoneyRules.CheckPayAvatar(p.AgentId, source, amount) is var refusal && refusal != Refusal.None)
@@ -219,7 +238,11 @@ internal sealed class MoneyActions(IMoneyService service, Guid regionId, Func<Ec
     /// <summary>A parcel pass, for the land module's synchronous <c>MoveMoney</c>; true only when the coins moved.</summary>
     public bool MovePass(Payer p, MoneyWho parcelOwner, int amount, bool groupLand = false)
     {
-        if (amount < 0) return false;
+        if (amount < 0)
+        {
+            view.Tell(p.AgentId, MoneyRules.Message("unavailable"));
+            return false;
+        }
         // A group holds no coins on this grid (money design §7.3; money review 2026-11-15, R-9). OpenSim's land module
         // refuses this first today; this doesn't rely on it.
         if (groupLand)
@@ -256,11 +279,22 @@ internal sealed class MoneyActions(IMoneyService service, Guid regionId, Func<Ec
             reason = "LINDENDOLLAR_ENTITYDOESNOTEXIST";
             return false;
         }
+        if (PayoutsPaused)
+        {
+            reason = "SERVICE_ERROR";
+            return false;
+        }
         if (txn == Guid.Empty) txn = Guid.NewGuid();
         var answer = Wait(RetriedAsync(ct => service.PayoutAsync(txn, ownerId, to, amount, regionId, objectId, objectName, ct), SyncBudget));
         if (!answer.Ok)
         {
-            if (answer.Lost) Unknown("payout", txn, ownerId, to.AgentId, amount);
+            if (answer.Lost)
+            {
+                Unknown("payout", txn, ownerId, to.AgentId, amount);
+                var now = Time.GetTimestamp();
+                var wasPaused = Interlocked.Exchange(ref Pause.Until, now + (long)(PayoutPause.TotalSeconds * Time.TimestampFrequency)) > now;
+                if (!wasPaused) view.Warn($"The money service didn't answer a payout; script payouts fail at once for {PayoutPause.TotalSeconds:0} seconds.");
+            }
             reason = MoneyRules.ScriptReason(answer.Code);
             return false;
         }
@@ -396,7 +430,7 @@ internal sealed class MoneyActions(IMoneyService service, Guid regionId, Func<Ec
     }
 
     /// <summary>
-    /// Calls <paramref name="send"/>, which reuses one transaction id, until the answer isn't "unavailable", the call was
+    /// Calls <paramref name="send"/>, which reuses one transaction id, until the answer isn't "unavailable" or "outcome_unknown", the call was
     /// turned away (<see cref="MoneyAnswer.Final"/>), <see cref="Retries"/> run out, or <paramref name="budget"/> (the
     /// attempts and the waits between them together) is spent; an attempt the budget cuts short got no answer. Any final
     /// answer but Ok is <see cref="MoneyAnswer.Lost"/> when an attempt got no answer: that attempt may have gone through,
@@ -419,7 +453,7 @@ internal sealed class MoneyActions(IMoneyService service, Guid regionId, Func<Ec
                 answer = MoneyAnswer.NoAnswer;
             }
             if (answer.Ok) return answer;
-            if (answer.Code != MoneyAnswer.UnavailableCode) return lost ? answer with { Lost = true } : answer;
+            if (answer.Code is not (MoneyAnswer.UnavailableCode or MoneyAnswer.OutcomeUnknownCode)) return lost ? answer with { Lost = true } : answer;
             lost |= answer.Lost;
             if (answer.Final || attempt == Retries.Length || ct.IsCancellationRequested) return answer with { Lost = lost };
             try

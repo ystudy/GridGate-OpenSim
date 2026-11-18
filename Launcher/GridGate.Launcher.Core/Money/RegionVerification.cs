@@ -3,8 +3,8 @@ using MySqlConnector;
 
 namespace GridGate.Launcher.Core.Money;
 
-/// <summary>Why money does or doesn't work in a region; the website shows each in words.</summary>
-public enum RegionStatus { Verified, NotPaired, Moved, NoGridGateMoney, NeedsUpdate, NotHeardFrom }
+/// <summary>Why money does or doesn't work in a region; the website shows each in words. Waiting: listed at a server when it paired, until the owner confirms it.</summary>
+public enum RegionStatus { Verified, NotPaired, Moved, NoGridGateMoney, NeedsUpdate, NotHeardFrom, Waiting }
 
 /// <summary>One region Robust lists, with whether money works there and, if not, why. <paramref name="KeyId"/> is the key that covers it, if any; for a moved region <paramref name="PinnedKeyId"/> is the key of the server it is pinned to.</summary>
 public sealed record RegionState(Guid RegionId, string Name, string ServerIp, int Port, string? KeyId, RegionStatus Status, string? PinnedKeyId = null);
@@ -86,7 +86,7 @@ public sealed class RegionVerification(Func<CancellationToken, Task<MySqlConnect
     public async Task<bool> IsVerifiedAsync(RegionKeyGrant grant, Guid regionId, CancellationToken ct) =>
         grant.Regions.Contains(regionId) && StatusOf((await HeardByKeyAsync(grant.KeyId, ct)).GetValueOrDefault(grant.KeyId), regionId) == RegionStatus.Verified;
 
-    /// <summary>One state per region Robust lists, with the first reason it isn't verified (Moved, Not paired, No GridGate money, Needs an update, Not heard from).</summary>
+    /// <summary>One state per region Robust lists, with the first reason it isn't verified (Moved, Waiting, Not paired, No GridGate money, Needs an update, Not heard from).</summary>
     public async Task<IReadOnlyList<RegionState>> AllAsync(LauncherSettings settings, CancellationToken ct)
     {
         var rows = await RobustRegionsAsync(ct);
@@ -95,8 +95,12 @@ public sealed class RegionVerification(Func<CancellationToken, Task<MySqlConnect
         var heard = await HeardByKeyAsync(null, ct);
         var moved = (await pins.MovesAsync(servers, ct)).ToDictionary(m => m.RegionId, m => m.PinnedTo);
         var covered = new Dictionary<Guid, IReadOnlySet<Guid>>();
+        var waiting = new Dictionary<Guid, IReadOnlySet<Guid>>();
         foreach (var server in servers)
-            covered[server.Id] = await pins.CoveredAsync(server, server.FirstPort, RegionKeyRing.NextFirstPort(servers, server), own, ct);
+        {
+            covered[server.Id] = await pins.CoveredAsync(server, server.FirstPort, RegionKeyRing.NextFirstPort(servers, server), own, ct, pinNew: false);
+            waiting[server.Id] = (await pins.WaitingAsync(server.Id, ct)).ToHashSet();
+        }
 
         var states = new List<RegionState>();
         foreach (var (id, name, ip, port) in rows)
@@ -115,6 +119,8 @@ public sealed class RegionVerification(Func<CancellationToken, Task<MySqlConnect
                     status = RegionStatus.Moved;
                     pinnedKey = "server:" + pinnedTo.ToString("N");
                 }
+                else if (waiting[server.Id].Contains(id))
+                    status = RegionStatus.Waiting;
                 else if (!covered[server.Id].Contains(id))
                     status = RegionStatus.Moved;
             }

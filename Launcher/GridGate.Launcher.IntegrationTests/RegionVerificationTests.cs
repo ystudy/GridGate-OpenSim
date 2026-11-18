@@ -117,7 +117,9 @@ public sealed class RegionVerificationTests(MoneyMariaDb maria) : IClassFixture<
         var (a, b, region) = (Server(HostA, ServerKeyA), Server(HostB, "the-region-key-for-server-b-000000000000000000"), Guid.NewGuid());
         rig.Settings = rig.Settings with { Money = rig.Settings.Money with { PairedServers = [a, b] } };
         await rig.Db.AddRegion(region, HostA);
-        Assert.Equal(RegionStatus.NoGridGateMoney, await StatusOf(rig, region)); // pinned to A
+        // A's money request pinned it (a status read pins nothing).
+        await rig.Db.Sql($"INSERT INTO `money`.`region_pins` (region_id, server_id, pinned) VALUES ('{region}', '{a.Id:N}', UTC_TIMESTAMP())");
+        Assert.Equal(RegionStatus.NoGridGateMoney, await StatusOf(rig, region));
 
         await rig.Db.Sql($"UPDATE `robust`.`regions` SET serverIP = '{HostB}' WHERE uuid = '{region}'");
 
@@ -126,6 +128,22 @@ public sealed class RegionVerificationTests(MoneyMariaDb maria) : IClassFixture<
         Assert.Equal("server:" + a.Id.ToString("N"), state.PinnedKeyId);
         Assert.Equal("server:" + b.Id.ToString("N"), state.KeyId);
         Assert.Null((await rig.Verification.AllAsync(rig.Settings, Ct)).Single(r => r.RegionId == Here).PinnedKeyId);
+    }
+
+    [Fact]
+    public async Task Waiting_region_is_waiting()
+    {
+        var rig = await StartAsync();
+        var (a, region) = (Server(HostA, ServerKeyA), Guid.NewGuid());
+        rig.Settings = rig.Settings with { Money = rig.Settings.Money with { PairedServers = [a] } };
+        await rig.Db.AddRegion(region, HostA);
+        await rig.Db.Sql($"INSERT INTO `money`.`region_pins` (region_id, server_id, machine_id, pinned, waiting) VALUES ('{region}', '{a.Id:N}', NULL, UTC_TIMESTAMP(6), 1)");
+
+        var state = (await rig.Verification.AllAsync(rig.Settings, Ct)).Single(r => r.RegionId == region);
+
+        Assert.Equal(RegionStatus.Waiting, state.Status);
+        Assert.Equal("server:" + a.Id.ToString("N"), state.KeyId);
+        Assert.Null(state.PinnedKeyId);
     }
 
     [Fact]

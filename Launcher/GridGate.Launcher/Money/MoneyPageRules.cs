@@ -113,6 +113,7 @@ public static class MoneyPageRules
         MoneyOutcome.DuplicateReference => "That entry was already refunded.",
         MoneyOutcome.OverDailyLimit => "That person has reached their daily limit, which counts the last 24 hours.",
         MoneyOutcome.OverKeyLimit => "That region program or Region Server has reached its daily money limit, which counts the last 24 hours.",
+        MoneyOutcome.OutcomeUnknown => "The money database stopped answering while this was being saved, so it may have gone through. Check the history before you try again.",
         _ => "That couldn't be done (" + Code(o) + ").",
     };
 

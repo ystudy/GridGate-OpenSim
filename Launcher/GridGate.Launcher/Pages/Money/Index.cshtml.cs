@@ -32,7 +32,7 @@ public sealed record AlertRow(MoneyAlert Alert, string Text, string? Person, Gui
 /// region program's or server's own limits, settle a moved region, or switch to or from Gloebit and set its app (each POST checks). Every change is audited.
 /// </summary>
 public sealed class IndexModel(IGridController grid, MoneyGate gate, IMoneyBooks books, MoneyStatus status, AuditLog audit, IRobustClient robust,
-    IPeopleDirectory people, IVisitorDirectory visitors, MoneyPairing pairing, RegionPins pins, TimeProvider time, IMoneyAlerts alerts,
+    IPeopleDirectory people, IVisitorDirectory visitors, MoneyPairing pairing, TimeProvider time, IMoneyAlerts alerts,
     IMoneyRegions regions)
     : PageModel
 {
@@ -233,16 +233,8 @@ public sealed class IndexModel(IGridController grid, MoneyGate gate, IMoneyBooks
             grid.UpdateSettings(s => s with { Money = s.Money with { PairedServers = (s.Money.PairedServers ?? []).Where(p => p.Id != server).ToList() } },
                 writeConfig: false);
             audit.Write(User, Ip, "money-pairing-remove", LogText.Clean(gone.Host), "ok");
+            // Its pins stay: a region of it that another server lists shows as a move for the owner to decide.
             Notice = "Removed. Its regions can't take payments until it's paired again.";
-            try
-            {
-                await pins.RemoveServerAsync(server, ct);
-            }
-            catch (MoneyUnavailableException)
-            {
-                // The key is gone already, which ends its coverage; leftover pins only make its regions "moved" later.
-                Notice += " The money database didn't answer, so its region pins were kept.";
-            }
         }
         await ShowAsync(ct);
         return Page();
@@ -377,6 +369,43 @@ public sealed class IndexModel(IGridController grid, MoneyGate gate, IMoneyBooks
                 {
                     Notice += " Its move notice couldn't be cleared: clear it under Alerts later.";
                 }
+            }
+        }
+        catch (MoneyUnavailableException)
+        {
+            Error = MoneyPageRules.Words(MoneyOutcome.Unavailable);
+        }
+        await ShowAsync(ct);
+        return Page();
+    }
+
+    /// <summary>
+    /// Confirms the regions that were already listed at a Region Server when it paired: from now on its key covers them.
+    /// Owner only; audited.
+    /// </summary>
+    public async Task<IActionResult> OnPostConfirmRegionsAsync(Guid server, CancellationToken ct)
+    {
+        if (!Owner) return StatusCode(StatusCodes.Status403Forbidden);
+        if (!await GuardServersAsync(ct)) return Page();
+        try
+        {
+            var settings = grid.CurrentSettings();
+            var paired = settings.Money.PairedServers?.FirstOrDefault(p => p.Id == server);
+            var own = settings.Regions.Select(r => r.Uuid).ToHashSet();
+            int toPort(PairedServer p) => RegionKeyRing.NextFirstPort(settings.Money.PairedServers!, p);
+            if (paired is null)
+            {
+                Error = "That Region Server isn't paired.";
+            }
+            else if ((await regions.WaitingAsync(paired, paired.FirstPort, toPort(paired), own, ct)).Count == 0)
+            {
+                Error = "No region is waiting for you to confirm at that Region Server.";
+            }
+            else
+            {
+                var confirmed = await regions.ConfirmWaitingAsync(paired, paired.FirstPort, toPort(paired), own, ct);
+                audit.Write(User, Ip, "money-region-confirm", LogText.Clean(paired.Host), confirmed == 1 ? "1 region" : $"{confirmed} regions");
+                Notice = $"Confirmed: {(confirmed == 1 ? "its region now belongs" : $"its {confirmed} regions now belong")} to the {MoneyVerifyText.ServerName(paired)}. Money works there once its module checks in.";
             }
         }
         catch (MoneyUnavailableException)

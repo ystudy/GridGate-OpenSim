@@ -41,7 +41,7 @@ public sealed class EconomyHelperTests
     }
 
     private static LauncherFactory Make(FakeSessions sessions, MoneyMode mode = MoneyMode.Play, bool open = true, IReadOnlyList<string>? adminNetworks = null,
-        IPAddress? caller = null, bool lenientRate = false) =>
+        IPAddress? caller = null, bool lenientRate = false, EconomyLimits? limits = null) =>
         new(s => s with
         {
             Security = adminNetworks is null ? s.Security : s.Security with { AdminNetworks = adminNetworks },
@@ -67,6 +67,11 @@ public sealed class EconomyHelperTests
             {
                 services.RemoveAll<ISecureSessionCheck>();
                 services.AddSingleton<ISecureSessionCheck>(sessions);
+                if (limits is not null)
+                {
+                    services.RemoveAll<EconomyLimits>();
+                    services.AddSingleton(limits);
+                }
                 if (lenientRate)
                 {
                     services.RemoveAll<EconomyLimits>();
@@ -296,6 +301,42 @@ public sealed class EconomyHelperTests
 
         Assert.Equal("0", Member(s, "success"));
         Assert.Empty(sessions.Asked);
+    }
+
+    [Fact]
+    public async Task Calls_with_missing_ids_never_take_the_second()
+    {
+        var limits = new EconomyLimits(TimeProvider.System, perSecond: 1);
+        await using var f = Make(new FakeSessions(), limits: limits);
+        var c = Client(f);
+
+        for (var i = 0; i < 5; i++)
+            await Post(c, "/economy/currency.php", Call("getCurrencyQuote", ("agentId", Agent.ToString())));
+
+        Assert.True(limits.TryTakeLookupSecond());
+    }
+
+    [Fact]
+    public async Task Junk_calls_from_twenty_addresses_do_not_lock_out_a_known_viewer()
+    {
+        var sessions = new FakeSessions();
+        var limits = new EconomyLimits(TimeProvider.System);
+        await using var f = Make(sessions, limits: limits);
+        var c = Client(f);
+        var body = Call("getCurrencyQuote", Who(more: [("currencyBuy", 5)]));
+        Assert.Equal("0", Member(AssertFirestormSafe((await Post(c, "/economy/currency.php", body)).Xml), "success"));
+
+        for (var i = 1; i <= 20; i++)
+        {
+            var junk = IPAddress.Parse($"198.51.100.{i}");
+            for (var n = 0; n < 3; n++) limits.Allow(junk);
+            var other = Call("getCurrencyQuote", ("agentId", Guid.NewGuid().ToString()), ("secureSessionId", "junk"));
+            await Post(c, "/economy/currency.php", other);
+        }
+        var again = AssertFirestormSafe((await Post(c, "/economy/currency.php", body)).Xml);
+
+        Assert.DoesNotContain("Too many", Member(again, "errorMessage"));
+        lock (sessions.Asked) Assert.Single(sessions.Asked);
     }
 
     [Fact]

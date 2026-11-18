@@ -17,6 +17,7 @@ public static class MoneyVerifyText
     public const string VerifiedAnchor = "what-verified-means";
     public const string NotPairedAnchor = "not-paired";
     public const string MovedAnchor = "moved-waiting-for-you";
+    public const string WaitingAnchor = "waiting-for-you-to-confirm";
     public const string NoMoneyAnchor = "no-gridgate-money";
     public const string NeedsUpdateAnchor = "needs-an-update";
     public const string NotHeardAnchor = "not-heard-from";
@@ -34,17 +35,19 @@ public static class MoneyVerifyText
         RegionStatus.Verified => VerifiedAnchor,
         RegionStatus.NotPaired => NotPairedAnchor,
         RegionStatus.Moved => MovedAnchor,
+        RegionStatus.Waiting => WaitingAnchor,
         RegionStatus.NoGridGateMoney => NoMoneyAnchor,
         RegionStatus.NeedsUpdate => NeedsUpdateAnchor,
         _ => NotHeardAnchor,
     };
 
-    /// <summary>A region's status in words; a moved one names the server it belongs to, when that is known.</summary>
+    /// <summary>A region's status in words; a moved one names the server it belongs to, and a waiting one the server it was listed at, when that is known.</summary>
     public static string Words(RegionStatus status, string? movedFrom = null) => status switch
     {
         RegionStatus.Verified => "Verified",
         RegionStatus.NotPaired => "Not paired",
         RegionStatus.Moved => movedFrom is null ? "Moved here, waiting for you" : $"Moved here from {movedFrom}, waiting for you",
+        RegionStatus.Waiting => movedFrom is null ? "Waiting for you to confirm" : $"Waiting for you to confirm: listed at {movedFrom} when it paired",
         RegionStatus.NoGridGateMoney => "No GridGate money",
         RegionStatus.NeedsUpdate => "Needs an update",
         _ => "Not heard from",
@@ -59,6 +62,8 @@ public static class MoneyVerifyText
             "This region is on a computer that isn't paired with this grid's money, so money is off there. Pair it under Region Servers. If that computer runs stock OpenSim rather than GridGate, it can't be paired; its regions stay open to visitors, without money.",
         RegionStatus.Moved =>
             "This region belongs to another Region Server but now registers from this one, so money is off there. Approve the move, or keep it off: then money comes back if its own server registers it again.",
+        RegionStatus.Waiting =>
+            "This region was already listed at this Region Server when it paired, so money is off there until you confirm it. Use Confirm on the server under Region Servers once you know the regions are really its own.",
         RegionStatus.NoGridGateMoney =>
             "Nothing has checked in with the money service for this region: it may run stock OpenSim, or money isn't set up there. Install GridGate on that server, or leave it without money.",
         RegionStatus.NeedsUpdate =>
@@ -75,6 +80,10 @@ public static class MoneyVerifyText
         RegionStatus.NotHeardFrom => "This server's money module hasn't checked in for over 10 minutes, so its regions have no money. Check the server is running.",
         _ => "No money module on this server has checked in, so its regions have no money. It may run stock OpenSim, or money isn't set up there.",
     };
+
+    /// <summary>The words on a server's confirm button: how many of its regions wait.</summary>
+    public static string ConfirmWords(int waiting) =>
+        waiting == 1 ? "Confirm its region" : $"Confirm its {waiting.ToString(CultureInfo.InvariantCulture)} regions";
 
     /// <summary>The key of a paired Region Server, as the money service names it.</summary>
     public static string KeyOf(PairedServer server) => "server:" + server.Id.ToString("N");

@@ -4,6 +4,13 @@ using Xunit;
 
 namespace GridGate.Launcher.IntegrationTests;
 
+/// <summary>The owner confirming everything a test server has waiting and listed.</summary>
+internal static class RegionPinsTestExtensions
+{
+    public static Task<int> ConfirmAllAsync(this RegionPins pins, PairedServer server, CancellationToken ct) =>
+        pins.ConfirmWaitingAsync(server, server.FirstPort, 65536, new HashSet<Guid>(), ct);
+}
+
 /// <summary>Region ids belong to the paired Region Server they were first seen under.</summary>
 [Collection(GridCollection.Name)]
 public sealed class RegionPinsTests(MoneyMariaDb maria) : IClassFixture<MoneyMariaDb>
@@ -140,19 +147,152 @@ public sealed class RegionPinsTests(MoneyMariaDb maria) : IClassFixture<MoneyMar
     }
 
     [Fact]
-    public async Task Removing_a_server_drops_its_pins()
+    public async Task Removing_a_server_keeps_its_pins_so_another_server_listing_them_sees_a_move()
+    {
+        // Nothing deletes a pin when its server is removed: the region stays Jo's, so Sam listing it is a move for the owner.
+        var (db, pins) = await StartAsync(maria);
+        var (jo, sam, region) = (Server(HostB), Server(HostA), Guid.NewGuid());
+        await db.AddRegion(region, HostB);
+        await Covered(pins, jo);
+        await db.Sql($"UPDATE `robust`.`regions` SET serverIP = '{HostA}' WHERE uuid = '{region}'");
+
+        Assert.Empty(await Covered(pins, sam));
+        Assert.Equal([new RegionMove(region, jo.Id, sam.Id)], await pins.MovesAsync([sam], Ct));
+        Assert.Equal(jo.Id.ToString("N"), await db.Text($"SELECT server_id FROM `money`.`region_pins` WHERE region_id = '{region}'"));
+    }
+
+    [Fact]
+    public async Task Regions_listed_when_a_server_pairs_wait_and_cover_nothing()
+    {
+        var (db, pins) = await StartAsync(maria);
+        var (a, r1, r2) = (Server(HostA), Guid.NewGuid(), Guid.NewGuid());
+        await db.AddRegion(r1, HostA);
+        await db.AddRegion(r2, HostA);
+
+        Assert.Equal(2, await pins.PinWaitingAsync(a, a.FirstPort, 65536, Ct));
+
+        Assert.Empty(await Covered(pins, a));
+        Assert.Equal(2, await db.Scalar($"SELECT COUNT(*) FROM `money`.`region_pins` WHERE server_id = '{a.Id:N}' AND waiting = 1"));
+        Assert.Equal(new[] { r1, r2 }.Order(), (await pins.WaitingAsync(a.Id, Ct)).Order());
+        Assert.Empty(await pins.MovesAsync([a], Ct));
+    }
+
+    [Fact]
+    public async Task Confirming_waiting_regions_makes_them_covered()
+    {
+        var (db, pins) = await StartAsync(maria);
+        var (a, region) = (Server(HostA), Guid.NewGuid());
+        await db.AddRegion(region, HostA);
+        await pins.PinWaitingAsync(a, a.FirstPort, 65536, Ct);
+
+        Assert.Equal(1, await pins.ConfirmAllAsync(a, Ct));
+
+        Assert.Equal(new HashSet<Guid> { region }, (await Covered(pins, a)).ToHashSet());
+        Assert.Empty(await pins.WaitingAsync(a.Id, Ct));
+    }
+
+    [Fact]
+    public async Task Confirming_covers_only_the_waiting_regions_that_are_listed_at_the_server()
+    {
+        var (db, pins) = await StartAsync(maria);
+        var (a, shown, unlisted) = (Server(HostA), Guid.NewGuid(), Guid.NewGuid());
+        await db.AddRegion(shown, HostA);
+        await db.AddRegion(unlisted, HostA);
+        await pins.PinWaitingAsync(a, a.FirstPort, 65536, Ct);
+        await db.Sql($"DELETE FROM `robust`.`regions` WHERE uuid = '{unlisted}'");
+
+        Assert.Equal([shown], await pins.WaitingListedAsync(a, a.FirstPort, 65536, NoOwn, Ct));
+        Assert.Equal(1, await pins.ConfirmAllAsync(a, Ct));
+
+        Assert.Equal(new HashSet<Guid> { shown }, (await Covered(pins, a)).ToHashSet());
+        Assert.Equal([unlisted], await pins.WaitingAsync(a.Id, Ct));
+        Assert.Equal(0, await pins.ConfirmAllAsync(a, Ct));
+    }
+
+    [Fact]
+    public async Task Approving_a_move_turns_a_waiting_region_on_and_leaves_the_servers_other_waiting_regions_waiting()
+    {
+        var (db, pins) = await StartAsync(maria);
+        var (a, b, moved, other) = (Server(HostA), Server(HostB), Guid.NewGuid(), Guid.NewGuid());
+        await db.AddRegion(moved, HostA);
+        await db.AddRegion(other, HostB);
+        await pins.PinWaitingAsync(a, a.FirstPort, 65536, Ct);
+        await pins.PinWaitingAsync(b, b.FirstPort, 65536, Ct);
+        await db.Sql($"UPDATE `robust`.`regions` SET serverIP = '{HostB}' WHERE uuid = '{moved}'");
+
+        await pins.ApproveMoveAsync(moved, b.Id, Ct);
+
+        Assert.Equal(new HashSet<Guid> { moved }, (await Covered(pins, b)).ToHashSet());
+        Assert.Equal([other], await pins.WaitingAsync(b.Id, Ct));
+    }
+
+    [Fact]
+    public async Task A_status_read_pins_nothing_but_the_request_path_does()
+    {
+        var (db, pins) = await StartAsync(maria);
+        var (a, region) = (Server(HostA), Guid.NewGuid());
+        await db.AddRegion(region, HostA);
+
+        Assert.Equal(new HashSet<Guid> { region }, (await pins.CoveredAsync(a, a.FirstPort, 65536, NoOwn, Ct, pinNew: false)).ToHashSet());
+        Assert.Equal(0, await db.Scalar("SELECT COUNT(*) FROM `money`.`region_pins`"));
+
+        await pins.CoveredAsync(a, a.FirstPort, 65536, NoOwn, Ct);
+        Assert.Equal(1, await db.Scalar("SELECT COUNT(*) FROM `money`.`region_pins`"));
+    }
+
+    [Fact]
+    public async Task A_region_that_appears_after_pairing_is_pinned_and_covered_at_first_sight()
+    {
+        var (db, pins) = await StartAsync(maria);
+        var (a, early, late) = (Server(HostA), Guid.NewGuid(), Guid.NewGuid());
+        await db.AddRegion(early, HostA);
+        await pins.PinWaitingAsync(a, a.FirstPort, 65536, Ct);
+        await db.AddRegion(late, HostA);
+
+        Assert.Equal(new HashSet<Guid> { late }, (await Covered(pins, a)).ToHashSet());
+        Assert.Equal([early], await pins.WaitingAsync(a.Id, Ct));
+    }
+
+    [Fact]
+    public async Task A_region_waiting_for_another_server_moves_to_the_server_whose_ports_hold_it()
+    {
+        var (db, pins) = await StartAsync(maria);
+        var (low, high, region) = (Server(HostA, firstPort: 9000), Server(HostA, firstPort: 9100), Guid.NewGuid());
+        await db.AddRegion(region, HostA, port: 9100);
+        await pins.PinWaitingAsync(low, 9000, 65536, Ct);
+
+        Assert.Equal(1, await pins.PinWaitingAsync(high, 9100, 65536, Ct));
+
+        Assert.Empty(await pins.WaitingAsync(low.Id, Ct));
+        Assert.Equal([region], await pins.WaitingAsync(high.Id, Ct));
+    }
+
+    [Fact]
+    public async Task A_region_already_pinned_to_another_server_is_not_made_waiting()
     {
         var (db, pins) = await StartAsync(maria);
         var (a, b, region) = (Server(HostA), Server(HostB), Guid.NewGuid());
         await db.AddRegion(region, HostB);
         await Covered(pins, b);
-
-        await pins.RemoveServerAsync(b.Id, Ct);
-
-        Assert.Equal(0, await db.Scalar("SELECT COUNT(*) FROM `money`.`region_pins`"));
-        // Listed at A now: nobody holds a pin on it any more, so A is the first to see it.
         await db.Sql($"UPDATE `robust`.`regions` SET serverIP = '{HostA}' WHERE uuid = '{region}'");
-        Assert.Contains(region, await Covered(pins, a));
+
+        Assert.Equal(0, await pins.PinWaitingAsync(a, a.FirstPort, 65536, Ct));
+
+        Assert.Equal(b.Id.ToString("N"), await db.Text($"SELECT server_id FROM `money`.`region_pins` WHERE region_id = '{region}'"));
+        Assert.Equal(0, await db.Scalar("SELECT COUNT(*) FROM `money`.`region_pins` WHERE waiting = 1"));
+    }
+
+    [Fact]
+    public async Task A_waiting_region_raises_no_move_alert_and_a_wrong_server_listing_it_is_a_move()
+    {
+        var (db, pins) = await StartAsync(maria);
+        var (a, b, region) = (Server(HostA), Server(HostB), Guid.NewGuid());
+        await db.AddRegion(region, HostA);
+        await pins.PinWaitingAsync(a, a.FirstPort, 65536, Ct);
+        await db.Sql($"UPDATE `robust`.`regions` SET serverIP = '{HostB}' WHERE uuid = '{region}'");
+
+        Assert.Empty(await Covered(pins, b));
+        Assert.Equal([new RegionMove(region, a.Id, b.Id)], await pins.MovesAsync([a, b], Ct));
     }
 
     [Fact]
@@ -238,6 +378,21 @@ public sealed class RegionPinsTests(MoneyMariaDb maria) : IClassFixture<MoneyMar
     }
 
     [Fact]
+    public async Task Same_machine_repairing_keeps_confirmed_pins_confirmed()
+    {
+        var (db, pins) = await StartAsync(maria);
+        var (old, region) = (Server(HostA, "machine-1"), Guid.NewGuid());
+        var replacement = Server(HostA, "machine-1");
+        await db.AddRegion(region, HostA);
+        await Covered(pins, old);
+
+        await pins.CarryOverAsync(old, replacement, Ct);
+        Assert.Equal(0, await pins.PinWaitingAsync(replacement, replacement.FirstPort, 65536, Ct));
+
+        Assert.Equal(new HashSet<Guid> { region }, (await Covered(pins, replacement)).ToHashSet());
+    }
+
+    [Fact]
     public async Task Database_down_is_unavailable()
     {
         var db = await maria.FreshAsync();
@@ -246,6 +401,8 @@ public sealed class RegionPinsTests(MoneyMariaDb maria) : IClassFixture<MoneyMar
         await db.AddRegion(Guid.NewGuid(), HostA);
 
         await Assert.ThrowsAsync<MoneyUnavailableException>(() => Covered(pins, Server(HostA)));
-        await Assert.ThrowsAsync<MoneyUnavailableException>(() => pins.RemoveServerAsync(Guid.NewGuid(), Ct));
+        await Assert.ThrowsAsync<MoneyUnavailableException>(() => pins.PinWaitingAsync(Server(HostA), 9000, 65536, Ct));
+        await Assert.ThrowsAsync<MoneyUnavailableException>(() => pins.ConfirmAllAsync(Server(HostA), Ct));
+        await Assert.ThrowsAsync<MoneyUnavailableException>(() => pins.WaitingAsync(Guid.NewGuid(), Ct));
     }
 }

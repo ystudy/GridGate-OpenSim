@@ -103,8 +103,12 @@ public sealed class MoneyPairServiceTests(MoneyMariaDb maria) : IClassFixture<Mo
 
     private static string NewNonce() => Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
 
-    /// <summary>Pairs as a Region Server at <paramref name="host"/> would, with a fresh code; returns the key.</summary>
-    private async Task<string> PairAsync(string host = ServerHost, int firstPort = 9000, string? machineId = null)
+    /// <summary>
+    /// Pairs as a Region Server at <paramref name="host"/> would, with a fresh code; returns the key. Regions Robust already lists
+    /// at the new server wait for the owner: <paramref name="confirm"/> is the owner clicking Confirm, so a test that wants the
+    /// server's regions covered doesn't repeat it.
+    /// </summary>
+    private async Task<string> PairAsync(string host = ServerHost, int firstPort = 9000, string? machineId = null, bool confirm = true)
     {
         var (code, _) = _pairing.Issue();
         var nonce = NewNonce();
@@ -113,6 +117,7 @@ public sealed class MoneyPairServiceTests(MoneyMariaDb maria) : IClassFixture<Mo
         Assert.Equal("ok", (string?)body!["code"]);
         var key = (string)body["key"]!;
         Assert.True(PairingProof.Same(PairingProof.Server(code, _fingerprint, nonce, key), (string)body["proof"]!));
+        if (confirm && !_moneyDown) await _pins.ConfirmAllAsync(_settings.Money.PairedServers!.Single(p => p.KeyHash == PairedServer.HashOf(key)), Ct);
         return key;
     }
 
@@ -311,8 +316,10 @@ public sealed class MoneyPairServiceTests(MoneyMariaDb maria) : IClassFixture<Mo
         await db.AddRegion(upper, ServerHost, port: 9100);
         var whoB = new { agentId = b, home = "", sessionId = sessionB, secureSessionId = secureB };
 
-        var lower = await PairAsync(firstPort: 9000);
-        var higher = await PairAsync(firstPort: 9100);
+        // The lower server pairs first, so its range covers the upper region for now; the higher one then takes it over.
+        var lower = await PairAsync(firstPort: 9000, confirm: false);
+        var higher = await PairAsync(firstPort: 9100, confirm: false);
+        foreach (var paired in _settings.Money.PairedServers!) await _pins.ConfirmAllAsync(paired, Ct);
         await Place(db, lower, A, Theirs); // Theirs is at port 9000
         await Place(db, higher, b, upper, sessionB, secureB);
 
@@ -443,6 +450,49 @@ public sealed class MoneyPairServiceTests(MoneyMariaDb maria) : IClassFixture<Mo
         Assert.Equal("wrong_region", (string?)(await Post("balance", Who(A), other)).Body!["code"]);
     }
 
+    [Fact]
+    public async Task Pairing_where_regions_are_already_listed_leaves_them_waiting()
+    {
+        await StartAsync();
+
+        var key = await PairAsync(confirm: false);
+
+        Assert.Equal(0, (await Post("health", new { }, key)).Body!["regions"]!.GetValue<int>());
+        var server = _settings.Money.PairedServers!.Single();
+        Assert.Equal([Theirs], await _pins.WaitingAsync(server.Id, Ct));
+
+        // The owner confirms: the same key now covers the region.
+        await _pins.ConfirmAllAsync(server, Ct);
+        Assert.Equal(1, (await Post("health", new { }, key)).Body!["regions"]!.GetValue<int>());
+    }
+
+    [Fact]
+    public async Task Re_pairing_the_same_machine_keeps_its_regions_covered()
+    {
+        var db = await StartAsync();
+        var first = await PairAsync(machineId: "rs-1");
+        await Place(db, first, A, Theirs);
+
+        var same = await PairAsync(machineId: "rs-1", confirm: false);
+
+        Assert.Equal(1, (await Post("health", new { }, same)).Body!["regions"]!.GetValue<int>());
+        Assert.Empty(await _pins.WaitingAsync(_settings.Money.PairedServers!.Single().Id, Ct));
+    }
+
+    [Fact]
+    public async Task Database_down_while_pairing_keeps_the_pairing_and_pins_regions_at_first_sight()
+    {
+        await StartAsync();
+        _moneyDown = true;
+
+        var key = await PairAsync(confirm: false);
+
+        Assert.Single(_settings.Money.PairedServers!);
+        Assert.Contains(_logs, l => l.Contains("wait", StringComparison.OrdinalIgnoreCase) && l.Contains(ServerHost));
+        _moneyDown = false;
+        Assert.Equal(1, (await Post("health", new { }, key)).Body!["regions"]!.GetValue<int>()); // first sight pins it confirmed
+    }
+
     /// <summary>A payment of one coin from A, in <paramref name="region"/>, to a resident who is offline.</summary>
     private static async Task<object> PaymentFromA(MoneyTestDatabase db, Guid region)
     {
@@ -459,15 +509,16 @@ public sealed class MoneyPairServiceTests(MoneyMariaDb maria) : IClassFixture<Mo
     public async Task A_new_machine_in_a_removed_servers_place_cannot_charge_who_the_old_one_placed()
     {
         // The owner removes a Region Server, as the Money page does, and another computer pairs at the same address and
-        // ports. Theirs is pinned afresh to the new server, whose key covers it; A was placed there by the old key.
+        // ports. The owner approves Theirs for the new server, whose key then covers it; A was placed there by the old key.
         var db = await StartAsync();
         var old = await PairAsync(machineId: "rs-1");
         await Place(db, old, A, Theirs);
-        var oldId = _settings.Money.PairedServers!.Single().Id;
         _settings = _settings with { Money = _settings.Money with { PairedServers = [] } };
-        await _pins.RemoveServerAsync(oldId, Ct);
 
-        var other = await PairAsync(machineId: "rs-2");
+        // Removing the old server kept its pin, so Theirs is a move for the new machine until the owner approves it.
+        var other = await PairAsync(machineId: "rs-2", confirm: false);
+        Assert.Equal(0, await Health(other, Theirs));
+        await _pins.ApproveMoveAsync(Theirs, _settings.Money.PairedServers!.Single().Id, Ct);
         Assert.Equal(1, await Health(other, Theirs));
 
         Assert.Equal("unverified_avatar", (string?)(await Post("transfer", await PaymentFromA(db, Theirs), other)).Body!["code"]);

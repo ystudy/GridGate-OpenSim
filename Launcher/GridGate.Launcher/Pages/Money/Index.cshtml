@@ -259,6 +259,16 @@
                                         }
                                     </span>
                                 }
+                                @{
+                                    var waiting = Model.RegionsDown ? 0 : Model.Regions.Count(r => r.Status == RegionStatus.Waiting && r.KeyId == MoneyVerifyText.KeyOf(server));
+                                }
+                                @if (Model.IsOwner && waiting > 0)
+                                {
+                                    <form method="post" action="/money?handler=ConfirmRegions" asp-antiforgery="true" class="d-inline">
+                                        <input type="hidden" name="Server" value="@server.Id">
+                                        <button type="submit" class="btn btn-sm btn-outline-secondary">@MoneyVerifyText.ConfirmWords(waiting)</button>
+                                    </form>
+                                }
                                 @if (Model.CanChange)
                                 {
                                     <form method="post" action="/money?handler=RemoveServer" asp-antiforgery="true" class="d-inline">

@@ -67,6 +67,8 @@ public sealed partial class GridController(
     private readonly object _alertGate = new();
     // Short lock around settings reads/writes and INI generation only; long operations hold _ops instead.
     private readonly object _configGate = new();
+    // Whether the config last written had Gloebit on; null before any config is written. Guarded by _configGate.
+    private bool? _gloebitWritten;
 
     private volatile LauncherSettings? _settings;
     private volatile string _host = "127.0.0.1";
@@ -1689,6 +1691,7 @@ public sealed partial class GridController(
         }
         new GridConfigWriter(paths, _money).Write(s, _modules.Cast<IIniContributor>().ToList(), _held);
         _writtenGridName = s.GridName;
+        _gloebitWritten = MoneyPlace.GloebitHere(s, _money);
         // Gloebit's DLL only in Gloebit mode (money plan 4): it switches itself on whenever it is present.
         try
         {
