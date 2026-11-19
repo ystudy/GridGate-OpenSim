@@ -499,6 +499,25 @@ public sealed class RegionServerMoneyPageTests
     }
 
     [Fact]
+    public async Task With_an_unreadable_two_factor_file_the_page_says_it_cant_be_checked_and_nothing_saves()
+    {
+        await using var f = GloebitGrid(regions: ThreeRegions());
+        var c = await SignedInAsync(f, twoFactor: false);
+        Directory.CreateDirectory(f.Paths.Security);
+        File.WriteAllText(Path.Combine(f.Paths.Security, "twofactor.json"), "{ this is not json");
+
+        var page = await PageAsync(c, "/advanced/money");
+        var doc = await PostAsync(c, "Gloebit", AppFields("123456"));
+
+        Assert.Contains("can't be checked right now", page.QuerySelector("#rs-gloebit-two-factor")!.TextContent);
+        Assert.DoesNotContain("isn't on", page.QuerySelector("#rs-gloebit-two-factor")!.TextContent);
+        Assert.Contains("can't be checked right now", doc.QuerySelector(".alert-danger")!.TextContent);
+        Assert.Null(f.Grid.CurrentSettings().Money.Gloebit);
+        var line = Assert.Single(Audit(f), a => a.GetProperty("action").GetString() == "money-gloebit");
+        Assert.Equal("refused: two-factor can't be checked", line.GetProperty("result").GetString());
+    }
+
+    [Fact]
     public async Task Without_two_factor_the_owner_is_told_where_to_turn_it_on_and_nothing_saves()
     {
         await using var f = GloebitGrid(regions: ThreeRegions());

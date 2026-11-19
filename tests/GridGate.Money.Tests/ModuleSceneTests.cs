@@ -649,6 +649,25 @@ public sealed class ModuleSceneTests
     }
 
     [Fact]
+    public void A_price_raised_by_a_parcel_edit_while_the_dialog_is_open_is_refused_then_charged_on_the_next_click()
+    {
+        var (region, lmm, parcel, buyer) = PassParcel();
+        // The edit pushes the parcel's new properties to every avatar in the region.
+        parcel.LandData.PassPrice = 500;
+        parcel.SendLandProperties(0, false, 0, buyer);
+
+        lmm.ClientParcelBuyPass(buyer, Buyer, parcel.LandData.LocalID);
+
+        buyer.WaitForAlert("500");
+        Thread.Sleep(200);
+        Assert.Empty(region.Service.Calls);
+
+        lmm.ClientParcelBuyPass(buyer, Buyer, parcel.LandData.LocalID);
+
+        Assert.Equal(500L, region.WaitFor("transfer").Args[3]);
+    }
+
+    [Fact]
     public void With_a_money_module_that_charges_nothing_a_pass_needs_no_price_shown()
     {
         var (region, lmm, parcel, _) = PassParcel();

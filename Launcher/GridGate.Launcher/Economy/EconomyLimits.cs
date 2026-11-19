@@ -51,6 +51,7 @@ public sealed class EconomyLimits(TimeProvider time, int maxAddresses = EconomyL
     private readonly Dictionary<(Guid, Guid), DateTimeOffset> _unknown = new();
     private readonly Queue<((Guid, Guid) Pair, DateTimeOffset At)> _unknownOrder = new();
     private DateTimeOffset _pruned = DateTimeOffset.MinValue;
+    private DateTimeOffset _missesPruned = DateTimeOffset.MinValue;
     private int _lookups;
 
     /// <summary>Counts this call and says whether it is within the limits.</summary>
@@ -167,7 +168,16 @@ public sealed class EconomyLimits(TimeProvider time, int maxAddresses = EconomyL
         lock (_gate)
         {
             var address = Key(ip);
-            if (!_misses.TryGetValue(address, out var times)) return _misses.Count < maxAddresses;
+            if (!_misses.TryGetValue(address, out var times))
+            {
+                // Old addresses are dropped at most once a minute, so a full table makes room as its entries age.
+                if (_misses.Count >= maxAddresses && now - _missesPruned >= Window)
+                {
+                    _missesPruned = now;
+                    PruneMisses(now);
+                }
+                return _misses.Count < maxAddresses;
+            }
             while (times.Count > 0 && now - times.Peek() >= Window) times.Dequeue();
             return times.Count < MissesPerMinute;
         }

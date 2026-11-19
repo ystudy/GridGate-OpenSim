@@ -193,6 +193,21 @@ public sealed class MoneyMaintenanceTests(MoneyMariaDb maria) : IClassFixture<Mo
     }
 
     [Fact]
+    public async Task Start_clears_a_paired_servers_machine_id_that_is_not_the_derived_value()
+    {
+        var raw = new PairedServer(Guid.NewGuid(), "192.168.1.20", new string('A', 64), DateTimeOffset.UtcNow, 9000, "my-command-password");
+        var good = new PairedServer(Guid.NewGuid(), "192.168.1.30", new string('B', 64), DateTimeOffset.UtcNow, 9000, new string('c', 64));
+        var saved = (await maria.FreshAsync()).Settings with { Money = new MoneySettings(PairedServers: [raw, good]) };
+        LauncherSettings Update(Func<LauncherSettings, LauncherSettings> change) => saved = change(saved);
+
+        var after = await MoneyStartup.PrepareAsync(saved, Update, MoneyMode.Off, Ct);
+
+        Assert.Null(after.Money.PairedServers![0].MachineId);
+        Assert.Equal(new string('c', 64), after.Money.PairedServers[1].MachineId);
+        Assert.Equal(after.Money.PairedServers.Select(p => p.MachineId), saved.Money.PairedServers!.Select(p => p.MachineId));
+    }
+
+    [Fact]
     public async Task Start_leaves_money_alone_when_off()
     {
         var db = await maria.FreshAsync();

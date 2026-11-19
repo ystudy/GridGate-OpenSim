@@ -492,6 +492,30 @@ public sealed class RegionServerPagesTests
     }
 
     [Fact]
+    public async Task Join_page_confirm_with_an_unreadable_two_factor_file_says_it_cant_be_checked_and_saves_nothing()
+    {
+        await using var f = WithSavedMoney();
+        SeedNewGridOwner(f);
+        f.Join.Result = Elsewhere();
+        using var client = await SignedInAsync(f, "owner", twoFactor: false);
+        Directory.CreateDirectory(f.Paths.Security);
+        File.WriteAllText(Path.Combine(f.Paths.Security, "twofactor.json"), "{ this is not json");
+        var writes = f.Grid.UpdateWriteConfig.Count;
+
+        using var found = await PostAsync(client, "/advanced/join", new() { ["Address"] = "192.168.1.9" });
+        var foundDoc = new HtmlParser().ParseDocument(await found.Content.ReadAsStringAsync(Ct));
+        using var resp = await PostAsync(client, "/advanced/join?handler=Confirm",
+            new() { ["Address"] = "192.168.1.9", ["Password"] = NewPassword, ["TwoFactorCode"] = "123456" }, tokenFrom: "/advanced/join");
+        var doc = new HtmlParser().ParseDocument(await resp.Content.ReadAsStringAsync(Ct));
+
+        Assert.Contains("can't be checked right now", foundDoc.QuerySelector("main .join-two-factor")!.TextContent);
+        Assert.DoesNotContain("isn't on", foundDoc.QuerySelector("main .join-two-factor")!.TextContent);
+        Assert.Contains("can't be checked right now", doc.QuerySelector(".alert-danger")!.TextContent);
+        AssertNothingSaved(f, writes);
+        Assert.Equal("refused: two-factor can't be checked", AuditLines(f).Last(l => l.GetProperty("action").GetString() == "grid-join").GetProperty("result").GetString());
+    }
+
+    [Fact]
     public async Task Join_page_confirm_without_two_factor_is_refused_and_says_where_to_turn_it_on()
     {
         await using var f = WithSavedMoney();

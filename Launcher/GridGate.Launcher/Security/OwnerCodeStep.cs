@@ -21,9 +21,13 @@ public static class OwnerCodeStep
     /// <summary>Where two-factor is turned on.</summary>
     public const string TurnOnPath = TwoFactorGate.EnrolPath;
 
-    /// <summary>True when the signed-in person has two-factor on here.</summary>
-    public static bool IsSetUp(TwoFactorStore store, ClaimsPrincipal user) =>
-        Principal(user) is { } id && store.StateOf(id) == TwoFactorState.On;
+    /// <summary>
+    /// Whether the signed-in person can be asked for a code now: <see cref="OwnerCodeResult.Ok"/> when two-factor is on,
+    /// <see cref="OwnerCodeResult.NotSetUp"/> when it isn't, <see cref="OwnerCodeResult.Unreadable"/> when the two-factor file can't be read.
+    /// </summary>
+    public static OwnerCodeResult CanAsk(TwoFactorStore store, ClaimsPrincipal user) =>
+        Principal(user) is not { } id ? OwnerCodeResult.NotSetUp
+            : store.StateOf(id) switch { TwoFactorState.On => OwnerCodeResult.Ok, TwoFactorState.Unknown => OwnerCodeResult.Unreadable, _ => OwnerCodeResult.NotSetUp };
 
     /// <summary>Whether <paramref name="code"/> is a current code of the signed-in owner; a right code is used up.</summary>
     public static OwnerCodeResult Check(TwoFactorStore store, LoginThrottle throttle, ILogger log, ClaimsPrincipal user, IPAddress? remote, string? code)

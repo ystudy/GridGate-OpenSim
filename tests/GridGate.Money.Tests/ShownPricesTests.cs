@@ -42,6 +42,40 @@ public class ShownPricesTests
     }
 
     [Fact]
+    public void A_higher_price_sent_again_does_not_raise_what_a_click_may_charge()
+    {
+        var shown = new ShownPrices();
+        shown.Remember(Me, Group, 10);
+        shown.Remember(Me, Group, 5000);
+
+        Assert.False(shown.MayCharge(Me, Group, 5000));
+        Assert.True(shown.MayCharge(Me, Group, 5000));
+    }
+
+    [Fact]
+    public void A_lower_price_sent_again_lowers_what_a_click_may_charge()
+    {
+        var shown = new ShownPrices();
+        shown.Remember(Me, Group, 10);
+        shown.Remember(Me, Group, 5);
+
+        Assert.False(shown.MayCharge(Me, Group, 10));
+    }
+
+    [Fact]
+    public void A_higher_price_sent_after_the_window_is_remembered()
+    {
+        var now = new DateTime(2026, 11, 18, 12, 0, 0, DateTimeKind.Utc);
+        var shown = new ShownPrices(() => now);
+        shown.Remember(Me, Group, 10);
+
+        now += ShownPrices.Lifetime + TimeSpan.FromSeconds(1);
+        shown.Remember(Me, Group, 5000);
+
+        Assert.True(shown.MayCharge(Me, Group, 5000));
+    }
+
+    [Fact]
     public void Free_is_always_charged_as_free()
     {
         var shown = new ShownPrices();

@@ -28,11 +28,20 @@ namespace OpenSim.Framework
             m_capacity = Math.Max(1, capacity);
         }
 
-        /// <summary>Remembers that <paramref name="agent"/> was shown <paramref name="price"/> for <paramref name="thing"/>.</summary>
+        /// <summary>
+        /// Remembers that <paramref name="agent"/> was shown <paramref name="price"/> for <paramref name="thing"/>. A price
+        /// sent again while an earlier, lower one is still within <see cref="Lifetime"/> does not raise it: the lowest price
+        /// sent in the window is what a click may charge.
+        /// </summary>
         public void Remember(UUID agent, UUID thing, int price)
         {
             lock (m_lock)
+            {
+                if (m_prices.TryGetValue((agent, thing), out var node)
+                    && m_utcNow() - node.Value.At <= Lifetime && node.Value.Price <= price)
+                    return;
                 Put(agent, thing, price);
+            }
         }
 
         /// <summary>
