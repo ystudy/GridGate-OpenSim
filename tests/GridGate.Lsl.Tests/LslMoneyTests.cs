@@ -200,6 +200,142 @@ public sealed class LslMoneyTests
         await Paid(r, Payee);
     }
 
+    // --- A payout waits on the queue: the owner who called it is the one it is paid from. -----------------------------
+
+    /// <summary>The object is sold while payouts wait: the buyer's coins are not touched.</summary>
+    private static void SellTo(Region r, UUID buyer)
+    {
+        r.Part.ParentGroup.SetOwner(buyer, UUID.Zero);
+        r.Part.Inventory.ChangeInventoryOwner(buyer);
+        Assert.Equal(0, r.Item.PermsMask & ScriptBaseClass.PERMISSION_DEBIT);
+    }
+
+    [Fact]
+    public async Task Payouts_queued_before_an_owner_change_are_not_paid_from_the_buyer()
+    {
+        var r = Setup();
+        Grant(r, Owner);
+        using var hold = new ManualResetEventSlim();
+        r.Money.Hold = hold;
+        try
+        {
+            // Two payouts are running (held); the other three wait behind them.
+            for (var i = 0; i < 5; i++) r.Api.llGiveMoney(Payee.ToString(), 1);
+            await Task.Delay(Settle, TestContext.Current.CancellationToken);
+
+            SellTo(r, Stranger);
+        }
+        finally
+        {
+            hold.Set();
+        }
+        await Paid(r, Payee);
+        await Task.Delay(Settle, TestContext.Current.CancellationToken);
+
+        Assert.DoesNotContain(r.Money.Payments, p => p.From == Stranger);
+        Assert.All(r.Money.Payments, p => Assert.Equal(Owner, p.From));
+    }
+
+    [Fact]
+    public async Task A_transfer_queued_before_an_owner_change_reports_failure_and_pays_nobody()
+    {
+        var r = Setup();
+        Grant(r, Owner);
+        using var hold = new ManualResetEventSlim();
+        r.Money.Hold = hold;
+        try
+        {
+            // Two running payouts fill the queue's threads; the transfer waits behind them.
+            r.Api.llGiveMoney(Payee.ToString(), 1);
+            r.Api.llGiveMoney(Payee.ToString(), 1);
+            await Task.Delay(Settle, TestContext.Current.CancellationToken);
+            r.Api.llTransferLindenDollars(OtherPayee.ToString(), 9);
+
+            SellTo(r, Stranger);
+        }
+        finally
+        {
+            hold.Set();
+        }
+
+        var result = await TransactionResult(r);
+        Assert.Equal(0, ((LSL_Types.LSLInteger)result.Params[1]).value);
+        Assert.Equal("MISSING_PERMISSION_DEBIT", result.Params[2].ToString());
+        Assert.DoesNotContain(r.Money.Payments, p => p.To == OtherPayee);
+    }
+
+    [Fact]
+    public async Task A_payout_whose_grant_was_taken_back_while_it_waited_is_dropped()
+    {
+        var r = Setup();
+        Grant(r, Owner);
+        using var hold = new ManualResetEventSlim();
+        r.Money.Hold = hold;
+        try
+        {
+            r.Api.llGiveMoney(Payee.ToString(), 1);
+            r.Api.llGiveMoney(Payee.ToString(), 1);
+            await Task.Delay(Settle, TestContext.Current.CancellationToken);
+            r.Api.llGiveMoney(OtherPayee.ToString(), 3);
+
+            r.Item.PermsMask = 0;
+        }
+        finally
+        {
+            hold.Set();
+        }
+        await Paid(r, Payee);
+        await Task.Delay(Settle, TestContext.Current.CancellationToken);
+
+        Assert.DoesNotContain(r.Money.Payments, p => p.To == OtherPayee);
+    }
+
+    [Fact]
+    public async Task An_owner_can_have_at_most_60_payouts_waiting()
+    {
+        var r = Setup();
+        Grant(r, Owner);
+        using var hold = new ManualResetEventSlim();
+        r.Money.Hold = hold;
+        try
+        {
+            for (var i = 0; i < 70; i++) r.Api.llGiveMoney(Payee.ToString(), 1);
+        }
+        finally
+        {
+            hold.Set();
+        }
+        var deadline = DateTime.UtcNow.AddSeconds(30);
+        while (r.Money.Payments.Count < 60 && DateTime.UtcNow < deadline)
+            await Task.Delay(20, TestContext.Current.CancellationToken);
+        await Task.Delay(Settle, TestContext.Current.CancellationToken);
+
+        Assert.Equal(60, r.Money.Payments.Count);
+    }
+
+    [Fact]
+    public async Task A_transfer_over_the_waiting_limit_reports_failure()
+    {
+        var r = Setup();
+        Grant(r, Owner);
+        using var hold = new ManualResetEventSlim();
+        r.Money.Hold = hold;
+        try
+        {
+            for (var i = 0; i < 60; i++) r.Api.llGiveMoney(Payee.ToString(), 1);
+            r.Api.llTransferLindenDollars(OtherPayee.ToString(), 9);
+
+            var result = await TransactionResult(r);
+            Assert.Equal(0, ((LSL_Types.LSLInteger)result.Params[1]).value);
+        }
+        finally
+        {
+            hold.Set();
+        }
+        await Task.Delay(Settle, TestContext.Current.CancellationToken);
+        Assert.DoesNotContain(r.Money.Payments, p => p.To == OtherPayee);
+    }
+
     [Fact]
     public async Task llTransferLindenDollars_still_posts_its_transaction_result()
     {

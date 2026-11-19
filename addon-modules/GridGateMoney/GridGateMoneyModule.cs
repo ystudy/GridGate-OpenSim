@@ -627,15 +627,16 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
             reason = "SERVICE_ERROR";
             return false;
         }
-        if (MoneyRules.CheckPayout(Info(root), fromID.Guid) is { } refused)
-        {
-            reason = refused;
-            return false;
-        }
-        // A payout the pause refuses anyway doesn't use up the owner's allowance.
+        // The cheap refusals come first: the pause, then the owner and group checks, which need no walk through the
+        // object's inventory. A payout the pause refuses anyway doesn't use up the owner's allowance.
         if (actions.PayoutsPaused)
         {
             reason = "SERVICE_ERROR";
+            return false;
+        }
+        if (MoneyRules.CheckPayout(PayoutInfo(root), fromID.Guid) is { } refused)
+        {
+            reason = refused;
             return false;
         }
         if (!_payoutLimit.TryTake(fromID.Guid, out var warn))
@@ -737,6 +738,11 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
                     return sp.ControllingClient;
         return null;
     }
+
+    /// <summary>The root's owner and group only, for a payout's first checks: no walk through its inventory.</summary>
+    private static PartInfo PayoutInfo(SceneObjectPart root) =>
+        new(root.UUID.Guid, root.UUID.Guid, true, root.OwnerID.Guid, root.GroupID.Guid, root.Name, root.PayPrice, root.ObjectSaleType, root.SalePrice,
+            false);
 
     private static PartInfo Info(SceneObjectPart p)
     {
