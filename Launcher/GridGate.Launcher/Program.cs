@@ -402,6 +402,7 @@ builder.Services.AddSingleton(sp => new GridGate.Launcher.Core.Front.FrontPageSt
 });
 builder.Services.AddSingleton(sp => new ThemeStore(paths, sp.GetRequiredKeyedService<PictureStore>("theme"), sp.GetRequiredService<ILogger<ThemeStore>>()));
 builder.Services.AddSingleton<SplashSnapshot>();
+builder.Services.AddSingleton<GridGate.Launcher.Front.FrontPageSnapshot>();
 // The Home dashboard's counts (design 2026-11-05-dashboard), cached a minute.
 builder.Services.AddSingleton<GridGate.Launcher.Core.Dashboard.IWorldCounter>(sp => new GridGate.Launcher.Core.Dashboard.WorldCounter(
     sp.GetRequiredService<Func<LauncherSettings>>(), sp.GetRequiredService<ILogger<GridGate.Launcher.Core.Dashboard.WorldCounter>>()));
