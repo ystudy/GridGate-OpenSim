@@ -251,11 +251,8 @@ public sealed class MoneyPageTests
                 services.AddSingleton<IVisitorDirectory>(visitors ?? new FakeVisitors());
                 services.RemoveAll<IMoneyAlerts>();
                 services.AddSingleton<IMoneyAlerts>(alerts ?? new FakeAlerts());
-                if (open)
-                {
-                    services.RemoveAll<MoneyGate>();
-                    services.AddSingleton(sp => new MoneyGate(sp.GetRequiredService<Func<LauncherSettings>>(), MoneyGate.Open));
-                }
+                services.RemoveAll<MoneyGate>();
+                services.AddSingleton(sp => new MoneyGate(sp.GetRequiredService<Func<LauncherSettings>>(), open ? MoneyGate.Open : MoneyGate.Closed));
             },
         };
         TestAuth.AddStaff(f.Robust);

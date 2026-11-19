@@ -622,7 +622,14 @@ public sealed class RegionServerMoneyPageTests
             Join = Avalon(),
             Setup = new SetupState(WorldNamed: true, OwnerCreated: true, RegionCreated: true, Finished: true, Owner: new OwnerInfo("Estate", "Owner", OwnerId)),
         })
-        { Before = TestAuth.Apply };
+        {
+            Before = TestAuth.Apply,
+            ExtraServices = services =>
+            {
+                services.RemoveAll<MoneyGate>();
+                services.AddSingleton(sp => new MoneyGate(sp.GetRequiredService<Func<LauncherSettings>>(), MoneyGate.Closed));
+            },
+        };
         await using (f)
         {
             TestAuth.AddStaff(f.Robust);

@@ -34,11 +34,8 @@ public sealed class MyCoinsPageTests
             {
                 services.RemoveAll<IMoneyBooks>();
                 services.AddSingleton<IMoneyBooks>(books);
-                if (open)
-                {
-                    services.RemoveAll<MoneyGate>();
-                    services.AddSingleton(sp => new MoneyGate(sp.GetRequiredService<Func<LauncherSettings>>(), MoneyGate.Open));
-                }
+                services.RemoveAll<MoneyGate>();
+                services.AddSingleton(sp => new MoneyGate(sp.GetRequiredService<Func<LauncherSettings>>(), open ? MoneyGate.Open : MoneyGate.Closed));
             },
         };
         TestAuth.AddStaff(f.Robust);

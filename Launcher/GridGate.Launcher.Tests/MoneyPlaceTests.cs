@@ -47,8 +47,8 @@ public sealed class MoneyPlaceTests
         foreach (var plan in Enum.GetValues<OwnerPlan>())
         {
             var s = On(plan, grid: MoneyMode.Play);
-            Assert.Equal(MoneyMode.Off, MoneyPlace.GridMode(s, MoneyRelease.Effective));
-            Assert.False(MoneyPlace.ServiceHere(s, MoneyRelease.Effective));
+            Assert.Equal(MoneyMode.Off, MoneyPlace.GridMode(s, MoneyGate.Closed));
+            Assert.False(MoneyPlace.ServiceHere(s, MoneyGate.Closed));
         }
     }
 

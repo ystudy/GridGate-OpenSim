@@ -10,12 +10,23 @@ public sealed class MoneyGateTests
     private static readonly LauncherSettings PlayChosen = TestSettings.Create() with { Money = new MoneySettings(Mode: MoneyMode.Play) };
 
     [Fact]
-    public void Gate_reads_off_until_approved()
+    public void Closed_gate_reads_off()
     {
-        var gate = new MoneyGate(() => PlayChosen);
+        var gate = new MoneyGate(() => PlayChosen, MoneyGate.Closed);
 
         Assert.Equal(MoneyMode.Off, gate.Effective());
         Assert.False(gate.On);
+    }
+
+    [Fact]
+    public void Released_gate_runs_play_coins_and_Gloebit_but_not_real_coins()
+    {
+        var gate = new MoneyGate(() => PlayChosen);
+
+        Assert.Equal(MoneyMode.Play, gate.Effective());
+        Assert.True(gate.Allows(MoneyMode.Play));
+        Assert.True(gate.Allows(MoneyMode.Gloebit));
+        Assert.False(gate.Allows(MoneyMode.Real));
     }
 
     [Fact]
@@ -30,7 +41,7 @@ public sealed class MoneyGateTests
     [Fact]
     public void Allows_reads_each_mode_through_the_gate()
     {
-        var closed = new MoneyGate(() => PlayChosen);
+        var closed = new MoneyGate(() => PlayChosen, MoneyGate.Closed);
         var open = new MoneyGate(() => PlayChosen, MoneyGate.Open);
 
         Assert.True(closed.Allows(MoneyMode.Off));

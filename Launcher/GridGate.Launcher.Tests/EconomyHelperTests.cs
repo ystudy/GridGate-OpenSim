@@ -78,11 +78,8 @@ public sealed class EconomyHelperTests
                     services.RemoveAll<EconomyLimits>();
                     services.AddSingleton(new EconomyLimits(TimeProvider.System, perSecond: 1000));
                 }
-                if (open)
-                {
-                    services.RemoveAll<MoneyGate>();
-                    services.AddSingleton(sp => new MoneyGate(sp.GetRequiredService<Func<LauncherSettings>>(), MoneyGate.Open));
-                }
+                services.RemoveAll<MoneyGate>();
+                services.AddSingleton(sp => new MoneyGate(sp.GetRequiredService<Func<LauncherSettings>>(), open ? MoneyGate.Open : MoneyGate.Closed));
             },
         };
 

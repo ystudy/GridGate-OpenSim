@@ -37,10 +37,20 @@ public sealed class MoneySettingsTests : IDisposable
 
     [Theory]
     [InlineData(MoneyMode.Play)]
+    [InlineData(MoneyMode.Gloebit)]
+    public void Play_coins_and_Gloebit_are_approved(MoneyMode mode) =>
+        Assert.Equal(mode, MoneyRelease.Effective(new MoneySettings(Mode: mode)));
+
+    [Fact]
+    public void Real_coins_wait_for_their_own_approval() =>
+        Assert.Equal(MoneyMode.Off, MoneyRelease.Effective(new MoneySettings(Mode: MoneyMode.Real)));
+
+    [Theory]
+    [InlineData(MoneyMode.Play)]
     [InlineData(MoneyMode.Real)]
     [InlineData(MoneyMode.Gloebit)]
-    public void Unapproved_modes_read_as_off(MoneyMode mode) =>
-        Assert.Equal(MoneyMode.Off, MoneyRelease.Effective(new MoneySettings(Mode: mode)));
+    public void A_closed_gate_reads_every_mode_as_off(MoneyMode mode) =>
+        Assert.Equal(MoneyMode.Off, MoneyGate.Closed(new MoneySettings(Mode: mode)));
 
     [Fact]
     public void Approvals_open_the_gate_one_level_at_a_time()

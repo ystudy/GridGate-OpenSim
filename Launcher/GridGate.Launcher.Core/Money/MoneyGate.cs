@@ -4,13 +4,16 @@ namespace GridGate.Launcher.Core.Money;
 
 /// <summary>
 /// The one place code reads the mode money actually runs in (money plan 2, task 1). It goes through
-/// <see cref="MoneyRelease.Effective(MoneySettings)"/>, so it reads Off until the owner has approved the review; tests pass
-/// <see cref="Open"/> to see the chosen mode.
+/// <see cref="MoneyRelease.Effective(MoneySettings)"/>, so a mode the owner hasn't approved reads Off; tests pass
+/// <see cref="Open"/> to see the chosen mode, or <see cref="Closed"/> to see money with no approval at all.
 /// </summary>
 public sealed class MoneyGate(Func<LauncherSettings> settings, Func<MoneySettings, MoneyMode>? effective = null)
 {
     /// <summary>For tests only: the chosen mode, as if it were approved.</summary>
     public static readonly Func<MoneySettings, MoneyMode> Open = m => m.Mode;
+
+    /// <summary>For tests only: the gate before any approval, which reads every mode as Off.</summary>
+    public static readonly Func<MoneySettings, MoneyMode> Closed = m => MoneyRelease.Effective(m, playApproved: false, realApproved: false);
 
     private readonly Func<MoneySettings, MoneyMode> _effective = effective ?? MoneyRelease.Effective;
 
