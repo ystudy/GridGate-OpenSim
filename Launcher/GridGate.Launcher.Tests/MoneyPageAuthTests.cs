@@ -342,6 +342,9 @@ public sealed class MoneyPageAuthTests
         Arrange(h, k);
         var c = await ClientAsync(h.F, who);
         var token = await TokenAsync(c, who, k.Site);
+        // A Region Server's Gloebit app is saved only with the owner's current two-factor code.
+        if (k is { Page: "/advanced/money", Handler: "Gloebit" } && who == "owner")
+            k = k with { Form = new(k.Form) { ["TwoFactorCode"] = OwnerTwoFactorKit.NextCode(h.F) } };
         var before = Look(h);
 
         using var r = await PostAsync(c, k, token);
