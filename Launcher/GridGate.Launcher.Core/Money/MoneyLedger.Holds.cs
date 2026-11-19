@@ -28,7 +28,11 @@ public sealed partial class MoneyLedger
     /// <summary>A hold neither completed nor returned within this time goes back to the buyer on its own.</summary>
     public static readonly TimeSpan HoldLifetime = TimeSpan.FromMinutes(5);
 
-    private sealed record HoldRow(long Id, long BuyerId, long SellerId, long Amount, string Kind, Guid? RegionId, Guid? ObjectId, string? ObjectName, string State, string? KeyId);
+    /// <summary>A sale completed later than this after its hold ran out takes no coins: the seller is left unpaid and staff are told.</summary>
+    public static readonly TimeSpan LateCompleteLimit = TimeSpan.FromHours(24);
+
+    private sealed record HoldRow(long Id, long BuyerId, long SellerId, long Amount, string Kind, Guid? RegionId, Guid? ObjectId, string? ObjectName, string State, string? KeyId,
+        DateTime Created);
 
     /// <summary>The fees a region may hold before their action; each pays Fees, or a group's founder for a join fee.</summary>
     private static readonly string[] FeeKinds = [EntryType.UploadFee, EntryType.ClassifiedFee, EntryType.GroupJoinFee];
@@ -271,14 +275,28 @@ public sealed partial class MoneyLedger
     private async Task<MoneyResult> CompleteLateAsync(MySqlConnection conn, MySqlTransaction tx, HoldRow hold, CancellationToken ct)
     {
         MoneyResult Unpaid() => MoneyResult.Of(MoneyOutcome.HoldClosed) with { SaleUnpaid = true };
+        // Past the limit nothing is taken: the buyer may have been told the purchase failed long ago.
+        if (Now > hold.Created + HoldLifetime + LateCompleteLimit) return Unpaid();
         if (hold.KeyId is { } key) await LockKeyAsync(conn, tx, key, ct);
         if (await GridFrozenAsync(conn, tx, ct)) return Unpaid();
+        // Both people go through the visitor rules a payment does (visitor money off, a grid taken off the list): the people are read back from their accounts.
+        foreach (var id in new[] { hold.BuyerId, hold.SellerId })
+            if (id > MoneySchema.HoldingId && await PersonOfAsync(conn, tx, id, ct) is { } person && (await ResolveAsync(conn, tx, person, ct)).Account is null) return Unpaid();
         var reason = IsFeeKind(hold.Kind) ? hold.Kind : hold.Kind == "land" ? EntryType.LandSale : EntryType.ObjectSale;
         var moved = await MoveBetweenAsync(conn, tx, hold.BuyerId, hold.SellerId, hold.Amount,
             new Entry(EntryType.LateSale, hold.RegionId, hold.ObjectId, hold.ObjectName, Reason: reason, HoldId: hold.Id, KeyId: hold.KeyId),
             guarded: true, ct, limited: true);
         if (moved.Outcome != MoneyOutcome.Ok) return Unpaid();
         return moved with { HoldId = hold.Id, ToBalance = hold.SellerId == MoneySchema.FeesId ? null : moved.ToBalance };
+    }
+
+    /// <summary>The person an account belongs to, by the agent and home it was opened for; null when it isn't there.</summary>
+    private static async Task<AccountRef?> PersonOfAsync(MySqlConnection conn, MySqlTransaction tx, long accountId, CancellationToken ct)
+    {
+        await using var cmd = new MySqlCommand("SELECT agent_id, home FROM accounts WHERE id = @id", conn, tx);
+        cmd.Parameters.AddWithValue("@id", accountId);
+        await using var r = await cmd.ExecuteReaderAsync(ct);
+        return await r.ReadAsync(ct) ? new AccountRef(Guid.Parse(r.GetValue(0).ToString()!), r.GetString(1)) : null;
     }
 
     /// <summary>How many entries name the hold, and how many of those are its opening entry as the hold now reads.</summary>
@@ -301,12 +319,12 @@ public sealed partial class MoneyLedger
     private static async Task<HoldRow?> LockHoldAsync(MySqlConnection conn, MySqlTransaction tx, long id, CancellationToken ct)
     {
         await using var cmd = new MySqlCommand(
-            "SELECT id, buyer_id, seller_id, amount, kind, region_id, object_id, object_name, state, key_id FROM holds WHERE id = @id FOR UPDATE", conn, tx);
+            "SELECT id, buyer_id, seller_id, amount, kind, region_id, object_id, object_name, state, key_id, created FROM holds WHERE id = @id FOR UPDATE", conn, tx);
         cmd.Parameters.AddWithValue("@id", id);
         await using var r = await cmd.ExecuteReaderAsync(ct);
         if (!await r.ReadAsync(ct)) return null;
         return new HoldRow(r.GetInt64(0), r.GetInt64(1), r.GetInt64(2), r.GetInt64(3), r.GetString(4),
             r.IsDBNull(5) ? null : r.GetGuid(5), r.IsDBNull(6) ? null : r.GetGuid(6),
-            r.IsDBNull(7) ? null : r.GetString(7), r.GetString(8), r.IsDBNull(9) ? null : r.GetString(9));
+            r.IsDBNull(7) ? null : r.GetString(7), r.GetString(8), r.IsDBNull(9) ? null : r.GetString(9), DateTime.SpecifyKind(r.GetDateTime(10), DateTimeKind.Utc));
     }
 }

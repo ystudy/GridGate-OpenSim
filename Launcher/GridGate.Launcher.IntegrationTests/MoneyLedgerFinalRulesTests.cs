@@ -185,6 +185,59 @@ public sealed class MoneyLedgerFinalRulesTests(MoneyMariaDb maria) : IClassFixtu
     }
 
     [Fact]
+    public async Task A_complete_within_a_day_of_the_hold_running_out_still_takes_the_coins()
+    {
+        var (ledger, db, time) = await MoneyLedgerTransferTests.Setup(maria, Fees());
+        var hold = await ExpiredHold(ledger, time, Buy(40));
+        time.Advance(MoneyLedger.LateCompleteLimit - TimeSpan.FromMinutes(1));
+
+        Assert.Equal(MoneyOutcome.Ok, (await ledger.CompleteHoldAsync(Guid.NewGuid(), hold, Ct)).Outcome);
+
+        Assert.Equal(60, await Of(db, A));
+    }
+
+    [Fact]
+    public async Task A_complete_more_than_a_day_after_the_hold_ran_out_takes_nothing_and_says_the_seller_wasnt_paid()
+    {
+        var (ledger, db, time) = await MoneyLedgerTransferTests.Setup(maria, Fees());
+        var hold = await ExpiredHold(ledger, time, Buy(40));
+        time.Advance(MoneyLedger.LateCompleteLimit + TimeSpan.FromMinutes(5));
+
+        var done = await ledger.CompleteHoldAsync(Guid.NewGuid(), hold, Ct);
+
+        Assert.Equal(MoneyOutcome.HoldClosed, done.Outcome);
+        Assert.True(done.SaleUnpaid);
+        Assert.Equal(100, await Of(db, A));
+        Assert.Equal(100, await Of(db, B));
+        Assert.Equal("returned", await db.Text($"SELECT state FROM `money`.`holds` WHERE id = {hold}"));
+        await AssertSound(ledger);
+    }
+
+    [Fact]
+    public async Task A_late_complete_follows_the_visitor_rules_like_any_payment()
+    {
+        // A visitor buys, the sweep returns the hold, and the owner then switches visitor money off: the late complete must not debit the visitor.
+        var db = await maria.FreshAsync();
+        await db.EnsureSchemaAsync();
+        await db.AddUser(B);
+        var visitor = Guid.Parse("c0000000-0000-0000-0000-00000000000c");
+        const string home = "http://other.example:8002";
+        await db.AddVisitor(visitor, home + "/");
+        var time = new FakeTimeProvider(new DateTimeOffset(2026, 11, 13, 12, 0, 0, TimeSpan.Zero));
+        var settings = Fees() with { Visitors = VisitorMoney.All };
+        var ledger = new MoneyLedger(db.OpenMoney, () => settings, () => MoneyMode.Play, MoneyLedgerTransferTests.LocalUsers(db), MoneyLedgerTransferTests.KnownVisitors(db), time);
+        await db.Sql($"INSERT INTO `money`.`accounts` (agent_id, home, kind, balance, created) VALUES ('{visitor}', '{home}', 'Visitor', 100, UTC_TIMESTAMP(6))");
+        var hold = await ExpiredHold(ledger, time, new HoldRequest(Guid.NewGuid(), "object", new AccountRef(visitor, home), AccountRef.Resident(B), 40, Region, Guid.NewGuid(), "dress", "p1"));
+        settings = Fees() with { Visitors = VisitorMoney.Off };
+
+        var done = await ledger.CompleteHoldAsync(Guid.NewGuid(), hold, Ct);
+
+        Assert.Equal(MoneyOutcome.HoldClosed, done.Outcome);
+        Assert.True(done.SaleUnpaid);
+        Assert.Equal(100, await db.Scalar($"SELECT balance FROM `money`.`accounts` WHERE agent_id = '{visitor}' AND home = '{home}'"));
+    }
+
+    [Fact]
     public async Task A_complete_after_a_return_on_request_stays_hold_closed_and_takes_nothing()
     {
         var (ledger, db, _) = await MoneyLedgerTransferTests.Setup(maria, Fees());

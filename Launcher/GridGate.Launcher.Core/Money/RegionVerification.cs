@@ -3,11 +3,11 @@ using MySqlConnector;
 
 namespace GridGate.Launcher.Core.Money;
 
-/// <summary>Why money does or doesn't work in a region; the website shows each in words. Waiting: listed at a server when it paired, until the owner confirms it.</summary>
+/// <summary>Why money does or doesn't work in a region; the website shows each in words. Waiting: first seen at a server (when it paired or later), until the owner confirms it.</summary>
 public enum RegionStatus { Verified, NotPaired, Moved, NoGridGateMoney, NeedsUpdate, NotHeardFrom, Waiting }
 
-/// <summary>One region Robust lists, with whether money works there and, if not, why. <paramref name="KeyId"/> is the key that covers it, if any; for a moved region <paramref name="PinnedKeyId"/> is the key of the server it is pinned to.</summary>
-public sealed record RegionState(Guid RegionId, string Name, string ServerIp, int Port, string? KeyId, RegionStatus Status, string? PinnedKeyId = null);
+/// <summary>One region Robust lists, with whether money works there and, if not, why. <paramref name="KeyId"/> is the key that covers it, if any; for a moved region <paramref name="PinnedKeyId"/> is the key of the server it is pinned to; for a waiting one <paramref name="FirstSeen"/> is when it first appeared at its server (UTC), when known.</summary>
+public sealed record RegionState(Guid RegionId, string Name, string ServerIp, int Port, string? KeyId, RegionStatus Status, string? PinnedKeyId = null, DateTime? FirstSeen = null);
 
 /// <summary>
 /// A key's last health call, for the Region Servers list: the money protocol its module speaks, when it
@@ -95,11 +95,11 @@ public sealed class RegionVerification(Func<CancellationToken, Task<MySqlConnect
         var heard = await HeardByKeyAsync(null, ct);
         var moved = (await pins.MovesAsync(servers, ct)).ToDictionary(m => m.RegionId, m => m.PinnedTo);
         var covered = new Dictionary<Guid, IReadOnlySet<Guid>>();
-        var waiting = new Dictionary<Guid, IReadOnlySet<Guid>>();
+        var waiting = new Dictionary<Guid, IReadOnlyDictionary<Guid, DateTime>>();
         foreach (var server in servers)
         {
             covered[server.Id] = await pins.CoveredAsync(server, server.FirstPort, RegionKeyRing.NextFirstPort(servers, server), own, ct, pinNew: false);
-            waiting[server.Id] = (await pins.WaitingAsync(server.Id, ct)).ToHashSet();
+            waiting[server.Id] = await pins.WaitingSinceAsync(server.Id, ct);
         }
 
         var states = new List<RegionState>();
@@ -108,6 +108,7 @@ public sealed class RegionVerification(Func<CancellationToken, Task<MySqlConnect
             string? key = null;
             RegionStatus? status = null;
             string? pinnedKey = null;
+            DateTime? firstSeen = null;
             if (settings.Regions.FirstOrDefault(r => r.Uuid == id) is { } local)
                 key = local.Instance;
             else if (servers.FirstOrDefault(s => string.Equals(s.Host, ip, StringComparison.OrdinalIgnoreCase)
@@ -119,14 +120,17 @@ public sealed class RegionVerification(Func<CancellationToken, Task<MySqlConnect
                     status = RegionStatus.Moved;
                     pinnedKey = "server:" + pinnedTo.ToString("N");
                 }
-                else if (waiting[server.Id].Contains(id))
+                else if (waiting[server.Id].TryGetValue(id, out var since))
+                {
                     status = RegionStatus.Waiting;
+                    firstSeen = since;
+                }
                 else if (!covered[server.Id].Contains(id))
-                    status = RegionStatus.Moved;
+                    status = RegionStatus.Waiting; // listed here, pinned to nobody yet: it waits for the owner once the server's next call pins it
             }
             else
                 status = RegionStatus.NotPaired;
-            states.Add(new RegionState(id, name, ip, port, key, status ?? StatusOf(heard.GetValueOrDefault(key!), id), pinnedKey));
+            states.Add(new RegionState(id, name, ip, port, key, status ?? StatusOf(heard.GetValueOrDefault(key!), id), pinnedKey, firstSeen));
         }
         return states;
     }

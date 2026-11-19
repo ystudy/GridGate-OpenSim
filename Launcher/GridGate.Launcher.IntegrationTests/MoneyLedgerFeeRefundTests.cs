@@ -65,6 +65,42 @@ public sealed class MoneyLedgerFeeRefundTests(MoneyMariaDb maria) : IClassFixtur
     }
 
     [Fact]
+    public async Task An_ordinary_refund_cannot_undo_the_owners_fee_refund()
+    {
+        var (ledger, db, _) = await MoneyLedgerTransferTests.Setup(maria, Fees());
+        var (_, opening) = await Paid(ledger, FeeHold(EntryType.UploadFee, 10));
+        Assert.Equal(MoneyOutcome.Ok, (await ledger.RefundHeldFeeAsync(PayerA, opening, Staff, Ct)).Outcome);
+        var feeRefund = await db.Scalar($"SELECT id FROM `money`.`entries` WHERE type = '{EntryType.FeeRefund}'");
+
+        var undo = await ledger.RefundAsync(feeRefund, Staff, Ct);
+
+        Assert.Equal(MoneyOutcome.NotAllowed, undo.Outcome);
+        Assert.Equal(100, await Of(db, A));
+        Assert.Equal(0, await FeesBalance(db));
+        Assert.Equal(0, await db.Scalar($"SELECT COUNT(*) FROM `money`.`entries` WHERE type = '{EntryType.Refund}'"));
+        await AssertSound(ledger);
+    }
+
+    [Fact]
+    public async Task The_self_check_flags_an_ordinary_refund_of_a_fee_refund()
+    {
+        var (ledger, db, _) = await MoneyLedgerTransferTests.Setup(maria, Fees());
+        var (_, opening) = await Paid(ledger, FeeHold(EntryType.UploadFee, 10));
+        Assert.Equal(MoneyOutcome.Ok, (await ledger.RefundHeldFeeAsync(PayerA, opening, Staff, Ct)).Outcome);
+        var feeRefund = await db.Scalar($"SELECT id FROM `money`.`entries` WHERE type = '{EntryType.FeeRefund}'");
+        // As if someone wrote it into the books by hand: moneyuser can add entries.
+        await db.Sql($"""
+            INSERT INTO `money`.`entries` (type, from_id, to_id, amount, from_after, to_after, at, reverses)
+            SELECT '{EntryType.Refund}', to_id, from_id, amount, 0, 0, UTC_TIMESTAMP(6), id FROM `money`.`entries` WHERE id = {feeRefund}
+            """);
+
+        var check = await ledger.SelfCheckAsync(Ct);
+
+        Assert.False(check.Ok);
+        Assert.Contains(check.Problems, p => p.Contains("doesn't reverse its entry"));
+    }
+
+    [Fact]
     public async Task A_group_join_fee_paid_to_a_founder_comes_back_from_the_founder()
     {
         var (ledger, db, _) = await MoneyLedgerTransferTests.Setup(maria, Fees());

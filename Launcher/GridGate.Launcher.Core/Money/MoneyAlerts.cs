@@ -21,6 +21,12 @@ public enum AlertKind
 
     /// <summary>A pairing took over an older paired server's address and first port: the new server's key, with the old one in the other key.</summary>
     ServerTookOver,
+
+    /// <summary>A key sent a handoff for a person it hadn't placed verified: normal for people who walked in from a stock region or came in through the Gatekeeper. A notice only, one row per key.</summary>
+    RefusedHandoff,
+
+    /// <summary>A key reported an arrival in a region it doesn't cover (one still waiting for the owner's Confirm, one that moved, or one it doesn't run). A notice only, one row per key.</summary>
+    ArrivalNotCovered,
 }
 
 /// <summary>A notice asks the owner to check something; a warning shows on the dashboard too.</summary>
@@ -54,8 +60,8 @@ public interface IMoneyAlerts
 
 /// <summary>
 /// The owner's money alerts, in the money database's <c>alerts</c> table. Each kind is grouped, per
-/// <see cref="Window"/> from a row's first time, into one row that counts up: an unhanded arrival per key and region (a
-/// disagreement with another key on a row apart from plain claims), a key's limit per key, a person's limit per person, a sale left unpaid per key and region, a key's payouts to many owners per key.
+/// <see cref="Window"/> from a row's first time, into one row that counts up: an unhanded arrival per key (a
+/// disagreement on a row apart from plain claims, one per other key), a refused handoff and an arrival in a region the key doesn't cover each per key, a key's limit per key, a person's limit per person, a sale left unpaid per key and region, a key's payouts to many owners per key.
 /// A moved region has one open row per region until it is cleared,
 /// counting moves seen (another server listing it), not requests. A row's level only rises, from notice to warning. The
 /// audit log gets a line when a row opens (for a person's limit, when it appears) and when it becomes a warning, not on
@@ -187,6 +193,20 @@ public sealed class MoneyAlerts(Func<CancellationToken, Task<MySqlConnection>> o
     /// </summary>
     public Task ServerTookOverAsync(string newKeyId, string oldKeyId, CancellationToken ct) =>
         RaiseAsync(AlertKind.ServerTookOver, newKeyId, null, null, (_, _) => Task.FromResult(new Level(AlertLevel.Notice, false, oldKeyId)), ct);
+
+    /// <summary>
+    /// <paramref name="keyId"/> sent a handoff from <paramref name="regionId"/> for <paramref name="agentId"/>, whom it hadn't placed verified there. A notice,
+    /// counted on one row per key: never one of the claims that make a warning.
+    /// </summary>
+    public Task RefusedHandoffAsync(string keyId, Guid regionId, Guid? agentId, CancellationToken ct) =>
+        RaiseAsync(AlertKind.RefusedHandoff, keyId, regionId, agentId, (_, _) => Fixed(AlertLevel.Notice), ct);
+
+    /// <summary>
+    /// <paramref name="keyId"/> reported <paramref name="agentId"/> arrived in <paramref name="regionId"/>, which it doesn't cover (it waits for the owner,
+    /// moved, or isn't the key's). A notice, counted on one row per key: never one of the claims that make a warning.
+    /// </summary>
+    public Task ArrivalNotCoveredAsync(string keyId, Guid regionId, Guid agentId, CancellationToken ct) =>
+        RaiseAsync(AlertKind.ArrivalNotCovered, keyId, regionId, agentId, (_, _) => Fixed(AlertLevel.Notice), ct);
 
     public Task<IReadOnlyList<MoneyAlert>> OpenAsync(CancellationToken ct) => ReadOpenAsync(null, ct);
 
@@ -320,8 +340,10 @@ public sealed class MoneyAlerts(Func<CancellationToken, Task<MySqlConnection>> o
     /// <summary>The columns one kind's rows are grouped by (besides the kind and the window).</summary>
     private static string GroupOf(AlertKind kind) => kind switch
     {
-        // Disagreements (another key named) and plain claims keep rows apart.
-        AlertKind.UnhandedArrival => "key_id = @key AND region_id = @region AND (other_key_id IS NULL) = (@other IS NULL)",
+        // One row per key for plain claims, and one per key and other key for disagreements: a key can't open a row per region it makes up.
+        AlertKind.UnhandedArrival => "key_id = @key AND (other_key_id IS NULL) = (@other IS NULL) AND (@other IS NULL OR other_key_id = @other)",
+        AlertKind.RefusedHandoff => "key_id = @key",
+        AlertKind.ArrivalNotCovered => "key_id = @key",
         AlertKind.KeyLimitReached => "key_id = @key",
         AlertKind.RegionMoved => "region_id = @region",
         AlertKind.PersonLimitRepeated => "agent_id = @agent",

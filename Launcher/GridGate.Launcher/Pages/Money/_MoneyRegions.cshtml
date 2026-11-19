@@ -34,7 +34,7 @@
                         <td>@MoneyVerifyText.Where(r, s)</td>
                         <td>
                             <span aria-hidden="true">@(verified ? "✔" : "✖")</span>
-                            @MoneyVerifyText.Words(r.Status, movedFrom)<help-tip>@MoneyVerifyText.Help(r.Status)</help-tip>
+                            @MoneyVerifyText.Words(r.Status, movedFrom, r.FirstSeen)<help-tip>@MoneyVerifyText.Help(r.Status)</help-tip>
                             @if (!verified)
                             {
                                 <a href="@MoneyVerifyText.Link(MoneyVerifyText.Anchor(r.Status))" target="_blank" rel="noopener noreferrer">How to fix</a>

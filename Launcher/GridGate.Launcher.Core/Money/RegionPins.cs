@@ -7,19 +7,18 @@ public sealed record RegionMove(Guid RegionId, Guid PinnedTo, Guid ListedAt);
 
 /// <summary>
 /// Which paired Region Server a region id belongs to. The first time a region id is
-/// listed in Robust at a paired server's address and ports it is pinned to that server in the money database; after that
-/// only that server's key covers it, however Robust's list changes. A region listed at another server stays uncovered
+/// listed in Robust at a paired server's address and ports it is pinned to that server in the money database, as waiting: it covers
+/// nothing until the owner confirms it. After that only that server's key covers it, however Robust's list changes. A region listed at another server stays uncovered
 /// until the owner approves the move; a request that finds it raises a <see cref="AlertKind.RegionMoved"/> alert when
-/// <paramref name="alerts"/> is given. Regions already listed when a server pairs are pinned to it as waiting: they cover
-/// nothing until the owner confirms them. Removing a server deletes no pin. A database failure is <see cref="MoneyUnavailableException"/>.
+/// <paramref name="alerts"/> is given. Regions already listed when a server pairs wait the same way. Removing a server deletes no pin. A database failure is <see cref="MoneyUnavailableException"/>.
 /// </summary>
 public sealed class RegionPins(Func<CancellationToken, Task<MySqlConnection>> openMoney, RegionHosts hosts, TimeProvider time, MoneyAlerts? alerts = null)
 {
     /// <summary>
     /// The regions Robust lists at <paramref name="server"/>'s address and port range, minus <paramref name="ownRegions"/>,
-    /// that are pinned to it and confirmed. Listed regions nobody has pinned yet are pinned to it first. Only the request path passes
+    /// that are pinned to it and confirmed. Listed regions nobody has pinned yet are pinned to it first, waiting for the owner. Only the request path passes
     /// <paramref name="raiseMoves"/>: a status read (the website's region list) raises no alerts. A read that passes <paramref name="pinNew"/> false
-    /// pins nothing (so a page load can't pin a server's regions while it is pairing) and counts the unpinned ones as covered, which the request path would make them.
+    /// pins nothing (so a page load can't pin a server's regions while it is pairing); the unpinned ones are not covered, as the request path would leave them.
     /// </summary>
     public async Task<IReadOnlySet<Guid>> CoveredAsync(PairedServer server, int fromPort, int toPort, IReadOnlySet<Guid> ownRegions, CancellationToken ct,
         bool raiseMoves = false, bool pinNew = true)
@@ -37,7 +36,7 @@ public sealed class RegionPins(Func<CancellationToken, Task<MySqlConnection>> op
                 foreach (var id in unpinned)
                 {
                     // IGNORE: two requests may pin the same new region; whichever server's row landed first stands.
-                    await Exec(conn, null, "INSERT IGNORE INTO region_pins (region_id, server_id, machine_id, pinned) VALUES (@r, @s, @m, @t)", ct,
+                    await Exec(conn, null, "INSERT IGNORE INTO region_pins (region_id, server_id, machine_id, pinned, waiting) VALUES (@r, @s, @m, @t, 1)", ct,
                         ("@r", id.ToString()), ("@s", server.Id.ToString("N")), ("@m", (object?)server.MachineId ?? DBNull.Value),
                         ("@t", time.GetUtcNow().UtcDateTime));
                 }
@@ -53,7 +52,7 @@ public sealed class RegionPins(Func<CancellationToken, Task<MySqlConnection>> op
         if (raiseMoves && alerts is not null)
             foreach (var moved in listed.Where(r => pins.TryGetValue(r, out var to) && to.ServerId != server.Id))
                 await alerts.RegionMovedAsync(moved, "server:" + server.Id.ToString("N"), CancellationToken.None);
-        return listed.Where(r => pins.TryGetValue(r, out var to) ? to.ServerId == server.Id && !to.Waiting : !pinNew).ToHashSet();
+        return listed.Where(r => pins.TryGetValue(r, out var to) && to.ServerId == server.Id && !to.Waiting).ToHashSet();
     }
 
     /// <summary>Regions Robust lists at one paired server that are pinned to a different one (which may no longer be paired).</summary>
@@ -191,9 +190,29 @@ public sealed class RegionPins(Func<CancellationToken, Task<MySqlConnection>> op
         return waiting;
     }
 
+    /// <summary>The regions pinned to the server that wait for the owner, with when each was first seen at it (UTC).</summary>
+    public async Task<IReadOnlyDictionary<Guid, DateTime>> WaitingSinceAsync(Guid serverId, CancellationToken ct)
+    {
+        var waiting = new Dictionary<Guid, DateTime>();
+        try
+        {
+            await using var conn = await openMoney(ct);
+            await using var cmd = new MySqlCommand("SELECT region_id, pinned FROM region_pins WHERE server_id = @s AND waiting = 1", conn);
+            cmd.Parameters.AddWithValue("@s", serverId.ToString("N"));
+            await using var r = await cmd.ExecuteReaderAsync(ct);
+            while (await r.ReadAsync(ct))
+                if (Guid.TryParse(r.GetValue(0).ToString(), out var region)) waiting[region] = DateTime.SpecifyKind(r.GetDateTime(1), DateTimeKind.Utc);
+        }
+        catch (MySqlException e)
+        {
+            throw new MoneyUnavailableException(e);
+        }
+        return waiting;
+    }
+
     /// <summary>
     /// Pairing again: when <paramref name="old"/> and <paramref name="replacement"/> are the same machine (both ids known
-    /// and equal) its pins, its key's limit override, the people it placed and the handoffs it sent follow it. A different machine gets none: the old pins stay with
+    /// and equal) its pins, its key's limit override, the people it placed, the handoffs it sent and the holds it made follow it. A different machine gets none: the old pins stay with
     /// the old server id, so those regions show as moves until the owner approves them.
     /// </summary>
     public async Task CarryOverAsync(PairedServer old, PairedServer replacement, CancellationToken ct)
@@ -209,7 +228,28 @@ public sealed class RegionPins(Func<CancellationToken, Task<MySqlConnection>> op
             await Exec(conn, tx, "UPDATE limit_overrides SET target = @new WHERE kind = 'key' AND target = @old", ct, ("@new", newKey), ("@old", oldKey));
             await Exec(conn, tx, "UPDATE session_locations SET key_id = @new WHERE key_id = @old", ct, ("@new", newKey), ("@old", oldKey));
             await Exec(conn, tx, "UPDATE handoffs SET from_key = @new WHERE from_key = @old", ct, ("@new", newKey), ("@old", oldKey));
+            // A hold the old key made can still be settled by the new one: its row keeps the old key id, so the carry is written down.
+            await Exec(conn, tx, "UPDATE key_carry SET new_key = @new WHERE new_key = @old", ct, ("@new", newKey), ("@old", oldKey));
+            await Exec(conn, tx, "INSERT INTO key_carry (old_key, new_key, at) VALUES (@old, @new, @t) ON DUPLICATE KEY UPDATE new_key = @new, at = @t", ct,
+                ("@new", newKey), ("@old", oldKey), ("@t", time.GetUtcNow().UtcDateTime));
             await tx.CommitAsync(ct);
+        }
+        catch (MySqlException e)
+        {
+            throw new MoneyUnavailableException(e);
+        }
+    }
+
+    /// <summary>Whether <paramref name="oldKey"/> was carried over to <paramref name="newKey"/> by a same-computer pairing (through any number of them).</summary>
+    public async Task<bool> CarriedOverAsync(string oldKey, string newKey, CancellationToken ct)
+    {
+        try
+        {
+            await using var conn = await openMoney(ct);
+            await using var cmd = new MySqlCommand("SELECT COUNT(*) FROM key_carry WHERE old_key = @old AND new_key = @new", conn);
+            cmd.Parameters.AddWithValue("@old", oldKey);
+            cmd.Parameters.AddWithValue("@new", newKey);
+            return Convert.ToInt64(await cmd.ExecuteScalarAsync(ct), System.Globalization.CultureInfo.InvariantCulture) > 0;
         }
         catch (MySqlException e)
         {

@@ -111,6 +111,7 @@ public sealed class MoneyPairServiceTests(MoneyMariaDb maria) : IClassFixture<Mo
     /// </summary>
     private async Task<string> PairAsync(string host = ServerHost, int firstPort = 9000, string? machineId = null, bool confirm = true)
     {
+        machineId = machineId is null ? null : PairedServer.MachineKeyOf(machineId); // as a Region Server sends it
         var (code, _) = _pairing.Issue();
         var nonce = NewNonce();
         var (status, body, _) = await Post("pair", new { host, firstPort, machineId, nonce, proof = PairingProof.Client(code, _fingerprint, nonce, host) });
@@ -453,7 +454,7 @@ public sealed class MoneyPairServiceTests(MoneyMariaDb maria) : IClassFixture<Mo
         var nonce = NewNonce();
         _saveFails = true;
 
-        var body = (await Post("pair", new { host = ServerHost, firstPort = 9000, machineId = "rs-1", nonce, proof = PairingProof.Client(code, _fingerprint, nonce, ServerHost) })).Body;
+        var body = (await Post("pair", new { host = ServerHost, firstPort = 9000, machineId = PairedServer.MachineKeyOf("rs-1"), nonce, proof = PairingProof.Client(code, _fingerprint, nonce, ServerHost) })).Body;
         _saveFails = false;
 
         Assert.Equal("refused", (string?)body!["code"]);
@@ -532,7 +533,7 @@ public sealed class MoneyPairServiceTests(MoneyMariaDb maria) : IClassFixture<Mo
     }
 
     [Fact]
-    public async Task Database_down_while_pairing_keeps_the_pairing_and_pins_regions_at_first_sight()
+    public async Task Database_down_while_pairing_keeps_the_pairing_and_the_regions_wait_at_first_sight()
     {
         await StartAsync();
         _moneyDown = true;
@@ -542,7 +543,9 @@ public sealed class MoneyPairServiceTests(MoneyMariaDb maria) : IClassFixture<Mo
         Assert.Single(_settings.Money.PairedServers!);
         Assert.Contains(_logs, l => l.Contains("wait", StringComparison.OrdinalIgnoreCase) && l.Contains(ServerHost));
         _moneyDown = false;
-        Assert.Equal(1, (await Post("health", new { }, key)).Body!["regions"]!.GetValue<int>()); // first sight pins it confirmed
+        Assert.Equal(0, (await Post("health", new { }, key)).Body!["regions"]!.GetValue<int>()); // first sight pins it waiting
+        await _pins.ConfirmAllAsync(_settings.Money.PairedServers!.Single(), Ct);
+        Assert.Equal(1, (await Post("health", new { }, key)).Body!["regions"]!.GetValue<int>());
     }
 
     /// <summary>A payment of one coin from A, in <paramref name="region"/>, to a resident who is offline.</summary>
@@ -602,6 +605,184 @@ public sealed class MoneyPairServiceTests(MoneyMariaDb maria) : IClassFixture<Mo
 
         Assert.Equal(1, await Health(fresh, Theirs));
         Assert.Equal("unverified_avatar", (string?)(await Post("transfer", await PaymentFromA(db, Theirs), fresh)).Body!["code"]);
+    }
+
+    [Fact]
+    public async Task A_server_naming_another_computers_address_gets_no_region_that_registers_there_until_the_owner_confirms()
+    {
+        // Sam pairs from his own computer, naming Jo's address, where nothing is registered yet. Harbour registers there
+        // later and Wendy logs in at it. Sam's key neither covers Harbour nor can place or charge Wendy there, until the owner confirms it.
+        var db = await StartAsync();
+        const string joHost = "192.168.1.77";
+        var harbour = Guid.NewGuid();
+        var sam = await PairAsync(joHost, confirm: false);
+        await db.AddRegion(harbour, joHost);
+        await db.AddPresence(A, harbour, Session, Secure);
+        await db.AddSessionStart(Session, A, harbour, "login");
+
+        Assert.Equal(0, await Health(sam, harbour));
+        Assert.NotEqual("ok", (string?)(await Post("arrived", new { id = Guid.NewGuid(), sessionId = Session, agentId = A, regionId = harbour }, sam)).Body!["code"]);
+        Assert.Equal("unverified_avatar", (string?)(await Post("transfer", await PaymentFromA(db, harbour), sam)).Body!["code"]);
+        Assert.Equal(0, await db.Scalar("SELECT COUNT(*) FROM `money`.`entries` WHERE type = 'pay_avatar'"));
+        Assert.Equal([harbour], await _pins.WaitingAsync(_settings.Money.PairedServers!.Single().Id, Ct));
+
+        await _pins.ConfirmAllAsync(_settings.Money.PairedServers!.Single(), Ct);
+
+        Assert.Equal(1, await Health(sam, harbour));
+        Assert.Equal("ok", (string?)(await Post("arrived", new { id = Guid.NewGuid(), sessionId = Session, agentId = A, regionId = harbour }, sam)).Body!["code"]);
+        Assert.Equal("ok", (string?)(await Post("transfer", await PaymentFromA(db, harbour), sam)).Body!["code"]);
+    }
+
+    [Fact]
+    public async Task A_machine_id_that_is_not_the_derived_value_is_not_kept_anywhere()
+    {
+        // An older Region Server sends its own MachineId, its password for the command port: the grid drops it.
+        var db = await StartAsync();
+        const string raw = "7a1e5c3b-0000-4000-8000-000000000001";
+        var (code, _) = _pairing.Issue();
+        var nonce = NewNonce();
+
+        var (_, body, _) = await Post("pair", new { host = ServerHost, firstPort = 9000, machineId = raw, nonce, proof = PairingProof.Client(code, _fingerprint, nonce, ServerHost) });
+
+        Assert.Equal("ok", (string?)body!["code"]);
+        Assert.Null(_settings.Money.PairedServers!.Single().MachineId);
+        Assert.DoesNotContain(raw, JsonSerializer.Serialize(_settings));
+        Assert.Equal(0, await db.Scalar($"SELECT COUNT(*) FROM `money`.`region_pins` WHERE machine_id = '{raw}'"));
+        Assert.DoesNotContain(raw, string.Join("\n", _logs));
+    }
+
+    [Fact]
+    public async Task A_server_that_paired_with_its_raw_machine_id_counts_as_another_computer_once_it_sends_the_derived_one()
+    {
+        var db = await StartAsync();
+        const string raw = "machine-one";
+        _settings = _settings with
+        {
+            Money = _settings.Money with { PairedServers = [new PairedServer(Guid.NewGuid(), ServerHost, new string('b', 64), DateTimeOffset.UtcNow, 9000, raw)] },
+        };
+        var oldId = _settings.Money.PairedServers!.Single().Id;
+        await db.Sql($"INSERT INTO `money`.`region_pins` (region_id, server_id, machine_id, pinned) VALUES ('{Theirs}', '{oldId:N}', '{raw}', UTC_TIMESTAMP(6))");
+
+        await PairAsync(machineId: raw);
+
+        Assert.Equal(PairedServer.MachineKeyOf(raw), _settings.Money.PairedServers!.Single().MachineId);
+        Assert.Equal(oldId.ToString("N"), await db.Text($"SELECT server_id FROM `money`.`region_pins` WHERE region_id = '{Theirs}'"));
+        Assert.Contains(await _alerts.OpenAsync(Ct), a => a.Kind == AlertKind.ServerTookOver);
+    }
+
+    [Fact]
+    public async Task A_purchase_held_under_a_servers_old_key_settles_under_its_new_key_after_the_same_computer_pairs_again()
+    {
+        var db = await StartAsync();
+        var seller = Guid.NewGuid();
+        await db.AddUser(seller);
+        var first = await PairAsync(machineId: "rs-1");
+        await Place(db, first, A, Theirs);
+        var hold = (await Post("hold", new
+        {
+            txnId = Guid.NewGuid(), kind = "object", buyer = Who(A), seller = new { agentId = seller, home = "" }, amount = 25, regionId = Theirs,
+            objectId = Guid.NewGuid(), objectName = "dress",
+        }, first)).Body!;
+        Assert.Equal("ok", (string?)hold["code"]);
+        var holdId = hold["holdId"]!.GetValue<long>();
+
+        var again = await PairAsync(machineId: "rs-1");
+
+        // The old key is gone and never settles it; the same computer's new key does, and so can't be refused as a stranger's.
+        Assert.Null(_settings.Money.PairedServers!.SingleOrDefault(p => p.KeyHash == PairedServer.HashOf(first)));
+        var settled = await Post("hold/complete", new { txnId = Guid.NewGuid(), holdId }, again);
+        Assert.Equal("ok", (string?)settled.Body!["code"]);
+        Assert.Equal("completed", await db.Text($"SELECT state FROM `money`.`holds` WHERE id = {holdId}"));
+    }
+
+    [Fact]
+    public async Task A_hold_made_by_another_computers_key_is_not_settled_by_a_server_paired_in_its_place()
+    {
+        var db = await StartAsync();
+        var seller = Guid.NewGuid();
+        await db.AddUser(seller);
+        var first = await PairAsync(machineId: "rs-1");
+        await Place(db, first, A, Theirs);
+        var holdId = (await Post("hold", new
+        {
+            txnId = Guid.NewGuid(), kind = "object", buyer = Who(A), seller = new { agentId = seller, home = "" }, amount = 25, regionId = Theirs,
+            objectId = Guid.NewGuid(), objectName = "dress",
+        }, first)).Body!["holdId"]!.GetValue<long>();
+
+        var other = await PairAsync(machineId: "rs-2");
+
+        Assert.Equal("unknown_hold", (string?)(await Post("hold/complete", new { txnId = Guid.NewGuid(), holdId }, other)).Body!["code"]);
+    }
+
+    /// <summary>Logs <paramref name="who"/> in at <paramref name="region"/> and has the module behind <paramref name="key"/> report the arrival, without any health call: the region is covered but never heard from.</summary>
+    private async Task<string?> LoginAndArrive(MoneyTestDatabase db, string key, Guid who, Guid region)
+    {
+        var (session, secure) = (Guid.NewGuid(), Guid.NewGuid());
+        await db.AddUser(who);
+        await db.AddPresence(who, region, session, secure);
+        await db.AddSessionStart(session, who, region, "login");
+        var arrived = (string?)(await Post("arrived", new { id = Guid.NewGuid(), sessionId = session, agentId = who, regionId = region }, key)).Body!["code"];
+        Sessions[who] = session;
+        return arrived;
+    }
+
+    private readonly Dictionary<Guid, Guid> Sessions = [];
+
+    [Fact]
+    public async Task An_honest_server_whose_people_were_placed_unverified_and_teleport_on_gets_no_claims_warning()
+    {
+        var db = await StartAsync();
+        var key = await PairAsync();
+        for (var i = 0; i < 4; i++)
+        {
+            var person = Guid.NewGuid();
+            Assert.Equal("unverified_avatar", await LoginAndArrive(db, key, person, Theirs));
+            // The module sends a handoff for everyone who leaves.
+            var handoff = new { id = Guid.NewGuid(), sessionId = Sessions[person], fromRegion = Theirs, toRegion = Own, kind = "teleport", toHost = "10.0.0.2", toPort = 9000 };
+            Assert.Equal("not_held", (string?)(await Post("handoff", handoff, key)).Body!["code"]);
+        }
+
+        var open = await _alerts.OpenAsync(Ct);
+        Assert.Empty(await _alerts.WarningsAsync(Ct));
+        Assert.DoesNotContain(open, a => a.Kind == AlertKind.UnhandedArrival);
+        var row = Assert.Single(open);
+        Assert.Equal(AlertKind.RefusedHandoff, row.Kind);
+        Assert.Equal(AlertLevel.Notice, row.Level);
+        Assert.Equal(4, row.Count);
+        Assert.False(row.Repeated);
+    }
+
+    [Fact]
+    public async Task People_arriving_in_a_region_that_still_waits_for_the_owner_raise_a_notice_never_a_claims_warning()
+    {
+        var db = await StartAsync();
+        var key = await PairAsync(confirm: false);
+        for (var i = 0; i < 4; i++)
+            Assert.Equal("wrong_region", await LoginAndArrive(db, key, Guid.NewGuid(), Theirs));
+
+        var open = await _alerts.OpenAsync(Ct);
+        Assert.Empty(await _alerts.WarningsAsync(Ct));
+        var row = Assert.Single(open);
+        Assert.Equal(AlertKind.ArrivalNotCovered, row.Kind);
+        Assert.Equal(AlertLevel.Notice, row.Level);
+        Assert.Equal(4, row.Count);
+    }
+
+    [Fact]
+    public async Task One_key_reporting_arrivals_in_made_up_regions_opens_one_row()
+    {
+        var db = await StartAsync();
+        var key = await PairAsync();
+        var (person, session) = (Guid.NewGuid(), Guid.NewGuid());
+        await db.AddUser(person);
+        await db.AddPresence(person, Theirs, session, Guid.NewGuid());
+
+        for (var i = 0; i < 30; i++)
+            await Post("arrived", new { id = Guid.NewGuid(), sessionId = session, agentId = person, regionId = Guid.NewGuid() }, key);
+
+        var row = Assert.Single(await _alerts.OpenAsync(Ct));
+        Assert.Equal(AlertKind.ArrivalNotCovered, row.Kind);
+        Assert.Equal(30, row.Count);
     }
 
     [Fact]

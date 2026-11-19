@@ -214,13 +214,13 @@ public sealed class MoneyLedgerGapTests(MoneyMariaDb maria) : IClassFixture<Mone
     }
 
     [Fact]
-    public async Task A_commit_that_fails_and_did_not_land_answers_unavailable()
+    public async Task A_commit_that_fails_and_whose_lookup_finds_nothing_answers_outcome_unknown()
     {
         var (ledger, db) = await CommitFailing(maria, landed: false, thenUnreachable: false);
 
         var r = await ledger.TransferAsync(Pay(B, 30), Ct);
 
-        Assert.Equal(MoneyOutcome.Unavailable, r.Outcome);
+        Assert.Equal(MoneyOutcome.OutcomeUnknown, r.Outcome);
         Assert.Equal(0, await db.Scalar("SELECT COUNT(*) FROM `money`.`entries` WHERE type = 'pay_avatar'"));
     }
 

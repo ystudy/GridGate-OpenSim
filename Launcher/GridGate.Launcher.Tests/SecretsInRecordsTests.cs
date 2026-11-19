@@ -81,6 +81,41 @@ public sealed class SecretsInRecordsTests
     }
 
     [Fact]
+    public void A_paired_server_hides_its_key_hash_and_machine_value()
+    {
+        var server = new PairedServer(Guid.NewGuid(), "192.168.1.20", Secret, DateTimeOffset.UnixEpoch, 9000, Secret + "-machine");
+
+        NeverPrints(server);
+        Assert.DoesNotContain(Secret + "-machine", server.ToString());
+        Assert.Contains("192.168.1.20", server.ToString());
+    }
+
+    [Fact]
+    public void A_pairing_request_hides_the_machine_id_it_carries()
+    {
+        // The request type is internal to the launcher: built the way the JSON body would be.
+        var type = typeof(Program).Assembly.GetType("GridGate.Launcher.Money.MoneyApi+PairBody")!;
+        var body = Activator.CreateInstance(type, "192.168.1.20", 9000, Secret, Secret + "-nonce", Secret + "-proof")!;
+
+        NeverPrints(body);
+        Assert.Contains("192.168.1.20", body.ToString());
+    }
+
+    [Fact]
+    public void The_machine_value_a_region_server_sends_is_a_hash_that_gives_the_machine_id_away_to_nobody()
+    {
+        var sent = PairedServer.MachineKeyOf("7a1e5c3b-0000-4000-8000-000000000001");
+
+        Assert.Equal(Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes("gridgate-money-machine:7a1e5c3b-0000-4000-8000-000000000001"))).ToLowerInvariant(), sent);
+        Assert.True(PairedServer.IsMachineKey(sent));
+        Assert.DoesNotContain("7a1e5c3b", sent);
+        Assert.False(PairedServer.IsMachineKey("7a1e5c3b-0000-4000-8000-000000000001"));
+        Assert.False(PairedServer.IsMachineKey(sent.ToUpperInvariant()));
+        Assert.False(PairedServer.IsMachineKey(null));
+    }
+
+    [Fact]
     public void The_gloebit_app_still_hides_its_secret() =>
         NeverPrints(new GloebitSettings("sandbox", "0b9e3c2a-1111-4c5d-8e9f-0123456789ab", Secret, "Owner"));
 

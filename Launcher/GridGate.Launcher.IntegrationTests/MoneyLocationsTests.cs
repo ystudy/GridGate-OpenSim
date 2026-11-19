@@ -44,7 +44,7 @@ public sealed class MoneyLocationsTests(MoneyMariaDb maria) : IClassFixture<Mone
     private RegionPins _pins = null!;
 
     /// <summary>
-    /// A fresh database where R3 is listed in Robust at the paired server's address, and pinned to it. The local programs'
+    /// A fresh database where R3 is listed in Robust at the paired server's address, and pinned to it and confirmed. The local programs'
     /// regions aren't listed: their starts and handoffs carry no address, which only paired keys look at.
     /// </summary>
     private async Task StartAsync()
@@ -57,6 +57,8 @@ public sealed class MoneyLocationsTests(MoneyMariaDb maria) : IClassFixture<Mone
         _pins = new RegionPins(_db.OpenMoney, new RegionHosts(_db.OpenRobust), _clock);
         await _db.AddRegion(R3, Paired.ServerHost!);
         var server = new PairedServer(PairedId, Paired.ServerHost!, new string('a', 64), DateTimeOffset.UtcNow, 9000, "machine-paired");
+        await _pins.CoveredAsync(server, 9000, 65536, new HashSet<Guid>(), Ct); // first sight pins it waiting
+        await _pins.ConfirmWaitingAsync(server, 9000, 65536, new HashSet<Guid>(), Ct);
         Assert.Contains(R3, await _pins.CoveredAsync(server, 9000, 65536, new HashSet<Guid>(), Ct));
         _verification = new RegionVerification(_db.OpenMoney, _db.OpenRobust, _pins, _clock);
         await ModulesCheckIn();

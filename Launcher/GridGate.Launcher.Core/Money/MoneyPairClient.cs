@@ -87,7 +87,7 @@ public sealed class MoneyPairClient(IGridJoinClient join, TimeProvider time) : I
         {
             using var http = Pinned(fingerprint, out _);
             using var response = await http.PostAsJsonAsync($"https://{joined.Host}:{port}/money/v1/pair",
-                new { host, firstPort = FirstPort(s), machineId = s.MachineId, nonce, proof = PairingProof.Client(code, fingerprint, nonce, host) }, Json, ct);
+                new { host, firstPort = FirstPort(s), machineId = PairedServer.MachineKeyOf(s.MachineId), nonce, proof = PairingProof.Client(code, fingerprint, nonce, host) }, Json, ct);
             answer = response.IsSuccessStatusCode ? await response.Content.ReadFromJsonAsync<PairAnswer>(Json, ct) : null;
         }
         catch (Exception e) when (e is HttpRequestException or TaskCanceledException or JsonException or NotSupportedException && !ct.IsCancellationRequested)

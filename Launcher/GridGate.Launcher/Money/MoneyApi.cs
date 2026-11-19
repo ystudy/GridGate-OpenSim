@@ -69,7 +69,7 @@ internal static class MoneyApi
         // What this record holds is never printed, so a log line or an exception that shows it can't leak it.
         private bool PrintMembers(System.Text.StringBuilder sb)
         {
-            sb.Append($"Host = {Host}, FirstPort = {FirstPort}, MachineId = {MachineId}, Nonce = hidden, Proof = hidden");
+            sb.Append($"Host = {Host}, FirstPort = {FirstPort}, MachineId = hidden, Nonce = hidden, Proof = hidden");
             return true;
         }
 
@@ -228,9 +228,10 @@ internal static class MoneyApi
             };
             var (session, from) = (Need(b.SessionId), Need(b.FromRegion));
             var outcome = await Locations(c).HandoffAsync(grant, Need(b.Id), session, from, Need(b.ToRegion), kind, b.ToHost, b.ToPort, ct);
-            // A handoff for a session this key doesn't hold: counted for the owner, never against the key.
+            // A handoff for a session this key doesn't hold is normal (people who walked in from a stock region, came in through
+            // the Gatekeeper or were placed unverified): a notice for the owner on its own row, never a claim that makes a warning.
             if (outcome == PlaceOutcome.NotHeld && c.Alerts is { } refused)
-                await refused.UnhandedArrivalAsync(grant.KeyId, from, await AgentOf(c, session, ct), null, AlertToken);
+                await refused.RefusedHandoffAsync(grant.KeyId, from, await AgentOf(c, session, ct), AlertToken);
             return Code(PlaceCode(outcome));
         }, whileOff: true);
         Post(app, "/money/v1/handoff/cancel", c, async (http, grant, ct) =>
@@ -248,9 +249,11 @@ internal static class MoneyApi
             // A claim nothing vouches for, against someone verified elsewhere: counted for the owner, never against the key,
             // so an honest server isn't slowed down for a lost handoff. A conflict names the other key too: either may be the
             // one that is wrong.
-            // An arrival in a region the key doesn't cover is counted the same way.
-            if (result.Outcome is PlaceOutcome.Refused or PlaceOutcome.Conflict or PlaceOutcome.NotCovered && c.Alerts is { } alerts)
+            if (result.Outcome is PlaceOutcome.Refused or PlaceOutcome.Conflict && c.Alerts is { } alerts)
                 await alerts.UnhandedArrivalAsync(grant.KeyId, region, agent, result.VerifiedElsewhere?.KeyId, AlertToken);
+            // An arrival in a region the key doesn't cover (one waiting for the owner's Confirm, say) is a notice on its own row.
+            else if (result.Outcome == PlaceOutcome.NotCovered && c.Alerts is { } uncovered)
+                await uncovered.ArrivalNotCoveredAsync(grant.KeyId, region, agent, AlertToken);
             return Code(PlaceCode(result.Outcome));
         }, whileOff: true, arrival: true);
         // A purchase already paid into Holding still finishes after coins are switched off: the buyer gets the item or the
@@ -281,7 +284,8 @@ internal static class MoneyApi
                 if (pairing.Redeem(code => PairingProof.Same(PairingProof.Client(code, c.Fingerprint, nonce, host), proof), http.Connection.RemoteIpAddress) is { } code)
                 {
                     var key = Secrets.NewPassword(MoneyKeys.KeyLength);
-                    var machine = string.IsNullOrWhiteSpace(b.MachineId) ? null : b.MachineId.Trim();
+                    // Only the derived value a current Region Server sends is kept; an older server's raw MachineId (its command password) is dropped.
+                    var machine = PairedServer.IsMachineKey(b.MachineId?.Trim()) ? b.MachineId!.Trim() : null;
                     var server = new PairedServer(Guid.NewGuid(), host, PairedServer.HashOf(key), DateTimeOffset.UtcNow, firstPort, machine);
                     // The same Region Server pairing again (its machine id), or another one on the same address and first
                     // port, replaces the old key: one key per server, and no two keys over the same ports.
@@ -418,9 +422,10 @@ internal static class MoneyApi
         if (await c.Ledger.EarlierAsync(txn, hold, complete, ct) is { } earlier)
             return complete ? await SellerSeen(c, open, hold, Of(earlier) with { Balance = null }, ct) : Of(earlier) with { Balance = null };
         var covered = await open.OpenAsync(ct) ?? grant;
-        // Only the key that made a hold, in the region it was made in, may settle it. A hold whose key is gone is returned by
-        // the expiry sweep.
-        if (await c.Ledger.HoldMadeByAsync(hold, ct) is not { RegionId: { } region, KeyId: { } madeBy } || madeBy != grant.KeyId) return Code("unknown_hold");
+        // Only the key that made a hold, in the region it was made in, may settle it; a server paired again from the same computer
+        // took its old key's holds over. A hold whose key is gone is returned by the expiry sweep.
+        if (await c.Ledger.HoldMadeByAsync(hold, ct) is not { RegionId: { } region, KeyId: { } madeBy }) return Code("unknown_hold");
+        if (madeBy != grant.KeyId && !(c.Pins is { } carried && await carried.CarriedOverAsync(madeBy, grant.KeyId, ct))) return Code("unknown_hold");
         if (!covered.Regions.Contains(region)) return Code("wrong_region");
         // Balance would be Holding's; ToBalance is the seller's on complete and the buyer's on return. Coins off: a complete
         // that came after the sweep returned its hold takes nothing from the buyer.

@@ -1570,7 +1570,7 @@ public sealed class MoneyPageTests
         var f = MakeGrid();
         f.MoneyRegions.States.AddRange(
         [
-            new RegionState(Cove, "Cove", "10.0.0.5", 9002, KeyOf(Sam), RegionStatus.Waiting),
+            new RegionState(Cove, "Cove", "10.0.0.5", 9002, KeyOf(Sam), RegionStatus.Waiting, FirstSeen: new DateTime(2026, 11, 17, 9, 30, 0, DateTimeKind.Utc)),
             new RegionState(Reef, "Reef", "10.0.0.5", 9003, KeyOf(Sam), RegionStatus.Waiting),
             new RegionState(Lagoon, "Lagoon", "10.0.0.6", 9002, KeyOf(Jo), RegionStatus.Waiting),
         ]);
@@ -1593,8 +1593,12 @@ public sealed class MoneyPageTests
         Assert.Null((await PageAsync(await SignedInAsync(clear), "/money")).QuerySelector("form[action*='handler=ConfirmRegions']"));
         // The region rows say what they wait for, and offer no keep-off.
         var row = doc.QuerySelector($"#money-region-{Cove}")!;
-        Assert.Contains("Waiting for you to confirm: listed at Region Server at 10.0.0.5 when it paired", row.TextContent);
+        Assert.Contains("Cove", row.TextContent);
+        Assert.Contains("Waiting for you to confirm: first seen at Region Server at 10.0.0.5 on 2026-11-17 09:30 UTC", row.TextContent);
         Assert.Empty(row.QuerySelectorAll("form"));
+        // A region whose first sight isn't known still says where it waits.
+        Assert.Contains("Waiting for you to confirm: first seen at Region Server at 10.0.0.5", doc.QuerySelector($"#money-region-{Reef}")!.TextContent);
+        Assert.DoesNotContain(" on 20", doc.QuerySelector($"#money-region-{Reef}")!.TextContent);
 
         foreach (var role in new[] { "admin", "supervisor" })
             Assert.Empty((await PageAsync(await SignedInAsync(f, role), "/money")).QuerySelectorAll("form[action*='handler=ConfirmRegions']"));
@@ -1942,6 +1946,29 @@ public sealed class MoneyPageTests
         Assert.Contains("clear 8 Test Owner", alerts.Calls);
         Assert.Null((await ParseAsync(r)).QuerySelector("#money-alert-8"));
         Assert.Equal(["ok"], Results(f, "money-alert-clear"));
+    }
+
+    [Fact]
+    public async Task Refused_handoffs_and_uncovered_arrivals_show_as_notices_without_a_remove_button()
+    {
+        var alerts = new FakeAlerts();
+        var at = new DateTime(2026, 11, 15, 1, 2, 0, DateTimeKind.Utc);
+        alerts.Open.Add(new MoneyAlert(21, AlertKind.RefusedHandoff, AlertLevel.Notice, KeyOf(Sam), NeonPier, Ann, 9, at, at));
+        alerts.Open.Add(new MoneyAlert(22, AlertKind.ArrivalNotCovered, AlertLevel.Notice, KeyOf(Sam), Cove, Ann, 4, at, at));
+        await using var f = MakeGrid(alerts: alerts);
+
+        var doc = await PageAsync(await SignedInAsync(f), "/money");
+
+        var refused = doc.QuerySelector("#money-alert-21")!;
+        Assert.Contains("Notice", refused.TextContent);
+        Assert.Contains("9 times in a day", refused.TextContent);
+        Assert.DoesNotContain("claimed", refused.TextContent);
+        Assert.Null(refused.QuerySelector("form[action*='handler=RemoveServer']"));
+        var uncovered = doc.QuerySelector("#money-alert-22")!;
+        Assert.Contains("doesn't cover", uncovered.TextContent);
+        Assert.Contains("4 times in a day", uncovered.TextContent);
+        Assert.NotNull(uncovered.QuerySelector("a[href='#money-regions']"));
+        Assert.Null(uncovered.QuerySelector("form[action*='handler=RemoveServer']"));
     }
 
     [Fact]

@@ -33,13 +33,17 @@ public sealed class MoneyVerificationStoryTests(MoneyMariaDb maria) : IClassFixt
 
     /// <summary>
     /// Pairs a Region Server at <paramref name="host"/> whose key is <paramref name="key"/>, registers its region
-    /// <paramref name="region"/> with Robust, and has its module check in: first sight pins the region, and it is verified.
+    /// <paramref name="region"/> with Robust, and has its module check in: first sight pins the region as waiting, the owner confirms it
+    /// (the row is updated as the Money page's Confirm does), and it is verified.
     /// </summary>
     private static async Task<PairedServer> PairAsync(MoneyServiceRig rig, string host, string key, Guid region)
     {
         var server = new PairedServer(Guid.NewGuid(), host, PairedServer.HashOf(key), DateTimeOffset.UtcNow, 9000, "machine-" + host);
         rig.Settings = rig.Settings with { Money = rig.Settings.Money with { PairedServers = [.. rig.Settings.Money.PairedServers ?? [], server] } };
         await rig.Db.AddRegion(region, host, 9000);
+        var first = await rig.Post("health", new { protocol = RegionVerification.HandoffProtocol, regions = new[] { region } }, key);
+        Assert.Equal(0, first.Body!["regions"]!.GetValue<int>()); // pinned at first sight, waiting for the owner
+        await rig.Db.Sql($"UPDATE `money`.`region_pins` SET waiting = 0 WHERE region_id = '{region}'");
         var health = await rig.Post("health", new { protocol = RegionVerification.HandoffProtocol, regions = new[] { region } }, key);
         Assert.Equal(1, health.Body!["regions"]!.GetValue<int>());
         return server;

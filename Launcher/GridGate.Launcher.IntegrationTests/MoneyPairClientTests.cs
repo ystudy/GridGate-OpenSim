@@ -128,7 +128,7 @@ public sealed class MoneyPairClientTests(MoneyMariaDb maria) : IClassFixture<Mon
         await new MoneyPairClient(new FakeJoin(rs.Join!), TimeProvider.System).PairAsync(rs, code, Ct);
 
         Assert.Equal(8500, Assert.Single(_grid.Money.PairedServers!).FirstPort);
-        Assert.Equal("rs", _grid.Money.PairedServers![0].MachineId);
+        Assert.Equal(PairedServer.MachineKeyOf("rs"), _grid.Money.PairedServers![0].MachineId);
     }
 
     [Fact]

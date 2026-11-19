@@ -372,7 +372,7 @@ public sealed partial class MoneyLedger(
                     // The commit may have landed before the connection failed: look the transaction up again. The failed
                     // transaction and connection close first. While the session is still up, that puts a commit the server is still
                     // finishing ahead of the lookup; after a timeout or a broken connection the server may still be finishing it, so
-                    // a lookup that finds nothing can, rarely, be wrong.
+                    // a lookup that finds nothing proves nothing: that answers outcome unknown, never "nothing moved".
                     try
                     {
                         await tx.DisposeAsync();
@@ -408,8 +408,8 @@ public sealed partial class MoneyLedger(
 
     /// <summary>
     /// What a failed commit answers. The commit may have landed, so the stored answer for the transaction id is read on a
-    /// fresh connection: found, that answer; not found, nothing landed (<see cref="MoneyOutcome.Unavailable"/>); and when
-    /// that read fails too, or there is no transaction id to look up, <see cref="MoneyOutcome.OutcomeUnknown"/>.
+    /// fresh connection: found, that answer. Not found, a failed read, or no transaction id to look up are all
+    /// <see cref="MoneyOutcome.OutcomeUnknown"/>: the server may still be finishing the commit, so "nothing found" doesn't mean nothing moved.
     /// </summary>
     private async Task<MoneyResult> AfterFailedCommitAsync((Guid Id, string Fingerprint)? txn, CancellationToken ct)
     {
@@ -419,7 +419,7 @@ public sealed partial class MoneyLedger(
             await using var conn = await open(ct);
             return await StoredAsync(conn, null, t.Id, ct) is { } stored
                 ? stored.Fingerprint == t.Fingerprint ? stored.Result : MoneyResult.Of(MoneyOutcome.DuplicateTxn)
-                : MoneyResult.Unavailable;
+                : MoneyResult.Of(MoneyOutcome.OutcomeUnknown);
         }
         catch (Exception e) when (e is MySqlException or TimeoutException or InvalidOperationException)
         {

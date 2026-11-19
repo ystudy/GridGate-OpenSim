@@ -78,6 +78,9 @@ public static class MoneySchema
           KEY open_last (cleared, last_at), KEY kind_key_last (kind, key_id, last_at))
           ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
         CREATE TABLE IF NOT EXISTS key_locks (key_id VARCHAR(64) PRIMARY KEY) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+        CREATE TABLE IF NOT EXISTS key_carry (
+          old_key VARCHAR(64) PRIMARY KEY, new_key VARCHAR(64) NOT NULL, at DATETIME(6) NOT NULL)
+          ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
         INSERT IGNORE INTO accounts (id, agent_id, home, kind, created) VALUES
           (1, '00000000-0000-0000-0000-000000000000', 'system:bank', 'Bank', UTC_TIMESTAMP(6)),
           (2, '00000000-0000-0000-0000-000000000000', 'system:fees', 'Fees', UTC_TIMESTAMP(6)),
@@ -112,6 +115,7 @@ public static class MoneySchema
         "SELECT, INSERT, UPDATE ON region_heard",
         "SELECT, INSERT, UPDATE ON alerts",
         "SELECT, INSERT, UPDATE ON key_locks",
+        "SELECT, INSERT, UPDATE ON key_carry",
     ];
 
     /// <summary>

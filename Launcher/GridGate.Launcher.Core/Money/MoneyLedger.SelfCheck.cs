@@ -202,7 +202,7 @@ public sealed partial class MoneyLedger
             SELECT r.id FROM entries r LEFT JOIN entries o ON o.id = r.reverses
             WHERE r.type = '{EntryType.Refund}'
               AND (o.id IS NULL OR o.id >= r.id OR o.from_id <> r.to_id OR o.to_id <> r.from_id OR o.amount <> r.amount
-                   OR o.type IN ('{EntryType.Hold}', '{EntryType.HoldCompleted}', '{EntryType.HoldReturned}', '{EntryType.LateSale}'))
+                   OR o.type IN ('{EntryType.Hold}', '{EntryType.HoldCompleted}', '{EntryType.HoldReturned}', '{EntryType.LateSale}', '{EntryType.FeeRefund}'))
             ORDER BY r.id LIMIT {ProblemsPerCheck}
             """, r => $"Refund {r.GetInt64(0)} doesn't reverse its entry.", ct);
         // A fee refund reverses what paid a fee out of a hold, to the hold's buyer, for the same amount.

@@ -78,29 +78,29 @@ public sealed class MoneyPairingTests
     }
 
     [Fact]
-    public void Fifty_wrong_proofs_in_all_cancel_the_code()
+    public void Wrong_proofs_from_any_number_of_addresses_never_cancel_the_code()
     {
         var pairing = new MoneyPairing(new FakeTimeProvider(DateTimeOffset.UtcNow));
         var (code, _) = pairing.Issue();
 
-        // Four from each of many addresses: none is blocked, but the total adds up.
-        for (var i = 0; i < MoneyPairing.MaxWrongProofsInAll; i++)
-            Assert.Null(pairing.Redeem(_ => false, new System.Net.IPAddress([10, 0, (byte)(i / 4), (byte)(i / 4)])));
+        // Four from each of many addresses: none is blocked, and however many there are, the code stays.
+        for (var i = 0; i < 400; i++)
+            Assert.Null(pairing.Redeem(_ => false, new System.Net.IPAddress([10, 0, (byte)(i / 4 / 250), (byte)(i / 4 % 250 + 1)])));
 
-        Assert.Null(pairing.Redeem(c => c == code, System.Net.IPAddress.Parse("10.9.9.9")));
-        Assert.Null(pairing.PendingUntil);
+        Assert.NotNull(pairing.PendingUntil);
+        Assert.Equal(code, pairing.Redeem(c => c == code, System.Net.IPAddress.Parse("10.9.9.9")));
     }
 
     [Fact]
-    public void Forty_nine_wrong_proofs_in_all_leave_the_code_usable()
+    public void A_flood_of_addresses_past_the_counted_limit_is_still_tried_and_never_blocks_the_real_one()
     {
         var pairing = new MoneyPairing(new FakeTimeProvider(DateTimeOffset.UtcNow));
         var (code, _) = pairing.Issue();
+        for (var i = 0; i < MoneyPairing.MaxAddressesCounted + 50; i++)
+            Assert.Null(pairing.Redeem(_ => false, new System.Net.IPAddress([10, 1, (byte)(i / 256), (byte)(i % 256)])));
 
-        for (var i = 0; i < MoneyPairing.MaxWrongProofsInAll - 1; i++)
-            pairing.Redeem(_ => false, new System.Net.IPAddress([10, 0, (byte)(i / 4), 1]));
-
-        Assert.Equal(code, pairing.Redeem(c => c == code, System.Net.IPAddress.Parse("10.9.9.9")));
+        // An address the flood never used, and one it did, both still pair with the right proof.
+        Assert.Equal(code, pairing.Redeem(c => c == code, System.Net.IPAddress.Parse("192.168.1.77")));
     }
 
     [Fact]

@@ -34,7 +34,7 @@ public sealed partial class MoneyLedger
 
     /// <summary>
     /// Reverses one entry: the same amount back from its payee to its payer, guarded (from a frozen payee too). An entry
-    /// already refunded, or a hold's own movement (settled through the hold), can't be refunded.
+    /// already refunded, a hold's own movement (settled through the hold) and the owner's refund of a fee can't be refunded.
     /// </summary>
     public Task<MoneyResult> RefundAsync(long entryId, StaffAction who, CancellationToken ct) =>
         StaffMoveAsync(who, 1, ct, async (conn, tx) =>
@@ -48,7 +48,7 @@ public sealed partial class MoneyLedger
                 if (!await r.ReadAsync(ct)) return MoneyResult.Of(MoneyOutcome.UnknownEntry);
                 (fromId, toId, amount, type) = (r.GetInt64(0), r.GetInt64(1), r.GetInt64(2), r.GetString(3));
             }
-            if (type is EntryType.Hold or EntryType.HoldCompleted or EntryType.HoldReturned or EntryType.LateSale)
+            if (type is EntryType.Hold or EntryType.HoldCompleted or EntryType.HoldReturned or EntryType.LateSale or EntryType.FeeRefund)
                 return MoneyResult.Of(MoneyOutcome.NotAllowed);
             if (await ScalarAsync(conn, tx, "SELECT COUNT(*) FROM entries WHERE reverses = @id", ct, ("@id", entryId)) > 0)
                 return MoneyResult.Of(MoneyOutcome.AlreadyRefunded);
