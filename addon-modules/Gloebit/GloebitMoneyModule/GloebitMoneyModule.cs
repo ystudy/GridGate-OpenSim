@@ -325,7 +325,7 @@ namespace Gloebit.GloebitMoneyModule
         /// <param name="config"></param>
         /// <param name="section"></param>
         /// <summary>The app key as the launcher's pages show it: its last four characters only.</summary>
-        private static string MaskedKey(string key)
+        internal static string MaskedKey(string key)
         {
             return String.IsNullOrEmpty(key) ? "" : "\u2022\u2022\u2022\u2022" + key.Substring(key.Length - Math.Min(4, key.Length));
         }
