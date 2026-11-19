@@ -35,6 +35,28 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
             && stateIsMarked
             && (source == StateSource.RegionStart || source == StateSource.PrimCrossing || source == StateSource.Teleporting);
 
+        /// <summary>
+        /// Readies a <c>ScriptState</c> element to be written to a script's state file. A state that isn't
+        /// <paramref name="fromRunningScript"/> (captured from one of this program's own running scripts, see
+        /// <see cref="Mark"/>) loses PERMISSION_DEBIT from every permissions mask and loses the mark: only
+        /// <c>GetExecutionState</c>'s own capture may write the mark. A mask that doesn't read as a number becomes 0.
+        /// </summary>
+        public static void ForStoredState(XmlElement scriptState, bool fromRunningScript)
+        {
+            if (fromRunningScript)
+                return;
+
+            scriptState.RemoveAttribute(MarkAttribute);
+            foreach (XmlNode node in scriptState.GetElementsByTagName("Permissions"))
+            {
+                if (node is not XmlElement permissions || !permissions.HasAttribute("mask"))
+                    continue;
+                int mask = int.TryParse(permissions.GetAttribute("mask"), System.Globalization.NumberStyles.Integer,
+                    System.Globalization.CultureInfo.InvariantCulture, out int saved) ? saved & ~ScriptBaseClass.PERMISSION_DEBIT : 0;
+                permissions.SetAttribute("mask", mask.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            }
+        }
+
         /// <summary>The attribute on a saved state's <c>ScriptState</c> element that says this program wrote it.</summary>
         public const string MarkAttribute = "GridGateState";
 

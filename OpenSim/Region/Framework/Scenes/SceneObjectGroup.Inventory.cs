@@ -586,7 +586,9 @@ namespace OpenSim.Region.Framework.Scenes
                 XmlElement stateE = (XmlElement)n;
                 UUID itemID = new(stateE.GetAttribute("UUID"));
 
-                scriptModule.SetXMLState(itemID, n.OuterXml);
+                // GridGate: only a state this program captured from its own running scripts (a crossing or a teleport
+                // between its regions) is stored as one; a state from outside has no such claim.
+                scriptModule.SetXMLState(itemID, n.OuterXml, !m_stateFromOutside);
             }
         }
 
