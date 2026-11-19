@@ -175,7 +175,7 @@ public sealed class MoneyServiceFuzzTests(MoneyMariaDb maria) : IClassFixture<Mo
         var templates = Templates();
         // Settling needs a hold to point at; each settle uses up one, so a fresh one is made when it's gone.
         async Task<long> OpenHold() =>
-            (await rig.Ledger.HoldAsync(new HoldRequest(Guid.NewGuid(), "object", AccountRef.Resident(A), AccountRef.Resident(B), 1, Here, null, "dress"), Ct)).HoldId!.Value;
+            (await rig.Ledger.HoldAsync(new HoldRequest(Guid.NewGuid(), "object", AccountRef.Resident(A), AccountRef.Resident(B), 1, Here, null, "dress", "p1"), Ct)).HoldId!.Value;
         var hold = await OpenHold();
 
         var cases = Cases();
@@ -199,7 +199,7 @@ public sealed class MoneyServiceFuzzTests(MoneyMariaDb maria) : IClassFixture<Mo
         // The fuzz test's starting bodies are valid: otherwise every case would stop at the first check.
         var rig = _rig = await MoneyServiceRig.StartAsync(maria);
         await rig.Ledger.SetPayoutsAllowedAsync(A, true, Ct);
-        var hold = (await rig.Ledger.HoldAsync(new HoldRequest(Guid.NewGuid(), "object", AccountRef.Resident(A), AccountRef.Resident(B), 1, Here, null, "dress"), Ct)).HoldId!.Value;
+        var hold = (await rig.Ledger.HoldAsync(new HoldRequest(Guid.NewGuid(), "object", AccountRef.Resident(A), AccountRef.Resident(B), 1, Here, null, "dress", "p1"), Ct)).HoldId!.Value;
 
         foreach (var (path, template) in Templates().Where(t => t.Key != "hold/return"))
         {

@@ -1914,6 +1914,13 @@ public sealed class MoneyPageTests
         Assert.DoesNotContain("(", MoneyPageRules.Words(o));
 
     [Fact]
+    public void A_refund_that_cant_be_done_says_which_way()
+    {
+        Assert.Equal("There is no entry with that number.", MoneyPageRules.Words(MoneyOutcome.UnknownEntry));
+        Assert.Equal("That entry was already refunded.", MoneyPageRules.Words(MoneyOutcome.AlreadyRefunded));
+    }
+
+    [Fact]
     public void An_answer_that_may_have_gone_through_tells_staff_to_check_the_history()
     {
         var words = MoneyPageRules.Words(MoneyOutcome.OutcomeUnknown);

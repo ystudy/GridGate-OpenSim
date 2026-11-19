@@ -50,6 +50,12 @@ public enum MoneyOutcome
     /// The region treats it as lost.
     /// </summary>
     OutcomeUnknown,
+
+    /// <summary>A refund named an entry that doesn't exist.</summary>
+    UnknownEntry,
+
+    /// <summary>A refund named an entry that was refunded already.</summary>
+    AlreadyRefunded,
 }
 
 /// <summary>

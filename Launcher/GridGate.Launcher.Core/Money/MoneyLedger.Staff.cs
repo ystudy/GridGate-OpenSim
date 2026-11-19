@@ -45,13 +45,13 @@ public sealed partial class MoneyLedger
             {
                 cmd.Parameters.AddWithValue("@id", entryId);
                 await using var r = await cmd.ExecuteReaderAsync(ct);
-                if (!await r.ReadAsync(ct)) return MoneyResult.Of(MoneyOutcome.UnknownHold);
+                if (!await r.ReadAsync(ct)) return MoneyResult.Of(MoneyOutcome.UnknownEntry);
                 (fromId, toId, amount, type) = (r.GetInt64(0), r.GetInt64(1), r.GetInt64(2), r.GetString(3));
             }
             if (type is EntryType.Hold or EntryType.HoldCompleted or EntryType.HoldReturned)
                 return MoneyResult.Of(MoneyOutcome.NotAllowed);
             if (await ScalarAsync(conn, tx, "SELECT COUNT(*) FROM entries WHERE reverses = @id", ct, ("@id", entryId)) > 0)
-                return MoneyResult.Of(MoneyOutcome.HoldClosed);
+                return MoneyResult.Of(MoneyOutcome.AlreadyRefunded);
             return await MoveBetweenAsync(conn, tx, toId, fromId, amount, StaffEntry(EntryType.Refund, who) with { Reverses = entryId }, guarded: true, ct, staffTakes: true);
         });
 

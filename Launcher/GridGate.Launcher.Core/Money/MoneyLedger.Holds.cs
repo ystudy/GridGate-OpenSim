@@ -170,6 +170,28 @@ public sealed partial class MoneyLedger
         }
     }
 
+    /// <summary>
+    /// The region and the key a hold was made by, or null for an unknown hold. Either may be null (a hold made before keys
+    /// were kept, or without a region). A database failure is <see cref="MoneyUnavailableException"/>.
+    /// </summary>
+    public async Task<(Guid? RegionId, string? KeyId)?> HoldMadeByAsync(long holdId, CancellationToken ct)
+    {
+        try
+        {
+            await using var conn = await open(ct);
+            await using var cmd = new MySqlCommand("SELECT region_id, key_id FROM holds WHERE id = @id", conn);
+            cmd.Parameters.AddWithValue("@id", holdId);
+            await using var r = await cmd.ExecuteReaderAsync(ct);
+            if (!await r.ReadAsync(ct)) return null;
+            // MySqlConnector reads CHAR(36) as a Guid.
+            return (r.IsDBNull(0) ? null : r.GetValue(0) is Guid g ? g : Guid.Parse(r.GetValue(0).ToString()!), r.IsDBNull(1) ? null : r.GetString(1));
+        }
+        catch (MySqlException e)
+        {
+            throw new MoneyUnavailableException(e);
+        }
+    }
+
     private async Task<MoneyResult> SettleAsync(MySqlConnection conn, MySqlTransaction tx, long holdId, bool complete, CancellationToken ct)
     {
         var hold = await LockHoldAsync(conn, tx, holdId, ct);

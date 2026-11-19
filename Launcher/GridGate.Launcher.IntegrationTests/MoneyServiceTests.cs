@@ -316,7 +316,8 @@ public sealed class MoneyServiceTests(MoneyMariaDb maria) : IClassFixture<MoneyM
 
         Assert.Equal("ok", (string?)body!["code"]);
         Assert.Equal(90, body["balance"]!.GetValue<long>());
-        Assert.Equal(110, body["toBalance"]!.GetValue<long>());
+        // B is in region There, which this key doesn't cover: A's region isn't told B's balance.
+        Assert.Null(body["toBalance"]);
     }
 
     [Fact]

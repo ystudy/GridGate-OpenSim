@@ -263,7 +263,10 @@ public sealed class MoneyVerificationStoryTests(MoneyMariaDb maria) : IClassFixt
     {
         Assert.Equal("unverified_avatar", CodeOf(await rig.Arrived(SamKey, p.Session, p.Agent, Harbour)));
         Assert.Equal(LocationState.Unverified, (await rig.Locations.WhereAsync(p.Session, Ct))?.State);
-        Assert.Equal("ok", CodeOf(await rig.Post("balance", Who(p), SamKey)));
+        // Sam's claim wasn't vouched for, so Sam can't read their balance either.
+        Assert.Equal("wrong_region", CodeOf(await rig.Post("balance", Who(p), SamKey)));
+        // Their wallet, opened here as the first balance read did.
+        await rig.Ledger.BalanceAsync(AccountRef.Resident(p.Agent), Ct);
         var (moved, balance) = (await Moved(rig), await Balance(rig, p.Agent));
         Assert.True(balance >= 400, $"the payer has {balance} coins");
 

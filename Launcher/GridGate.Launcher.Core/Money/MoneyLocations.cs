@@ -26,9 +26,10 @@ public enum PlaceOutcome { Ok, PlacedUnverified, NoSession, NotCovered, NotHeld,
 
 /// <summary>
 /// Where a session is, as the money service recorded it. <paramref name="KeyId"/> is the key that placed it (for a handed
-/// session, the key that handed it on); both are null once it left the grid.
+/// session, the key that handed it on); both are null once it left the grid. <paramref name="Matched"/> says the key placed
+/// it because a handoff or a start vouched for the arrival, not on its own claim.
 /// </summary>
-public sealed record SessionLocation(Guid SessionId, Guid AgentId, Guid? RegionId, string? KeyId, LocationState State, DateTime Updated);
+public sealed record SessionLocation(Guid SessionId, Guid AgentId, Guid? RegionId, string? KeyId, LocationState State, DateTime Updated, bool Matched = false);
 
 /// <summary>
 /// An arrival's answer. <paramref name="VerifiedElsewhere"/> is the verified place the session had before, set when the
@@ -78,7 +79,7 @@ public sealed class MoneyLocations(Func<CancellationToken, Task<MySqlConnection>
     /// <summary>The kinds an arrival can match: a teleport to another grid ends at no region of ours.</summary>
     private const string OpenKinds = "('Teleport', 'Crossing')";
 
-    private const string Columns = "agent_id, region_id, key_id, state, last_start_id, updated";
+    private const string Columns = "agent_id, region_id, key_id, state, last_start_id, updated, matched";
 
     private sealed record Row(SessionLocation Location, long LastStartId, bool IsPlaceholder);
 
@@ -252,13 +253,13 @@ public sealed class MoneyLocations(Func<CancellationToken, Task<MySqlConnection>
         {
             await using var conn = await openMoney(ct);
             await using var cmd = Command(conn, null, $"""
-                SELECT session_id, region_id, key_id, state, updated FROM session_locations
+                SELECT session_id, region_id, key_id, state, updated, matched FROM session_locations
                 WHERE agent_id = @a AND state <> @placeholder ORDER BY updated DESC LIMIT {MaxSessionsLooked}
                 """, ("@a", agentId.ToString()), ("@placeholder", Placeholder));
             await using var r = await cmd.ExecuteReaderAsync(ct);
             while (await r.ReadAsync(ct))
                 rows.Add(new SessionLocation(ToGuid(r.GetValue(0)), agentId, r.IsDBNull(1) ? null : ToGuid(r.GetValue(1)), r.IsDBNull(2) ? null : r.GetString(2),
-                    Enum.Parse<LocationState>(r.GetString(3)), DateTime.SpecifyKind(r.GetDateTime(4), DateTimeKind.Utc)));
+                    Enum.Parse<LocationState>(r.GetString(3)), DateTime.SpecifyKind(r.GetDateTime(4), DateTimeKind.Utc), r.GetInt32(5) != 0));
         }
         catch (MySqlException e)
         {
@@ -347,7 +348,7 @@ public sealed class MoneyLocations(Func<CancellationToken, Task<MySqlConnection>
                 if (match.HandoffId is { } used)
                     await ExecAsync(conn, tx, "UPDATE handoffs SET kind = @used WHERE id = @id", ct, ("@used", Used), ("@id", used));
                 await PlaceAsync(conn, tx, sessionId, agentId, regionId, grant.KeyId, verified ? LocationState.Verified : LocationState.Unverified,
-                    match.StartId ?? row.LastStartId, ct);
+                    match.StartId ?? row.LastStartId, matched: true, ct);
                 return (Answer(verified ? PlaceOutcome.Ok : PlaceOutcome.PlacedUnverified), true);
             }
 
@@ -361,7 +362,7 @@ public sealed class MoneyLocations(Func<CancellationToken, Task<MySqlConnection>
                 // a new start verifies it, and the old place is reported so the caller can raise the alert.
                 if (here.KeyId != grant.KeyId && await verification.IsVerifiedAsync(grant, regionId, ct))
                 {
-                    await PlaceAsync(conn, tx, sessionId, agentId, regionId, grant.KeyId, LocationState.Unverified, row.LastStartId, ct);
+                    await PlaceAsync(conn, tx, sessionId, agentId, regionId, grant.KeyId, LocationState.Unverified, row.LastStartId, matched: false, ct);
                     return (new ArrivalResult(PlaceOutcome.Conflict, here), true);
                 }
                 // The same key can't disagree with itself, and a region that isn't verified can't move anyone: refused, and
@@ -371,7 +372,7 @@ public sealed class MoneyLocations(Func<CancellationToken, Task<MySqlConnection>
 
             // Nothing vouches for where they came from (unverified, handed somewhere else, or never placed): unverified, money
             // off until the next login.
-            await PlaceAsync(conn, tx, sessionId, agentId, regionId, grant.KeyId, LocationState.Unverified, row.LastStartId, ct);
+            await PlaceAsync(conn, tx, sessionId, agentId, regionId, grant.KeyId, LocationState.Unverified, row.LastStartId, matched: false, ct);
             return (Answer(PlaceOutcome.PlacedUnverified), true);
         }, ct);
 
@@ -447,12 +448,12 @@ public sealed class MoneyLocations(Func<CancellationToken, Task<MySqlConnection>
         return null;
     }
 
-    private Task PlaceAsync(MySqlConnection conn, MySqlTransaction tx, Guid sessionId, Guid agentId, Guid regionId, string keyId, LocationState state, long lastStartId, CancellationToken ct) =>
+    private Task PlaceAsync(MySqlConnection conn, MySqlTransaction tx, Guid sessionId, Guid agentId, Guid regionId, string keyId, LocationState state, long lastStartId, bool matched, CancellationToken ct) =>
         ExecAsync(conn, tx, """
-            UPDATE session_locations SET agent_id = @a, region_id = @r, key_id = @k, state = @st, last_start_id = @start, updated = @t
+            UPDATE session_locations SET agent_id = @a, region_id = @r, key_id = @k, state = @st, last_start_id = @start, updated = @t, matched = @m
             WHERE session_id = @s
             """, ct, ("@a", agentId.ToString()), ("@r", regionId.ToString()), ("@k", keyId), ("@st", state.ToString()),
-            ("@start", lastStartId), ("@t", Now), ("@s", sessionId.ToString()));
+            ("@start", lastStartId), ("@t", Now), ("@m", matched ? 1 : 0), ("@s", sessionId.ToString()));
 
     private static Task<Row?> LockAsync(MySqlConnection conn, MySqlTransaction tx, Guid sessionId, CancellationToken ct) =>
         ReadAsync(conn, tx, sessionId, forUpdate: true, ct);
@@ -466,7 +467,8 @@ public sealed class MoneyLocations(Func<CancellationToken, Task<MySqlConnection>
         var state = r.GetString(3);
         var placeholder = state == Placeholder;
         var location = new SessionLocation(sessionId, ToGuid(r.GetValue(0)), r.IsDBNull(1) ? null : ToGuid(r.GetValue(1)), r.IsDBNull(2) ? null : r.GetString(2),
-            placeholder ? LocationState.Unverified : Enum.Parse<LocationState>(state), DateTime.SpecifyKind(r.GetDateTime(5), DateTimeKind.Utc));
+            placeholder ? LocationState.Unverified : Enum.Parse<LocationState>(state), DateTime.SpecifyKind(r.GetDateTime(5), DateTimeKind.Utc),
+            Matched: r.GetInt32(6) != 0);
         return new Row(location, r.GetInt64(4), placeholder);
     }
 

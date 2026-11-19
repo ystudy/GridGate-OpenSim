@@ -277,6 +277,13 @@ public sealed partial class MoneyLedger(
     /// <inheritdoc cref="EarlierAsync(TransferRequest, CancellationToken)"/>
     public Task<MoneyResult?> EarlierAsync(ChargeRequest r, CancellationToken ct) => EarlierAsync(r.TxnId, "charge", r, ct);
 
+    /// <inheritdoc cref="EarlierAsync(TransferRequest, CancellationToken)"/>
+    public Task<MoneyResult?> EarlierAsync(HoldRequest r, CancellationToken ct) => EarlierAsync(r.TxnId, "hold", r, ct);
+
+    /// <inheritdoc cref="EarlierAsync(TransferRequest, CancellationToken)"/>
+    public Task<MoneyResult?> EarlierAsync(Guid txnId, long holdId, bool complete, CancellationToken ct) =>
+        EarlierAsync(txnId, complete ? "hold_complete" : "hold_return", holdId, ct);
+
     private async Task<MoneyResult?> EarlierAsync(Guid txnId, string op, object request, CancellationToken ct)
     {
         try
@@ -284,7 +291,7 @@ public sealed partial class MoneyLedger(
             await using var conn = await open(ct);
             return await StoredAsync(conn, null, txnId, ct) is { } stored && stored.Fingerprint == Fingerprint(op, request) ? stored.Result : null;
         }
-        catch (Exception e) when (e is MySqlException or TimeoutException or InvalidOperationException { Source: "MySqlConnector" })
+        catch (Exception e) when (e is MySqlException or TimeoutException or InvalidOperationException)
         {
             return null;
         }
@@ -323,7 +330,7 @@ public sealed partial class MoneyLedger(
                 {
                     await CommitForTests(tx, ct);
                 }
-                catch (Exception e) when (e is MySqlException or TimeoutException or InvalidOperationException { Source: "MySqlConnector" })
+                catch (Exception e) when (e is MySqlException or TimeoutException or InvalidOperationException)
                 {
                     // The commit may have landed before the connection failed: look the transaction up again. The failed
                     // transaction and connection close first. While the session is still up, that puts a commit the server is still
@@ -334,7 +341,7 @@ public sealed partial class MoneyLedger(
                         await tx.DisposeAsync();
                         await conn.DisposeAsync();
                     }
-                    catch (Exception closing) when (closing is MySqlException or TimeoutException or InvalidOperationException { Source: "MySqlConnector" })
+                    catch (Exception closing) when (closing is MySqlException or TimeoutException or InvalidOperationException)
                     {
                         // Closing a broken connection may fail; the lookup below uses a new one.
                     }
@@ -352,7 +359,7 @@ public sealed partial class MoneyLedger(
                     ? stored.Fingerprint == t.Fingerprint ? stored.Result : MoneyResult.Of(MoneyOutcome.DuplicateTxn)
                     : MoneyResult.Unavailable;
             }
-            catch (Exception e) when (e is MySqlException or TimeoutException or InvalidOperationException { Source: "MySqlConnector" })
+            catch (Exception e) when (e is MySqlException or TimeoutException or InvalidOperationException)
             {
                 return MoneyResult.Unavailable;
             }
@@ -377,7 +384,7 @@ public sealed partial class MoneyLedger(
                 ? stored.Fingerprint == t.Fingerprint ? stored.Result : MoneyResult.Of(MoneyOutcome.DuplicateTxn)
                 : MoneyResult.Unavailable;
         }
-        catch (Exception e) when (e is MySqlException or TimeoutException or InvalidOperationException { Source: "MySqlConnector" })
+        catch (Exception e) when (e is MySqlException or TimeoutException or InvalidOperationException)
         {
             return MoneyResult.Of(MoneyOutcome.OutcomeUnknown);
         }

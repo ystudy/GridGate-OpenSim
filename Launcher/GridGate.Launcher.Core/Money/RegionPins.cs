@@ -94,7 +94,7 @@ public sealed class RegionPins(Func<CancellationToken, Task<MySqlConnection>> op
             await using var tx = await conn.BeginTransactionAsync(ct);
             await Exec(conn, tx, "UPDATE region_pins SET server_id = @s, machine_id = NULL, pinned = @t, waiting = 0 WHERE region_id = @r", ct,
                 ("@s", toServerId.ToString("N")), ("@t", now), ("@r", regionId.ToString()));
-            await Exec(conn, tx, "UPDATE session_locations SET state = 'Unverified', updated = @t WHERE region_id = @r AND state IN ('Verified', 'Handed')", ct,
+            await Exec(conn, tx, "UPDATE session_locations SET state = 'Unverified', matched = 0, updated = @t WHERE region_id = @r AND state IN ('Verified', 'Handed')", ct,
                 ("@t", now), ("@r", regionId.ToString()));
             await tx.CommitAsync(ct);
         }
