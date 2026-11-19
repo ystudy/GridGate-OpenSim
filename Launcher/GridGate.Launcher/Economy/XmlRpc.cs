@@ -56,12 +56,18 @@ public static class XmlRpc
             if (!PlainEncoding(doc.Declaration?.Encoding, bytes)) return null;
             var root = doc.Root;
             if (root is null || root.Name.LocalName != "methodCall" || root.DescendantsAndSelf().Any(e => e.Name.Namespace != XNamespace.None)) return null;
-            var name = root.Element("methodName");
+            // Exactly one name, and at most one params with one param: a second would read as the first, or be ignored.
+            var names = root.Elements("methodName").ToList();
+            var allParams = root.Elements("params").ToList();
+            if (names.Count != 1 || allParams.Count > 1 || allParams.Any(p => p.Elements("param").Count() > 1)) return null;
+            var name = names[0];
             // The name is text only: nested markup around it would read as the same method.
-            if (name is null || name.HasElements) return null;
+            if (name.HasElements) return null;
             var method = name.Value.Trim();
             if (string.IsNullOrEmpty(method)) return null;
-            var value = root.Element("params")?.Element("param")?.Element("value");
+            var values = allParams.SelectMany(p => p.Elements("param")).SelectMany(p => p.Elements("value")).ToList();
+            if (values.Count > 1) return null;
+            var value = values.FirstOrDefault();
             if (value is null) return new Call(method, new Dictionary<string, object>());
             return Value(value, 1) is IReadOnlyDictionary<string, object> members ? new Call(method, members) : null;
         }
@@ -91,6 +97,8 @@ public static class XmlRpc
         if (typed.Count == 0) return value.Value;
         if (typed.Count > 1 || HasText(value)) throw new Bad();
         var e = typed[0];
+        // A simple type holds text only: nested markup would be flattened to its text.
+        if (e.Name.LocalName != "struct" && e.HasElements) throw new Bad();
         return e.Name.LocalName switch
         {
             "string" => e.Value,
@@ -112,8 +120,11 @@ public static class XmlRpc
         foreach (var m in s.Elements())
         {
             if (m.Name.LocalName != "member" || HasText(m)) throw new Bad();
-            var name = m.Element("name")?.Value ?? throw new Bad();
-            var value = m.Element("value") ?? throw new Bad();
+            var names = m.Elements("name").ToList();
+            var values = m.Elements("value").ToList();
+            if (names.Count != 1 || values.Count != 1 || names[0].HasElements) throw new Bad();
+            var name = names[0].Value;
+            var value = values[0];
             if (!members.TryAdd(name, Value(value, depth + 1))) throw new Bad();
         }
         return members;

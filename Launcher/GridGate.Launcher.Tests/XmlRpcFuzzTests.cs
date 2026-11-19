@@ -657,35 +657,42 @@ public sealed class XmlRpcFuzzTests
         Assert.Null(call);
     }
 
-    /// <summary>money review 2026-11-15, H-7: a second methodName or param is ignored; the first counts.</summary>
+    /// <summary>A second methodName, params or param is refused, not ignored.</summary>
     [Fact]
-    public void Duplicate_method_name_and_param_keep_the_first()
+    public void Duplicate_method_name_params_and_param_are_refused()
     {
-        var call = XmlRpc.Read(Body(
-            "<methodCall><methodName>first</methodName><methodName>second</methodName><params>"
-            + "<param><value><struct>" + Member("a", "<int>1</int>") + "</struct></value></param>"
-            + "<param><value><struct>" + Member("b", "<int>2</int>") + "</struct></value></param>"
-            + "</params><params><param><value><struct>" + Member("c", "<int>3</int>") + "</struct></value></param></params></methodCall>"));
-
-        Assert.NotNull(call);
-        Assert.Equal("first", call.Method);
-        Assert.Equal(new[] { "a" }, call.Params.Keys);
+        var m = Member("a", "<int>1</int>");
+        Assert.Null(XmlRpc.Read(Body("<methodCall><methodName>first</methodName><methodName>second</methodName><params><param><value><struct>" + m + "</struct></value></param></params></methodCall>")));
+        Assert.Null(XmlRpc.Read(Body("<methodCall><methodName>first</methodName><params><param><value><struct>" + m + "</struct></value></param><param><value><struct>" + m + "</struct></value></param></params></methodCall>")));
+        Assert.Null(XmlRpc.Read(Body("<methodCall><methodName>first</methodName><params><param><value><struct>" + m + "</struct></value></param></params><params><param><value><struct>" + m + "</struct></value></param></params></methodCall>")));
+        Assert.Null(XmlRpc.Read(Body("<methodCall><methodName>first</methodName><params><param><value><struct>" + m + "</struct></value><value><struct>" + m + "</struct></value></param></params></methodCall>")));
     }
 
-    /// <summary>money review 2026-11-15, H-7: two typed values in one value, or a member with two names, read as nothing odd.</summary>
+    /// <summary>Markup inside a typed value or a member name is refused, not flattened to its text.</summary>
     [Fact]
-    public void Duplicate_value_parts_are_refused_or_take_the_first()
+    public void Markup_inside_values_and_member_names_is_refused()
+    {
+        Assert.Null(XmlRpc.Read(Body(Call("m", Member("a", "<string>ab<b>cd</b></string>")))));
+        Assert.Null(XmlRpc.Read(Body(Call("m", Member("a", "<int><i>5</i></int>")))));
+        Assert.Null(XmlRpc.Read(Body(Call("m", Member("a", "<i4><i>5</i></i4>")))));
+        Assert.Null(XmlRpc.Read(Body(Call("m", Member("a", "<boolean><x/>1</boolean>")))));
+        Assert.Null(XmlRpc.Read(Body(Call("m", Member("a", "<double><x/>1.5</double>")))));
+        Assert.Null(XmlRpc.Read(Body(Call("m", Member("a", "<string><x/></string>")))));
+        Assert.Null(XmlRpc.Read(Body(Call("m", Member("agent<x/>Id", "<int>1</int>")))));
+        Assert.NotNull(XmlRpc.Read(Body(Call("m", Member("a", "<string>ab</string>")))));
+    }
+
+    /// <summary>Two typed values in one value, or a member with two names or two values, are refused.</summary>
+    [Fact]
+    public void Duplicate_value_parts_are_refused()
     {
         Assert.Null(XmlRpc.Read(Body(Call("m", Member("a", "<int>1</int><int>2</int>")))));
-
-        var call = XmlRpc.Read(Body(Call("m", "<member><name>a</name><name>b</name><value><int>1</int></value><value><int>2</int></value></member>")));
-
-        Assert.NotNull(call);
-        Assert.Equal(1, Assert.Single(call.Params, p => p.Key == "a").Value);
+        Assert.Null(XmlRpc.Read(Body(Call("m", "<member><name>a</name><name>b</name><value><int>1</int></value></member>"))));
+        Assert.Null(XmlRpc.Read(Body(Call("m", "<member><name>a</name><value><int>1</int></value><value><int>2</int></value></member>"))));
     }
 
     /// <summary>
-    /// money review 2026-11-15, H-7: the helper takes the last of duplicated ids, so a viewer can't slip a second agent past
+    /// The helper refuses duplicated ids, so a viewer can't slip a second agent past
     /// the session check: the one it checks is the one it answers for.
     /// </summary>
     [Fact]
