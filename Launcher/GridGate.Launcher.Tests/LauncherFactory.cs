@@ -82,6 +82,7 @@ internal sealed class LauncherFactory : WebApplicationFactory<Program>
     public FakeOtherGrid OtherGrid { get; } = new();
     /// <summary>The Home dashboard's counts (no database).</summary>
     public FakeWorldCounter Counts { get; } = new();
+    public FakeResidentCounter Residents { get; } = new();
     /// <summary>The Home dashboard's service checks (no network).</summary>
     public FakeServiceChecks Checks { get; } = new();
     /// <summary>The money pages' region statuses and where people are (no money database).</summary>
@@ -120,6 +121,8 @@ internal sealed class LauncherFactory : WebApplicationFactory<Program>
             services.AddSingleton<IOnlineUsers>(OnlineUsers);
             services.RemoveAll<GridGate.Launcher.Core.Dashboard.IWorldCounter>();
             services.AddSingleton<GridGate.Launcher.Core.Dashboard.IWorldCounter>(Counts);
+            services.RemoveAll<GridGate.Launcher.Core.Dashboard.IResidentCounter>();
+            services.AddSingleton<GridGate.Launcher.Core.Dashboard.IResidentCounter>(Residents);
             services.RemoveAll<GridGate.Launcher.Dashboard.IServiceChecks>();
             services.AddSingleton<GridGate.Launcher.Dashboard.IServiceChecks>(Checks);
             services.RemoveAll<IGridRegions>();

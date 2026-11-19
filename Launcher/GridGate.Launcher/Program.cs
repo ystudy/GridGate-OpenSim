@@ -397,6 +397,9 @@ builder.Services.AddSingleton<SplashSnapshot>();
 // The Home dashboard's counts (design 2026-11-05-dashboard), cached a minute.
 builder.Services.AddSingleton<GridGate.Launcher.Core.Dashboard.IWorldCounter>(sp => new GridGate.Launcher.Core.Dashboard.WorldCounter(
     sp.GetRequiredService<Func<LauncherSettings>>(), sp.GetRequiredService<ILogger<GridGate.Launcher.Core.Dashboard.WorldCounter>>()));
+// The front page's two resident counts (spec 2026-11-19-front-page-design), asked by its once-a-minute snapshot.
+builder.Services.AddSingleton<GridGate.Launcher.Core.Dashboard.IResidentCounter>(sp => new GridGate.Launcher.Core.Dashboard.ResidentCounter(
+    sp.GetRequiredService<Func<LauncherSettings>>(), sp.GetRequiredService<ILogger<GridGate.Launcher.Core.Dashboard.ResidentCounter>>()));
 // [S] The Core services checks: 127.0.0.1 only, 2 seconds, no redirects, no cookies (design 2026-11-05-dashboard).
 builder.Services.AddHttpClient(GridGate.Launcher.Dashboard.ServiceChecks.ClientName, c =>
     {

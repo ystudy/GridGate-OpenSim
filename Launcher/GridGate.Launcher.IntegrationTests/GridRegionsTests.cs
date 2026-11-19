@@ -39,6 +39,7 @@ public sealed class GridRegionsTests : IDisposable
 
             // A region another machine registered: only Robust's table knows it.
             var elsewhere = Guid.NewGuid();
+            var linked = Guid.NewGuid();
             await using (var conn = new MySqlConnection(new MySqlConnectionStringBuilder
             {
                 Server = "127.0.0.1", Port = (uint)s.MariaDbPort, Database = "robust",
@@ -50,13 +51,18 @@ public sealed class GridRegionsTests : IDisposable
                 await using var cmd = new MySqlCommand("INSERT INTO regions (uuid, regionHandle, regionName, Token, locX, locY) VALUES (@u, 1, 'Far Away', '', 256000, 256512)", conn);
                 cmd.Parameters.AddWithValue("@u", elsewhere.ToString());
                 await cmd.ExecuteNonQueryAsync(ct);
+                // A hypergrid link: a regions row with the Hyperlink flag (512). Still listed, but marked.
+                await using var link = new MySqlCommand("INSERT INTO regions (uuid, regionHandle, regionName, Token, locX, locY, flags) VALUES (@u, 2, 'Other Grid', '', 512000, 512000, 512)", conn);
+                link.Parameters.AddWithValue("@u", linked.ToString());
+                await link.ExecuteNonQueryAsync(ct);
             }
 
             var list = await regions.ListAsync(ct);
             Assert.True(list.Available);
             // Robust keeps the corner in metres; the list gives the map square.
             Assert.Contains(new GridRegion(elsewhere, "Far Away", 1000, 1002), list.Regions);
-            Assert.Equal(before.Regions.Count + 1, list.Regions.Count);
+            Assert.Contains(new GridRegion(linked, "Other Grid", 2000, 2000, IsLink: true), list.Regions);
+            Assert.Equal(before.Regions.Count + 2, list.Regions.Count);
 
             // A database that is down: no exception, no long wait.
             await grid.StopAllAsync(ct);
