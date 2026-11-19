@@ -4,6 +4,14 @@ using Microsoft.Extensions.Logging;
 
 namespace GridGate.Launcher.Core.Front;
 
+/// <summary>What <see cref="FrontPageStore.Update"/> did: saved, refused for its problems, or nothing because the list had changed.</summary>
+public sealed record FrontUpdate(bool ListChanged, IReadOnlyList<string> Problems)
+{
+    public static readonly FrontUpdate Done = new(false, []);
+    public static readonly FrontUpdate Changed = new(true, []);
+    public bool Saved => !ListChanged && Problems.Count == 0;
+}
+
 /// <summary>
 /// The front page's settings in <c>Data/front/front.json</c> (spec 2026-11-19-front-page-design). A save is live at once (no
 /// draft). Checked against the splash editor's limits for the same fields, and against the front picture store, under one
@@ -40,6 +48,21 @@ public sealed class FrontPageStore(LauncherPaths paths, ILogger<FrontPageStore>?
             if (problems.Count > 0) return problems;
             if (!_file.Save(settings)) throw new IOException("The front page settings could not be saved.");
             return [];
+        }
+    }
+
+    /// <summary>
+    /// Reads, changes and saves under one lock, so two editors can't each save over the other's change. <paramref name="change"/>
+    /// returns null when what it was asked to change isn't there any more (another window changed the list): nothing is saved.
+    /// </summary>
+    /// <exception cref="IOException">The file could not be written.</exception>
+    public FrontUpdate Update(Func<FrontPageSettings, FrontPageSettings?> change)
+    {
+        lock (_gate)
+        {
+            if (change(Load()) is not { } next) return FrontUpdate.Changed;
+            var problems = Save(next);
+            return problems.Count == 0 ? FrontUpdate.Done : new FrontUpdate(false, problems);
         }
     }
 

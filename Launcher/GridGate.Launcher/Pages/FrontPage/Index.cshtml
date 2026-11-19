@@ -72,12 +72,12 @@
             <li class="border rounded p-2 mb-2">
                 <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
                     <strong class="front-own-place-name me-auto">@p.RegionName</strong>
-                    <form method="post" asp-page-handler="MovePlace"><input type="hidden" name="index" value="@i"><input type="hidden" name="by" value="-1"><button type="submit" class="btn btn-sm btn-outline-secondary" icon="arrow-up" disabled="@(i == 0)">Up</button></form>
-                    <form method="post" asp-page-handler="MovePlace"><input type="hidden" name="index" value="@i"><input type="hidden" name="by" value="1"><button type="submit" class="btn btn-sm btn-outline-secondary" icon="arrow-down" disabled="@(i == s.Places.Count - 1)">Down</button></form>
-                    <form method="post" asp-page-handler="RemovePlace"><input type="hidden" name="index" value="@i"><button type="submit" class="btn btn-sm btn-outline-danger" icon="trash">Remove</button></form>
+                    <form method="post" asp-page-handler="MovePlace"><input type="hidden" name="index" value="@i"><input type="hidden" name="regionId" value="@p.RegionId"><input type="hidden" name="by" value="-1"><button type="submit" class="btn btn-sm btn-outline-secondary" icon="arrow-up" disabled="@(i == 0)">Up</button></form>
+                    <form method="post" asp-page-handler="MovePlace"><input type="hidden" name="index" value="@i"><input type="hidden" name="regionId" value="@p.RegionId"><input type="hidden" name="by" value="1"><button type="submit" class="btn btn-sm btn-outline-secondary" icon="arrow-down" disabled="@(i == s.Places.Count - 1)">Down</button></form>
+                    <form method="post" asp-page-handler="RemovePlace"><input type="hidden" name="index" value="@i"><input type="hidden" name="regionId" value="@p.RegionId"><button type="submit" class="btn btn-sm btn-outline-danger" icon="trash">Remove</button></form>
                 </div>
                 <form method="post" asp-page-handler="SavePlace" enctype="multipart/form-data">
-                    <input type="hidden" name="index" value="@i">
+                    <input type="hidden" name="index" value="@i"><input type="hidden" name="regionId" value="@p.RegionId">
                     @foreach (var code in Model.Languages)
                     {
                         <label class="form-label small mb-0" for="line-@i-@code">Line (@Lang(code))</label>
@@ -134,8 +134,8 @@
             var n = s.News[i];
             <li class="border rounded p-2 mb-2 d-flex flex-wrap align-items-center gap-2">
                 <span class="me-auto"><strong>@n.Date.ToString("yyyy-MM-dd")</strong> @(n.Text.GetValueOrDefault("en") ?? n.Text.Values.FirstOrDefault())@(n.Hidden ? " (hidden)" : "")</span>
-                <form method="post" asp-page-handler="ToggleNews"><input type="hidden" name="index" value="@i"><button type="submit" class="btn btn-sm btn-outline-secondary" icon="eye">@(n.Hidden ? "Show" : "Hide")</button></form>
-                <form method="post" asp-page-handler="RemoveNews"><input type="hidden" name="index" value="@i"><button type="submit" class="btn btn-sm btn-outline-danger" icon="trash">Remove</button></form>
+                <form method="post" asp-page-handler="ToggleNews"><input type="hidden" name="index" value="@i"><input type="hidden" name="key" value="@GridGate.Launcher.Pages.FrontPage.IndexModel.NewsKey(n)"><button type="submit" class="btn btn-sm btn-outline-secondary" icon="eye">@(n.Hidden ? "Show" : "Hide")</button></form>
+                <form method="post" asp-page-handler="RemoveNews"><input type="hidden" name="index" value="@i"><input type="hidden" name="key" value="@GridGate.Launcher.Pages.FrontPage.IndexModel.NewsKey(n)"><button type="submit" class="btn btn-sm btn-outline-danger" icon="trash">Remove</button></form>
             </li>
         }
     </ol>

@@ -141,6 +141,9 @@
   <data name="Home.FeaturedPlaces" xml:space="preserve"><value>Featured places</value></data>
   <data name="Home.News" xml:space="preserve"><value>News</value></data>
   <data name="Home.ReadyToJoin" xml:space="preserve"><value>Ready to join?</value></data>
+  <data name="Home.SignInIntro" xml:space="preserve"><value>Already have an avatar here? Use its name and password.</value></data>
+  <data name="Home.NewHere" xml:space="preserve"><value>New here? Make an avatar to join {0} and its world.</value></data>
+  <data name="Home.AboutGrid" xml:space="preserve"><value>About this grid</value></data>
   <data name="Home.StaffSignIn" xml:space="preserve"><value>Staff sign in</value></data>
   <data name="SignUp.Closed" xml:space="preserve"><value>This grid isn't open for sign-ups yet.</value></data>
   <data name="SignUp.SignInIfAccount" xml:space="preserve"><value>{0} if you already have an account.</value></data>

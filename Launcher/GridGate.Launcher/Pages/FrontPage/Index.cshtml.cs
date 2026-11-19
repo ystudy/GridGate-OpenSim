@@ -19,6 +19,19 @@ namespace GridGate.Launcher.Pages.FrontPage;
 public sealed class IndexModel(FrontPageStore store, [FromKeyedServices("front")] PictureStore pictures, IGridRegions regions,
     IGridController grid, IHttpClientFactory http, FrontPageSnapshot snapshot, OfferedLanguages offered) : PageModel
 {
+    /// <summary>
+    /// Names a news item for the editor's buttons: its date and a short hash of its text, so a button made for one item never
+    /// changes another after the list changed in another window.
+    /// </summary>
+    public static string NewsKey(SplashNewsItem item)
+    {
+        var text = string.Join('\n', item.Text.OrderBy(t => t.Key, StringComparer.Ordinal).Select(t => t.Key + "=" + t.Value));
+        var hash = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(text));
+        return $"{item.Date:yyyy-MM-dd}-{Convert.ToHexStringLower(hash.AsSpan(0, 6))}";
+    }
+
+    private const string ListChanged = "The list changed in another window, so nothing was changed. Look again and try once more.";
+
     public FrontPageSettings Saved { get; private set; } = FrontPageSettings.Default;
 
     /// <summary>The grid's own regions (never hypergrid links), for the Add a place picker; empty when the list can't be read.</summary>
@@ -66,12 +79,10 @@ public sealed class IndexModel(FrontPageStore store, [FromKeyedServices("front")
             $"{region.Name} is added.");
     }
 
-    public async Task<IActionResult> OnPostSavePlaceAsync(int index, Dictionary<string, string>? line, IFormFile? file, bool fromMap,
-        CancellationToken ct)
+    public async Task<IActionResult> OnPostSavePlaceAsync(int index, Guid regionId, Dictionary<string, string>? line, IFormFile? file,
+        bool fromMap, CancellationToken ct)
     {
-        var current = store.Load();
-        if (index < 0 || index >= current.Places.Count) return BadRequest();
-        var place = current.Places[index];
+        if (PlaceAt(store.Load(), index, regionId) is not { } place) return Fail(ListChanged);
         var picture = place.Picture;
         if (file is { Length: > 0 })
         {
@@ -85,27 +96,23 @@ public sealed class IndexModel(FrontPageStore store, [FromKeyedServices("front")
         }
         var lines = (line ?? []).Where(l => offered.Current().Contains(l.Key))
             .Where(l => !string.IsNullOrWhiteSpace(l.Value)).ToDictionary(l => l.Key, l => l.Value.Trim());
-        return Apply(s => s with { Places = Replace(s.Places, index, place with { Line = lines, Picture = picture }) }, $"{place.RegionName} is saved.");
+        return Apply(s => PlaceAt(s, index, regionId) is { } still
+            ? s with { Places = Replace(s.Places, index, still with { Line = lines, Picture = picture }) }
+            : null, $"{place.RegionName} is saved.");
     }
 
-    public IActionResult OnPostMovePlace(int index, int by)
+    public IActionResult OnPostMovePlace(int index, Guid regionId, int by) => Apply(s =>
     {
-        var places = store.Load().Places;
         var to = index + Math.Sign(by);
-        if (index < 0 || index >= places.Count || to < 0 || to >= places.Count) return BadRequest();
-        return Apply(s =>
-        {
-            var list = s.Places.ToList();
-            (list[index], list[to]) = (list[to], list[index]);
-            return s with { Places = list };
-        }, "The places' order is saved.");
-    }
+        if (PlaceAt(s, index, regionId) is null || to < 0 || to >= s.Places.Count) return null;
+        var list = s.Places.ToList();
+        (list[index], list[to]) = (list[to], list[index]);
+        return s with { Places = list };
+    }, "The places' order is saved.");
 
-    public IActionResult OnPostRemovePlace(int index)
-    {
-        if (index < 0 || index >= store.Load().Places.Count) return BadRequest();
-        return Apply(s => s with { Places = [.. s.Places.Where((_, i) => i != index)] }, "The place is removed.");
-    }
+    public IActionResult OnPostRemovePlace(int index, Guid regionId) =>
+        Apply(s => PlaceAt(s, index, regionId) is null ? null : s with { Places = [.. s.Places.Where((_, i) => i != index)] },
+            "The place is removed.");
 
     public IActionResult OnPostNewsSource(FrontNewsSource source) =>
         Enum.IsDefined(source) ? Apply(s => s with { NewsSource = source }, "The news' source is saved.") : BadRequest();
@@ -119,17 +126,20 @@ public sealed class IndexModel(FrontPageStore store, [FromKeyedServices("front")
         return Apply(s => s with { News = [.. s.News, new SplashNewsItem(date, words, false)] }, "The news is added.");
     }
 
-    public IActionResult OnPostToggleNews(int index)
-    {
-        if (index < 0 || index >= store.Load().News.Count) return BadRequest();
-        return Apply(s => s with { News = Replace(s.News, index, s.News[index] with { Hidden = !s.News[index].Hidden }) }, "The news is saved.");
-    }
+    public IActionResult OnPostToggleNews(int index, string? key) =>
+        Apply(s => NewsAt(s, index, key) is { } item ? s with { News = Replace(s.News, index, item with { Hidden = !item.Hidden }) } : null,
+            "The news is saved.");
 
-    public IActionResult OnPostRemoveNews(int index)
-    {
-        if (index < 0 || index >= store.Load().News.Count) return BadRequest();
-        return Apply(s => s with { News = [.. s.News.Where((_, i) => i != index)] }, "The news is removed.");
-    }
+    public IActionResult OnPostRemoveNews(int index, string? key) =>
+        Apply(s => NewsAt(s, index, key) is null ? null : s with { News = [.. s.News.Where((_, i) => i != index)] }, "The news is removed.");
+
+    /// <summary>The place at <paramref name="index"/> when it is still the one for <paramref name="regionId"/>; null otherwise.</summary>
+    private static SplashPlace? PlaceAt(FrontPageSettings s, int index, Guid regionId) =>
+        index >= 0 && index < s.Places.Count && s.Places[index].RegionId == regionId ? s.Places[index] : null;
+
+    /// <summary>The news item at <paramref name="index"/> when it is still the one <paramref name="key"/> names; null otherwise.</summary>
+    private static SplashNewsItem? NewsAt(FrontPageSettings s, int index, string? key) =>
+        index >= 0 && index < s.News.Count && NewsKey(s.News[index]) == key ? s.News[index] : null;
 
     private static List<T> Replace<T>(IReadOnlyList<T> list, int index, T item)
     {
@@ -138,19 +148,24 @@ public sealed class IndexModel(FrontPageStore store, [FromKeyedServices("front")
         return copy;
     }
 
-    /// <summary>Saves the change; on success the cached live data is dropped so the public page shows it at once.</summary>
-    private IActionResult Apply(Func<FrontPageSettings, FrontPageSettings> change, string done)
+    /// <summary>
+    /// Saves the change, read and written under the store's lock; <paramref name="change"/> returns null when the item it was
+    /// asked to change isn't where the page showed it any more. On success the cached live data is dropped, so the public page
+    /// shows it at once.
+    /// </summary>
+    private IActionResult Apply(Func<FrontPageSettings, FrontPageSettings?> change, string done)
     {
-        IReadOnlyList<string> problems;
+        FrontUpdate result;
         try
         {
-            problems = store.Save(change(store.Load()));
+            result = store.Update(change);
         }
         catch (IOException e)
         {
             return Fail(e.Message);
         }
-        if (problems.Count > 0) return Fail(string.Join(" ", problems));
+        if (result.ListChanged) return Fail(ListChanged);
+        if (result.Problems.Count > 0) return Fail(string.Join(" ", result.Problems));
         snapshot.Invalidate();
         TempData["FrontNotice"] = done;
         return Back();

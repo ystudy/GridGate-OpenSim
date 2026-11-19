@@ -142,6 +142,9 @@
   <data name="Home.FeaturedPlaces" xml:space="preserve"><value>Lugares destacados</value></data>
   <data name="Home.News" xml:space="preserve"><value>Noticias</value></data>
   <data name="Home.ReadyToJoin" xml:space="preserve"><value>¿Listo para unirse?</value></data>
+  <data name="Home.SignInIntro" xml:space="preserve"><value>¿Ya tiene un avatar aquí? Use su nombre y su contraseña.</value></data>
+  <data name="Home.NewHere" xml:space="preserve"><value>¿Es nuevo aquí? Cree un avatar para unirse a {0} y a su mundo.</value></data>
+  <data name="Home.AboutGrid" xml:space="preserve"><value>Acerca de este grid</value></data>
   <data name="Home.StaffSignIn" xml:space="preserve"><value>Acceso del equipo</value></data>
   <data name="SignUp.Closed" xml:space="preserve"><value>Este grid todavía no está abierto a nuevos registros.</value></data>
   <data name="SignUp.SignInIfAccount" xml:space="preserve"><value>{0} si ya tiene una cuenta.</value></data>

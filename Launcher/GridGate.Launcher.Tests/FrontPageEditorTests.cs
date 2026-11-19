@@ -171,7 +171,7 @@ public sealed class FrontPageEditorTests
         var admin = await StaffAsync(f, "admin");
         Saved(await PostAsync(admin, "AddPlace", new() { ["regionId"] = Harbour.ToString() }));
 
-        Saved(await PostAsync(admin, "SavePlace", new() { ["index"] = "0", ["line[en]"] = "Boats and sunsets", ["line[de]"] = "Boote", ["fromMap"] = "true" }));
+        Saved(await PostAsync(admin, "SavePlace", new() { ["index"] = "0", ["regionId"] = Harbour.ToString(), ["line[en]"] = "Boats and sunsets", ["line[de]"] = "Boote", ["fromMap"] = "true" }));
 
         var place = Assert.Single(Store(f).Load().Places);
         Assert.Equal("Boats and sunsets", place.Line["en"]);
@@ -188,11 +188,12 @@ public sealed class FrontPageEditorTests
         var admin = await StaffAsync(f, "admin");
         foreach (var r in f.Regions.Result.Regions)
             Saved(await PostAsync(admin, "AddPlace", new() { ["regionId"] = r.Id.ToString() }));
+        var hills = f.Regions.Result.Regions[1].Id;
 
-        Saved(await PostAsync(admin, "MovePlace", new() { ["index"] = "1", ["by"] = "-1" }));
+        Saved(await PostAsync(admin, "MovePlace", new() { ["index"] = "1", ["regionId"] = hills.ToString(), ["by"] = "-1" }));
         Assert.Equal(["Hills", "Harbour"], Store(f).Load().Places.Select(p => p.RegionName));
 
-        Saved(await PostAsync(admin, "RemovePlace", new() { ["index"] = "0" }));
+        Saved(await PostAsync(admin, "RemovePlace", new() { ["index"] = "0", ["regionId"] = hills.ToString() }));
         Assert.Equal(["Harbour"], Store(f).Load().Places.Select(p => p.RegionName));
     }
 
@@ -206,13 +207,13 @@ public sealed class FrontPageEditorTests
         var item = Assert.Single(Store(f).Load().News);
         Assert.Equal((new DateOnly(2026, 11, 19), "Opening night", false), (item.Date, item.Text["en"], item.Hidden));
 
-        Saved(await PostAsync(admin, "ToggleNews", new() { ["index"] = "0" }));
+        Saved(await PostAsync(admin, "ToggleNews", new() { ["index"] = "0", ["key"] = Pages.FrontPage.IndexModel.NewsKey(item) }));
         Assert.True(Store(f).Load().News[0].Hidden);
 
         Saved(await PostAsync(admin, "NewsSource", new() { ["source"] = "Own" }));
         Assert.Equal(FrontNewsSource.Own, Store(f).Load().NewsSource);
 
-        Saved(await PostAsync(admin, "RemoveNews", new() { ["index"] = "0" }));
+        Saved(await PostAsync(admin, "RemoveNews", new() { ["index"] = "0", ["key"] = Pages.FrontPage.IndexModel.NewsKey(Store(f).Load().News[0]) }));
         Assert.Empty(Store(f).Load().News);
     }
 
@@ -231,15 +232,38 @@ public sealed class FrontPageEditorTests
     }
 
     [Fact]
-    public async Task Out_of_range_index_is_400_and_saves_nothing()
+    public async Task A_stale_tab_changes_nothing()
+    {
+        // Two tabs: the first still shows Harbour, Hills, Club; the second has already removed Harbour. The first tab's Remove
+        // on "Hills" (its index 1) now points at Club, so it must change nothing rather than remove the wrong place.
+        await using var f = Rig();
+        var ids = new[] { Harbour, Guid.NewGuid(), Guid.NewGuid() };
+        f.Regions.Result = new GridRegionList([new(ids[0], "Harbour", 1000, 1002), new(ids[1], "Hills", 1001, 1002), new(ids[2], "Club", 1002, 1002)], true);
+        var admin = await StaffAsync(f, "admin");
+        foreach (var id in ids)
+            Saved(await PostAsync(admin, "AddPlace", new() { ["regionId"] = id.ToString() }));
+        Saved(await PostAsync(admin, "RemovePlace", new() { ["index"] = "0", ["regionId"] = ids[0].ToString() })); // the other tab
+
+        using var r = await PostAsync(admin, "RemovePlace", new() { ["index"] = "1", ["regionId"] = ids[1].ToString() });
+        using var move = await PostAsync(admin, "MovePlace", new() { ["index"] = "2", ["regionId"] = ids[2].ToString(), ["by"] = "-1" });
+
+        Assert.Equal(["Hills", "Club"], Store(f).Load().Places.Select(p => p.RegionName));
+        Assert.Contains("changed in another window", (await PageAsync(admin)).QuerySelector("main .alert-danger")!.TextContent);
+    }
+
+    [Fact]
+    public async Task A_stale_news_action_changes_nothing()
     {
         await using var f = Rig();
         var admin = await StaffAsync(f, "admin");
+        Saved(await PostAsync(admin, "AddNews", new() { ["date"] = "2026-11-18", ["text[en]"] = "First" }));
+        Saved(await PostAsync(admin, "AddNews", new() { ["date"] = "2026-11-19", ["text[en]"] = "Second" }));
+        var first = Store(f).Load().News[0];
+        Saved(await PostAsync(admin, "RemoveNews", new() { ["index"] = "0", ["key"] = Pages.FrontPage.IndexModel.NewsKey(first) }));
 
-        using var r = await PostAsync(admin, "RemovePlace", new() { ["index"] = "3" });
+        using var r = await PostAsync(admin, "ToggleNews", new() { ["index"] = "0", ["key"] = Pages.FrontPage.IndexModel.NewsKey(first) });
 
-        Assert.Equal(HttpStatusCode.BadRequest, r.StatusCode);
-        Assert.Equal(FrontPageSettings.Default.PlacesSource, Store(f).Load().PlacesSource);
+        Assert.False(Assert.Single(Store(f).Load().News).Hidden); // "Second" untouched
     }
 
     [Fact]

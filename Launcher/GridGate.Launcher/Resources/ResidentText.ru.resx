@@ -142,6 +142,9 @@
   <data name="Home.FeaturedPlaces" xml:space="preserve"><value>Избранные места</value></data>
   <data name="Home.News" xml:space="preserve"><value>Новости</value></data>
   <data name="Home.ReadyToJoin" xml:space="preserve"><value>Готовы присоединиться?</value></data>
+  <data name="Home.SignInIntro" xml:space="preserve"><value>Уже есть аватар здесь? Используйте его имя и пароль.</value></data>
+  <data name="Home.NewHere" xml:space="preserve"><value>Впервые здесь? Создайте аватар, чтобы присоединиться к {0} и его миру.</value></data>
+  <data name="Home.AboutGrid" xml:space="preserve"><value>Об этом гриде</value></data>
   <data name="Home.StaffSignIn" xml:space="preserve"><value>Вход для администрации</value></data>
   <data name="SignUp.Closed" xml:space="preserve"><value>Регистрация в этом гриде пока закрыта.</value></data>
   <data name="SignUp.SignInIfAccount" xml:space="preserve"><value>{0}, если у вас уже есть учётная запись.</value></data>
