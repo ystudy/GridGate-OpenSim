@@ -105,7 +105,7 @@ internal sealed class MoneyServiceRig : IAsyncDisposable
             MoneyPort = port,
             Programs = [new ProgramSettings("p1", 8004, 8011), new ProgramSettings("p2", 8005, 8012)],
             Regions = [new RegionSettings("p1", "Here", Here, UdpPort: 8004), new RegionSettings("p2", "There", There, UdpPort: 8005)],
-            Money = new MoneySettings(Mode: MoneyMode.Play, UploadFee: 3, Visitors: VisitorMoney.All, ScriptPayouts: true,
+            Money = new MoneySettings(Mode: MoneyMode.Play, UploadFee: 3, ClassifiedFee: 25, Visitors: VisitorMoney.All, ScriptPayouts: true,
                 ProgramKeys: new() { ["p1"] = Key, ["p2"] = Key2 }),
         };
         var dbSettings = Settings;

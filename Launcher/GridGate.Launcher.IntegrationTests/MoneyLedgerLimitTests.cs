@@ -53,7 +53,7 @@ public sealed class MoneyLedgerLimitTests(MoneyMariaDb maria) : IClassFixture<Mo
         Assert.Equal(6_000, (await ledger.PersonLimitsAsync(AccountRef.Resident(A), Ct))!.SpentToday);
         Assert.Equal(6_000, (await ledger.LimitsAsync(LimitTarget.ForKey(P1), Ct))!.SpentToday);
         // A returned one stops counting.
-        var back = await ledger.HoldAsync(FeeHold(A, 3_000, EntryType.ClassifiedFee), Ct);
+        var back = await ledger.HoldAsync(FeeHold(A, 3_000, EntryType.GroupJoinFee), Ct);
         Assert.Equal(MoneyOutcome.Ok, await Outcome(ledger.ReturnHoldAsync(Guid.NewGuid(), back.HoldId!.Value, Ct)));
         Assert.Equal(MoneyOutcome.Ok, await Outcome(ledger.ChargeAsync(Fee(A, 4_000), Ct)));
 
@@ -65,7 +65,7 @@ public sealed class MoneyLedgerLimitTests(MoneyMariaDb maria) : IClassFixture<Mo
     [Fact]
     public async Task A_fee_hold_over_the_keys_limit_is_refused()
     {
-        var (ledger, _, _) = await MoneyLedgerTransferTests.Setup(maria, new MoneySettings(Mode: MoneyMode.Play, DailySpendLimit: 1_000_000));
+        var (ledger, _, _) = await MoneyLedgerTransferTests.Setup(maria, new MoneySettings(Mode: MoneyMode.Play, DailySpendLimit: 1_000_000, UploadFee: 1));
         await Fund(ledger, A, 200_000);
         Assert.Equal(MoneyOutcome.Ok, await Outcome(ledger.HoldAsync(FeeHold(A, 100_000), Ct)));
 
@@ -131,7 +131,7 @@ public sealed class MoneyLedgerLimitTests(MoneyMariaDb maria) : IClassFixture<Mo
     [Fact]
     public async Task Key_over_100000_is_over_key_limit()
     {
-        var (ledger, _, _) = await MoneyLedgerTransferTests.Setup(maria, new MoneySettings(Mode: MoneyMode.Play, DailySpendLimit: 1_000_000));
+        var (ledger, _, _) = await MoneyLedgerTransferTests.Setup(maria, new MoneySettings(Mode: MoneyMode.Play, DailySpendLimit: 1_000_000, UploadFee: 1));
         await Fund(ledger, A, 200_000);
         await Fund(ledger, B, 200_000);
 

@@ -60,9 +60,11 @@ public enum MoneyOutcome
 
 /// <summary>
 /// A ledger answer. <see cref="FromBalance"/> is the payer's balance after (or the balance asked for), <see cref="ToBalance"/>
-/// the payee's.
+/// the payee's. <see cref="SaleUnpaid"/> is set only on a <see cref="MoneyOutcome.HoldClosed"/> answer to a complete that came after
+/// the expiry sweep had returned the hold and whose coins could not be taken again: the seller wasn't paid.
 /// </summary>
-public sealed record MoneyResult(MoneyOutcome Outcome, long? FromBalance = null, long? ToBalance = null, long? EntryId = null, long? HoldId = null)
+public sealed record MoneyResult(MoneyOutcome Outcome, long? FromBalance = null, long? ToBalance = null, long? EntryId = null, long? HoldId = null,
+    bool SaleUnpaid = false)
 {
     public static readonly MoneyResult Unavailable = new(MoneyOutcome.Unavailable);
 
@@ -89,6 +91,12 @@ public static class EntryType
     public const string Hold = "hold";
     public const string HoldCompleted = "hold_completed";
     public const string HoldReturned = "hold_returned";
+
+    /// <summary>
+    /// A sale completed after the expiry sweep had returned its hold: the payer's coins taken again, straight to the seller
+    /// (or Fees), under the hold's id.
+    /// </summary>
+    public const string LateSale = "late_sale";
     public const string Refund = "refund";
     public const string WalletMerge = "wallet_merge";
     public const string FeeMoved = "fee_moved";

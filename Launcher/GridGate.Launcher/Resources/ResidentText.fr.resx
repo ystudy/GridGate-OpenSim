@@ -622,6 +622,7 @@
   <data name="MyCoins.Type.hold" xml:space="preserve"><value>Achat</value></data>
   <data name="MyCoins.Type.hold_completed" xml:space="preserve"><value>Vente</value></data>
   <data name="MyCoins.Type.hold_returned" xml:space="preserve"><value>Achat remboursé</value></data>
+  <data name="MyCoins.Type.late_sale" xml:space="preserve"><value>Vente d’objet</value></data>
   <data name="MyCoins.Type.refund" xml:space="preserve"><value>Remboursement</value></data>
   <data name="MyCoins.Type.wallet_merge" xml:space="preserve"><value>Portefeuilles réunis</value></data>
   <data name="MyCoins.Type.fee_moved" xml:space="preserve"><value>Depuis les frais de la grille</value></data>

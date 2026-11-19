@@ -84,6 +84,7 @@ public static class MoneySchema
           (3, '00000000-0000-0000-0000-000000000000', 'system:holding', 'Holding', UTC_TIMESTAMP(6));
         INSERT IGNORE INTO state (name, value) VALUES ('schema_version', '6'), ('frozen', '0'), ('frozen_reason', '');
         CREATE INDEX IF NOT EXISTS hold_id ON entries (hold_id);
+        CREATE INDEX IF NOT EXISTS requests_at ON requests (at);
         CREATE TRIGGER IF NOT EXISTS entries_never_edited BEFORE UPDATE ON entries FOR EACH ROW
           SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Money entries are never edited.';
         CREATE TRIGGER IF NOT EXISTS entries_never_deleted BEFORE DELETE ON entries FOR EACH ROW
@@ -92,7 +93,7 @@ public static class MoneySchema
 
     /// <summary>
     /// What moneyuser may do, table by table (money review 2026-11-15, L-9): add entries and requests but never change or
-    /// remove them, and change only the account and hold columns the ledger changes. A hold's amount and parties, and an
+    /// remove an entry (a request may be removed, which the ledger does once it is old), and change only the account and hold columns the ledger changes. A hold's amount and parties, and an
     /// account's kind, are fixed once written. No DDL: moneyuser can't drop the triggers above. A later migration that must
     /// change an entry drops and recreates them, as root.
     /// </summary>
@@ -101,7 +102,7 @@ public static class MoneySchema
         "SELECT, INSERT, UPDATE (balance, frozen, payouts_allowed, last_allowance) ON accounts",
         "SELECT, INSERT ON entries",
         "SELECT, INSERT, UPDATE (state, settled) ON holds",
-        "SELECT, INSERT ON requests",
+        "SELECT, INSERT, DELETE ON requests",
         "SELECT, UPDATE (value) ON state",
         "SELECT, INSERT, UPDATE, DELETE ON session_locations",
         "SELECT, INSERT, UPDATE, DELETE ON handoffs",

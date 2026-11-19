@@ -238,4 +238,127 @@ public sealed class MoneyServiceAnswerTests(MoneyMariaDb maria) : IClassFixture<
         Assert.Empty(await rig.Alerts.OpenAsync(Ct));
         Assert.Equal(HttpStatusCode.OK, (await rig.Post("balance", WhoA(), Key2)).Status);
     }
+
+    // A complete shows the seller's balance only where the seller is.
+
+    [Fact]
+    public async Task A_complete_shows_the_sellers_balance_only_when_they_are_in_a_region_the_key_covers()
+    {
+        var rig = await StartAsync();
+        // B is placed at There, which p1's key doesn't cover.
+        var farSeller = (await rig.Post("hold", HoldBody(Guid.NewGuid()))).Body!["holdId"]!.GetValue<long>();
+        var far = await rig.Post("hold/complete", new { txnId = Guid.NewGuid(), holdId = farSeller });
+        Assert.Equal("ok", CodeOf(far));
+        Assert.Null(far.Body!["toBalance"]);
+
+        // V is verified at Here.
+        var nearHold = await rig.Post("hold", new
+        {
+            txnId = Guid.NewGuid(), kind = "object", buyer = WhoA(), seller = new { agentId = V, home = VisitorHome }, amount = 10, regionId = Here,
+            objectId = Guid.NewGuid(), objectName = "dress",
+        });
+        var near = await rig.Post("hold/complete", new { txnId = Guid.NewGuid(), holdId = nearHold.Body!["holdId"]!.GetValue<long>() });
+        Assert.Equal("ok", CodeOf(near));
+        Assert.Equal(10, near.Body!["toBalance"]!.GetValue<long>());
+    }
+
+    [Fact]
+    public async Task A_repeated_complete_shows_the_sellers_balance_by_the_same_rule()
+    {
+        var rig = await StartAsync();
+        var holdId = (await rig.Post("hold", HoldBody(Guid.NewGuid()))).Body!["holdId"]!.GetValue<long>();
+        var settle = new { txnId = Guid.NewGuid(), holdId };
+        Assert.Equal("ok", CodeOf(await rig.Post("hold/complete", settle)));
+
+        var again = await rig.Post("hold/complete", settle);
+
+        Assert.Equal("ok", CodeOf(again));
+        Assert.Null(again.Body!["toBalance"]);
+    }
+
+    // A sale completed after its hold ran out.
+
+    private static async Task<long> ExpiredHold(MoneyServiceRig rig)
+    {
+        var holdId = (await rig.Post("hold", HoldBody(Guid.NewGuid(), 25))).Body!["holdId"]!.GetValue<long>();
+        await rig.Db.Sql($"UPDATE `money`.`holds` SET created = created - INTERVAL 1 HOUR WHERE id = {holdId}");
+        Assert.Equal(1, await rig.Ledger.ReturnExpiredHoldsAsync(Ct));
+        return holdId;
+    }
+
+    [Fact]
+    public async Task A_complete_after_the_sweep_takes_the_coins_again_and_the_same_answer_comes_back_on_a_retry()
+    {
+        var rig = await StartAsync();
+        var holdId = await ExpiredHold(rig);
+        var settle = new { txnId = Guid.NewGuid(), holdId };
+
+        var first = await rig.Post("hold/complete", settle);
+
+        Assert.Equal("ok", CodeOf(first));
+        Assert.Equal(75, await rig.Db.Scalar($"SELECT balance FROM `money`.`accounts` WHERE agent_id = '{A}' AND home = ''"));
+        Assert.Equal(125, await rig.Db.Scalar($"SELECT balance FROM `money`.`accounts` WHERE agent_id = '{B}' AND home = ''"));
+        Assert.Equal(first.Raw, (await rig.Post("hold/complete", settle)).Raw);
+        Assert.Empty(await rig.Alerts.OpenAsync(Ct));
+        await rig.AssertBooksSoundAsync();
+    }
+
+    [Fact]
+    public async Task A_complete_after_the_sweep_that_the_payer_cant_cover_stays_hold_closed_and_tells_the_owner()
+    {
+        var rig = await StartAsync();
+        var holdId = await ExpiredHold(rig);
+        Assert.Equal("ok", CodeOf(await rig.Post("transfer", PayAvatar(Guid.NewGuid(), WhoA(), Resident(B), 90))));
+
+        var done = await rig.Post("hold/complete", new { txnId = Guid.NewGuid(), holdId });
+
+        Assert.Equal("hold_closed", CodeOf(done));
+        var alert = Assert.Single(await rig.Alerts.OpenAsync(Ct));
+        Assert.Equal(AlertKind.SaleNotPaid, alert.Kind);
+        Assert.Equal(AlertLevel.Warning, alert.Level);
+        Assert.Equal("p1", alert.KeyId);
+        Assert.Equal(A, alert.AgentId);
+        Assert.Equal(10, await rig.Db.Scalar($"SELECT balance FROM `money`.`accounts` WHERE agent_id = '{A}' AND home = ''"));
+    }
+
+    [Fact]
+    public async Task A_complete_after_the_sweep_takes_nothing_while_coins_are_off()
+    {
+        var rig = await StartAsync();
+        var holdId = await ExpiredHold(rig);
+        rig.Mode = MoneyMode.Off;
+
+        var done = await rig.Post("hold/complete", new { txnId = Guid.NewGuid(), holdId });
+
+        Assert.Equal("hold_closed", CodeOf(done));
+        Assert.Equal(100, await rig.Db.Scalar($"SELECT balance FROM `money`.`accounts` WHERE agent_id = '{A}' AND home = ''"));
+        Assert.Equal(AlertKind.SaleNotPaid, Assert.Single(await rig.Alerts.OpenAsync(Ct)).Kind);
+    }
+
+    // One key paying out for many owners.
+
+    [Fact]
+    public async Task A_key_paying_out_for_more_than_fifty_owners_in_a_day_tells_the_owner_once()
+    {
+        var rig = await StartAsync();
+        async Task<string> PayoutFor(int i)
+        {
+            var owner = Guid.Parse($"a4000000-0000-0000-0000-{i:D12}");
+            await rig.Db.AddUser(owner);
+            await rig.Ledger.SetPayoutsAllowedAsync(owner, true, Ct);
+            return CodeOf(await rig.Post("payout", new { txnId = Guid.NewGuid(), ownerId = owner, to = Resident(B), amount = 1, regionId = Here, objectId = Guid.NewGuid(), objectName = "box" }));
+        }
+
+        for (var i = 0; i < MoneyRules.PayoutOwnersAlertAbove; i++) Assert.Equal("ok", await PayoutFor(i));
+        Assert.Empty(await rig.Alerts.OpenAsync(Ct));
+
+        Assert.Equal("ok", await PayoutFor(50));
+        Assert.Equal("ok", await PayoutFor(51));
+
+        var alert = Assert.Single(await rig.Alerts.OpenAsync(Ct));
+        Assert.Equal(AlertKind.ManyPayoutOwners, alert.Kind);
+        Assert.Equal(AlertLevel.Warning, alert.Level);
+        Assert.Equal("p1", alert.KeyId);
+        Assert.Equal(1, alert.Count);
+    }
 }

@@ -85,6 +85,10 @@ public sealed class MoneyNotices(MoneyGate gate, IMoneyBooks books, MoneyStatus 
                 $"{level}: {KeyName(a.KeyId, s)} reached its daily money limit, so its payments were refused {times} in a day. Open Money to check it.",
             AlertKind.RegionMoved =>
                 $"{level}: {RegionName(a.RegionId, s)} moved to {KeyName(a.KeyId, s)}; money stays off there until you approve the move. Open Money to check it.",
+            AlertKind.SaleNotPaid =>
+                $"{level}: a sale in {RegionName(a.RegionId, s)} was completed after its hold ran out, and the buyer couldn't pay it again; the seller wasn't paid. Open Money to check it.",
+            AlertKind.ManyPayoutOwners =>
+                $"{level}: {KeyName(a.KeyId, s)} paid out for more than {MoneyRules.PayoutOwnersAlertAbove} different object owners in a day. Open Money to check it.",
             _ => $"{level}: someone hit their daily spending limit {times} in a day. Open Money to check it.",
         };
     }

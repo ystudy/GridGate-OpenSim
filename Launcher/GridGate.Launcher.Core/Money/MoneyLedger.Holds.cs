@@ -45,7 +45,8 @@ public sealed partial class MoneyLedger
     public Task<MoneyResult> HoldAsync(HoldRequest r, CancellationToken ct)
     {
         var fee = IsFeeKind(r.Kind);
-        if (!AmountOk(r.Amount) || !fee && r.Kind is not ("object" or "land")) return Task.FromResult(MoneyResult.Of(MoneyOutcome.BadAmount));
+        if (!AmountOk(r.Amount) || !fee && r.Kind is not ("object" or "land") || !MoneyRules.FeeAmountOk(r.Kind, r.Amount, settings()))
+            return Task.FromResult(MoneyResult.Of(MoneyOutcome.BadAmount));
         // A purchase pays its seller. An upload or classified fee names nobody: it is the grid's. A join fee may name the
         // group's founder, a resident of this grid.
         var payeeOk = r.Seller is not { } named
@@ -99,13 +100,26 @@ public sealed partial class MoneyLedger
         }, ct);
     }
 
-    /// <summary>Delivery succeeded: Holding pays the seller. Not blocked by freezes.</summary>
-    public Task<MoneyResult> CompleteHoldAsync(Guid txnId, long holdId, CancellationToken ct) =>
-        FreezeOnMismatch(Idempotent(txnId, "hold_complete", holdId, (conn, tx) => SettleAsync(conn, tx, holdId, complete: true, ct), ct), ct);
+    /// <summary>
+    /// Delivery succeeded: Holding pays the seller. Not blocked by freezes. A hold the expiry sweep returned meanwhile has its
+    /// coins taken from the buyer again (see <see cref="CompleteLateAsync"/>), unless <paramref name="coinsOn"/> is false: with
+    /// coins switched off nothing new is taken, and the seller is left unpaid.
+    /// </summary>
+    public Task<MoneyResult> CompleteHoldAsync(Guid txnId, long holdId, CancellationToken ct, bool coinsOn = true) =>
+        FreezeOnMismatch(Idempotent(txnId, "hold_complete", holdId, (conn, tx) => SettleAsync(conn, tx, holdId, complete: true, ct, lateAllowed: coinsOn), ct), ct);
 
     /// <summary>Delivery failed: Holding pays the buyer back. Not blocked by freezes.</summary>
-    public Task<MoneyResult> ReturnHoldAsync(Guid txnId, long holdId, CancellationToken ct) =>
-        FreezeOnMismatch(Idempotent(txnId, "hold_return", holdId, (conn, tx) => SettleAsync(conn, tx, holdId, complete: false, ct), ct), ct);
+    public Task<MoneyResult> ReturnHoldAsync(Guid txnId, long holdId, CancellationToken ct) => ReturnHoldAsync(txnId, holdId, expired: false, ct);
+
+    /// <summary>
+    /// A return, on request or by the expiry sweep. The sweep's return is marked on its entry (reason
+    /// <see cref="ExpiredReason"/>), so a complete that comes late can tell a hold the sweep returned from one the region gave up.
+    /// </summary>
+    private Task<MoneyResult> ReturnHoldAsync(Guid txnId, long holdId, bool expired, CancellationToken ct) =>
+        FreezeOnMismatch(Idempotent(txnId, "hold_return", holdId, (conn, tx) => SettleAsync(conn, tx, holdId, complete: false, ct, expired), ct), ct);
+
+    /// <summary>The reason on a <see cref="EntryType.HoldReturned"/> entry written by the expiry sweep.</summary>
+    private const string ExpiredReason = "expired";
 
     private const string HoldMismatchReason = "A purchase hold didn't match its entry";
 
@@ -148,9 +162,33 @@ public sealed partial class MoneyLedger
 
         var returned = 0;
         foreach (var id in due)
-            if ((await ReturnHoldAsync(Guid.NewGuid(), id, ct)).Outcome == MoneyOutcome.Ok)
+            if ((await ReturnHoldAsync(Guid.NewGuid(), id, expired: true, ct)).Outcome == MoneyOutcome.Ok)
                 returned++;
         return returned;
+    }
+
+    /// <summary>Who a hold is between: the buyer's agent id, and the seller's when a person or visitor is paid (null when Fees is).</summary>
+    public sealed record HoldParties(Guid Buyer, Guid? Seller);
+
+    /// <summary>The two sides of a hold, or null for an unknown hold. A database failure is <see cref="MoneyUnavailableException"/>.</summary>
+    public async Task<HoldParties?> HoldPartiesAsync(long holdId, CancellationToken ct)
+    {
+        try
+        {
+            await using var conn = await open(ct);
+            await using var cmd = new MySqlCommand("""
+                SELECT b.agent_id, s.agent_id, s.kind FROM holds h JOIN accounts b ON b.id = h.buyer_id JOIN accounts s ON s.id = h.seller_id WHERE h.id = @id
+                """, conn);
+            cmd.Parameters.AddWithValue("@id", holdId);
+            await using var r = await cmd.ExecuteReaderAsync(ct);
+            if (!await r.ReadAsync(ct)) return null;
+            var seller = r.GetString(2) is nameof(AccountKind.Person) or nameof(AccountKind.Visitor) ? Guid.Parse(r.GetValue(1).ToString()!) : (Guid?)null;
+            return new HoldParties(Guid.Parse(r.GetValue(0).ToString()!), seller);
+        }
+        catch (MySqlException e)
+        {
+            throw new MoneyUnavailableException(e);
+        }
     }
 
     /// <summary>The region a hold was made in, or null for an unknown hold (or one made without a region).</summary>
@@ -192,10 +230,12 @@ public sealed partial class MoneyLedger
         }
     }
 
-    private async Task<MoneyResult> SettleAsync(MySqlConnection conn, MySqlTransaction tx, long holdId, bool complete, CancellationToken ct)
+    private async Task<MoneyResult> SettleAsync(MySqlConnection conn, MySqlTransaction tx, long holdId, bool complete, CancellationToken ct, bool expired = false, bool lateAllowed = true)
     {
         var hold = await LockHoldAsync(conn, tx, holdId, ct);
         if (hold is null) return MoneyResult.Of(MoneyOutcome.UnknownHold);
+        if (hold.State == "returned" && complete && await ReturnedBySweepAsync(conn, tx, hold, ct))
+            return lateAllowed ? await CompleteLateAsync(conn, tx, hold, ct) : MoneyResult.Of(MoneyOutcome.HoldClosed) with { SaleUnpaid = true };
         if (hold.State != "open") return MoneyResult.Of(MoneyOutcome.HoldClosed);
         // Settling isn't guarded and pays holds.amount, so the hold must still be what its entry moved (money review
         // 2026-11-15, L-3): exactly one entry for it, the buyer to Holding for that amount.
@@ -205,7 +245,7 @@ public sealed partial class MoneyLedger
         var reason = IsFeeKind(hold.Kind) ? hold.Kind : hold.Kind == "land" ? EntryType.LandSale : EntryType.ObjectSale;
         var entry = complete
             ? new Entry(EntryType.HoldCompleted, hold.RegionId, hold.ObjectId, hold.ObjectName, Reason: reason, HoldId: hold.Id, KeyId: hold.KeyId)
-            : new Entry(EntryType.HoldReturned, hold.RegionId, hold.ObjectId, hold.ObjectName, HoldId: hold.Id, KeyId: hold.KeyId);
+            : new Entry(EntryType.HoldReturned, hold.RegionId, hold.ObjectId, hold.ObjectName, Reason: expired ? ExpiredReason : null, HoldId: hold.Id, KeyId: hold.KeyId);
         var moved = await MoveBetweenAsync(conn, tx, MoneySchema.HoldingId, complete ? hold.SellerId : hold.BuyerId, hold.Amount, entry, guarded: false, ct);
         // Holding can't go below zero: rolled back with the rest.
         if (moved.FromBalance < 0) return MoneyResult.Of(MoneyOutcome.HoldMismatch);
@@ -213,6 +253,32 @@ public sealed partial class MoneyLedger
             ct, ("@state", complete ? "completed" : "returned"), ("@now", Now), ("@id", hold.Id));
         // Fees' balance is nobody's: it never leaves the service.
         return moved with { HoldId = hold.Id, ToBalance = complete && hold.SellerId == MoneySchema.FeesId ? null : moved.ToBalance };
+    }
+
+    /// <summary>Whether the expiry sweep returned this hold (not the region, on request) and no late complete has taken its coins since.</summary>
+    private static async Task<bool> ReturnedBySweepAsync(MySqlConnection conn, MySqlTransaction tx, HoldRow hold, CancellationToken ct) =>
+        await ScalarAsync(conn, tx, "SELECT COUNT(*) FROM entries WHERE hold_id = @id AND type = @returned AND reason = @expired", ct,
+            ("@id", hold.Id), ("@returned", EntryType.HoldReturned), ("@expired", ExpiredReason)) == 1
+        && await ScalarAsync(conn, tx, "SELECT COUNT(*) FROM entries WHERE hold_id = @id AND type = @late", ct, ("@id", hold.Id), ("@late", EntryType.LateSale)) == 0;
+
+    /// <summary>
+    /// A complete for a hold the sweep had already returned: the delivery happened, so the buyer is debited again, as one
+    /// new entry straight to the seller, under the hold's id and checked like the hold was (frozen payments, the wallet,
+    /// the daily limits of the buyer and the key, the balance). The hold stays returned; the late entry is what says it was
+    /// paid. When the buyer can't pay, nothing moves and the answer is <see cref="MoneyOutcome.HoldClosed"/> marked
+    /// <see cref="MoneyResult.SaleUnpaid"/>, for the caller to tell staff.
+    /// </summary>
+    private async Task<MoneyResult> CompleteLateAsync(MySqlConnection conn, MySqlTransaction tx, HoldRow hold, CancellationToken ct)
+    {
+        MoneyResult Unpaid() => MoneyResult.Of(MoneyOutcome.HoldClosed) with { SaleUnpaid = true };
+        if (hold.KeyId is { } key) await LockKeyAsync(conn, tx, key, ct);
+        if (await GridFrozenAsync(conn, tx, ct)) return Unpaid();
+        var reason = IsFeeKind(hold.Kind) ? hold.Kind : hold.Kind == "land" ? EntryType.LandSale : EntryType.ObjectSale;
+        var moved = await MoveBetweenAsync(conn, tx, hold.BuyerId, hold.SellerId, hold.Amount,
+            new Entry(EntryType.LateSale, hold.RegionId, hold.ObjectId, hold.ObjectName, Reason: reason, HoldId: hold.Id, KeyId: hold.KeyId),
+            guarded: true, ct, limited: true);
+        if (moved.Outcome != MoneyOutcome.Ok) return Unpaid();
+        return moved with { HoldId = hold.Id, ToBalance = hold.SellerId == MoneySchema.FeesId ? null : moved.ToBalance };
     }
 
     /// <summary>How many entries name the hold, and how many of those are its opening entry as the hold now reads.</summary>

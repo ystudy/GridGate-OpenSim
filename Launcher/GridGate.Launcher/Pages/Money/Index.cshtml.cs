@@ -691,7 +691,7 @@ public sealed class IndexModel(IGridController grid, MoneyGate gate, IMoneyBooks
             string? person = null;
             if (a.AgentId is { } agent && !names.TryGetValue(agent, out person))
                 names[agent] = person = await ResidentNameAsync(agent, ct);
-            var removable = a.Level == AlertLevel.Warning && (a.Kind != AlertKind.UnhandedArrival || a.Repeated);
+            var removable = a.Level == AlertLevel.Warning && a.Kind != AlertKind.SaleNotPaid && (a.Kind != AlertKind.UnhandedArrival || a.Repeated);
             var server = removable ? s.Money.PairedServers?.FirstOrDefault(p => MoneyVerifyText.KeyOf(p) == a.KeyId)?.Id : null;
             // A visitor isn't a resident, and Robust may be down: either way the alert still says whose avatar it was.
             var who = person ?? (a.AgentId is { } agentId ? $"avatar {agentId}" : null);

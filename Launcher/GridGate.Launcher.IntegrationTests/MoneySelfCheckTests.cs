@@ -26,7 +26,7 @@ public sealed class MoneySelfCheckTests(MoneyMariaDb maria) : IClassFixture<Mone
         new(Guid.NewGuid(), "object", AccountRef.Resident(A), AccountRef.Resident(B), amount, Region, Guid.NewGuid(), "dress");
 
     private static HoldRequest FeeHold(string kind, AccountRef? payee) =>
-        new(Guid.NewGuid(), kind, AccountRef.Resident(A), payee, 3, Region, null, null);
+        new(Guid.NewGuid(), kind, AccountRef.Resident(A), payee, kind == EntryType.ClassifiedFee ? 25 : 3, Region, null, null);
 
     [Theory]
     [InlineData(EntryType.UploadFee)]
@@ -85,7 +85,7 @@ public sealed class MoneySelfCheckTests(MoneyMariaDb maria) : IClassFixture<Mone
     [Fact]
     public async Task Books_built_by_every_kind_of_movement_pass()
     {
-        var (ledger, _, time) = await MoneyLedgerTransferTests.Setup(maria, new MoneySettings(Mode: MoneyMode.Play, WeeklyAllowance: 5));
+        var (ledger, _, time) = await MoneyLedgerTransferTests.Setup(maria, new MoneySettings(Mode: MoneyMode.Play, WeeklyAllowance: 5, UploadFee: 1, ClassifiedFee: 25));
         await ledger.TransferAsync(Pay(A, B, 30), Ct);
         var sold = await ledger.HoldAsync(Buy(10), Ct);
         await ledger.CompleteHoldAsync(Guid.NewGuid(), sold.HoldId!.Value, Ct);

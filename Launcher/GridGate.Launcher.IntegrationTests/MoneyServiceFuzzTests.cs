@@ -74,7 +74,7 @@ public sealed class MoneyServiceFuzzTests(MoneyMariaDb maria) : IClassFixture<Mo
             ["txnId"] = Guid.NewGuid().ToString(), ["ownerId"] = A.ToString(), ["to"] = new JsonObject { ["agentId"] = B.ToString(), ["home"] = "" },
             ["amount"] = 1, ["regionId"] = Here.ToString(), ["objectId"] = Guid.NewGuid().ToString(), ["objectName"] = "slot",
         },
-        ["charge"] = _ => new JsonObject { ["txnId"] = Guid.NewGuid().ToString(), ["type"] = "upload_fee", ["payer"] = Who(), ["amount"] = 1, ["regionId"] = Here.ToString() },
+        ["charge"] = _ => new JsonObject { ["txnId"] = Guid.NewGuid().ToString(), ["type"] = "upload_fee", ["payer"] = Who(), ["amount"] = 3, ["regionId"] = Here.ToString() },
         ["hold"] = _ => new JsonObject
         {
             ["txnId"] = Guid.NewGuid().ToString(), ["kind"] = "object", ["buyer"] = Who(), ["seller"] = new JsonObject { ["agentId"] = B.ToString(), ["home"] = "" },

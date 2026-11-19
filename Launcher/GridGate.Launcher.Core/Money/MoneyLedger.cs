@@ -261,8 +261,45 @@ public sealed partial class MoneyLedger(
     }
 
     /// <summary>One operation and all its values, as <see cref="Idempotent"/> stores them.</summary>
-    private static string Fingerprint(string op, object request) =>
-        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(op + "\n" + JsonSerializer.Serialize(request))));
+    private static string Fingerprint(string op, object request)
+    {
+        // Not by which key asked: a computer's transaction ids are the same under each key it has had, so a retry that spans a
+        // re-pairing is the same request. (Ids of two keys that aren't one computer never meet: the service scopes them apart.)
+        object unkeyed = request switch
+        {
+            TransferRequest t => t with { KeyId = null },
+            PayoutRequest p => p with { KeyId = null },
+            ChargeRequest c => c with { KeyId = null },
+            HoldRequest h => h with { KeyId = null },
+            _ => request,
+        };
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(op + "\n" + JsonSerializer.Serialize(unkeyed))));
+    }
+
+    /// <summary>
+    /// Drops the stored answers older than <see cref="MoneyRules.RequestKeep"/>; how many. A retry of a payment older than that
+    /// is not a retry. Done in slices so a long backlog never holds the table. A database failure is <see cref="MoneyUnavailableException"/>.
+    /// </summary>
+    public async Task<int> PruneRequestsAsync(CancellationToken ct)
+    {
+        var dropped = 0;
+        try
+        {
+            await using var conn = await open(ct);
+            while (true)
+            {
+                await using var cmd = new MySqlCommand("DELETE FROM requests WHERE at < @cutoff LIMIT 2000", conn);
+                cmd.Parameters.AddWithValue("@cutoff", Now - MoneyRules.RequestKeep);
+                var n = await cmd.ExecuteNonQueryAsync(ct);
+                dropped += n;
+                if (n < 2000) return dropped;
+            }
+        }
+        catch (Exception e) when (e is MySqlException or TimeoutException or InvalidOperationException)
+        {
+            throw new MoneyUnavailableException(e);
+        }
+    }
 
     /// <summary>
     /// The stored Ok answer for this transfer's id when the operation and every value match; null otherwise or when the

@@ -125,6 +125,9 @@ public sealed class CoinsModel(IMoneyBooks books, Func<LauncherSettings> setting
         {
             EntryType.Hold or EntryType.HoldCompleted when line.Reason is { } fee && MoneyLedger.IsFeeKind(fee) => fee,
             EntryType.HoldCompleted when line.Reason == EntryType.LandSale => EntryType.LandSale,
+            // A sale completed after its hold ran out reads as what it paid for: its fee, a land sale or an object sale.
+            EntryType.LateSale when line.Reason is EntryType.LandSale or EntryType.ObjectSale => line.Reason,
+            EntryType.LateSale when line.Reason is { } late && MoneyLedger.IsFeeKind(late) => late,
             _ => line.Type,
         };
         string words = t["MyCoins.Type." + type];

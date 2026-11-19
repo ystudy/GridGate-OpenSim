@@ -147,6 +147,8 @@ public static class MoneyVerifyText
                 $"{region}, on {key}, claimed someone arrived that it wasn't handed, {times} in a day. A handoff lost on the network looks the same. {when}",
             AlertKind.KeyLimitReached => $"{key} reached its daily money limit, so its payments were refused {times} in a day. {when}",
             AlertKind.RegionMoved => $"{region} now registers from {key}, but it belongs to another server, so money is off there. {when}",
+            AlertKind.SaleNotPaid => $"A sale was completed after its hold ran out; the seller wasn't paid. It was in {region}, on {key}, {times} in a day. {when}",
+            AlertKind.ManyPayoutOwners => $"{key} paid out for more than {MoneyRules.PayoutOwnersAlertAbove} different object owners in a day. {when}",
             _ => $"Someone hit their daily spending limit {times} in a day. {when}",
         };
     }

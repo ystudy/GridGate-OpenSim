@@ -622,6 +622,7 @@
   <data name="MyCoins.Type.hold" xml:space="preserve"><value>Покупка</value></data>
   <data name="MyCoins.Type.hold_completed" xml:space="preserve"><value>Продажа</value></data>
   <data name="MyCoins.Type.hold_returned" xml:space="preserve"><value>Покупка возвращена</value></data>
+  <data name="MyCoins.Type.late_sale" xml:space="preserve"><value>Продажа объекта</value></data>
   <data name="MyCoins.Type.refund" xml:space="preserve"><value>Возврат</value></data>
   <data name="MyCoins.Type.wallet_merge" xml:space="preserve"><value>Кошельки объединены</value></data>
   <data name="MyCoins.Type.fee_moved" xml:space="preserve"><value>Из сборов грида</value></data>

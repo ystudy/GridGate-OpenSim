@@ -235,7 +235,6 @@ public sealed class MoneySchemaTests(MoneyMariaDb maria) : IClassFixture<MoneyMa
     [InlineData("UPDATE `money`.`holds` SET amount = 1000")]
     [InlineData("UPDATE `money`.`holds` SET seller_id = 3")]
     [InlineData("DELETE FROM `money`.`holds`")]
-    [InlineData("DELETE FROM `money`.`requests`")]
     [InlineData("DROP TRIGGER `money`.`entries_never_edited`")]
     [InlineData("ALTER TABLE `money`.`entries` DROP COLUMN reason")]
     [InlineData("DROP TABLE `money`.`entries`")]
@@ -255,6 +254,8 @@ public sealed class MoneySchemaTests(MoneyMariaDb maria) : IClassFixture<MoneyMa
     [InlineData("UPDATE `money`.`holds` SET state = 'returned', settled = UTC_TIMESTAMP(6)")]
     [InlineData("UPDATE `money`.`state` SET value = '0' WHERE name = 'frozen'")]
     [InlineData("INSERT INTO `money`.`requests` (txn_id, op, fingerprint, response, at) VALUES (UUID(), 'x', 'f', 'r', UTC_TIMESTAMP(6))")]
+    // Stored answers older than the retry window are dropped by the ledger's own sweep.
+    [InlineData("DELETE FROM `money`.`requests` WHERE at < UTC_TIMESTAMP(6)")]
     [InlineData("SELECT COUNT(*) FROM `money`.`entries` WHERE hold_id IS NULL")]
     public async Task Moneyuser_may_still_do_what_the_ledger_does(string sql)
     {
@@ -263,6 +264,16 @@ public sealed class MoneySchemaTests(MoneyMariaDb maria) : IClassFixture<MoneyMa
         await Seed(db);
 
         await AsMoneyuser(db, sql);
+    }
+
+    [Fact]
+    public async Task Stored_answers_are_found_by_their_age()
+    {
+        var db = await maria.FreshAsync();
+        await db.EnsureSchemaAsync();
+
+        Assert.Equal(1, await db.Scalar(
+            "SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = 'money' AND TABLE_NAME = 'requests' AND INDEX_NAME = 'requests_at' AND COLUMN_NAME = 'at'"));
     }
 
     [Fact]

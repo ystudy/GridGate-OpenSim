@@ -118,7 +118,7 @@ internal static class MoneyApi
             var type = Need(b.Type);
             if (!PaymentTypes.Contains(type)) throw new BadRequest();
             var (from, region) = (Need(b.From), Need(b.RegionId));
-            var request = new TransferRequest(Scoped(grant, b.TxnId), type, Account(from), Account(Need(b.To)), Need(b.Amount), region, b.ObjectId, b.ObjectName, grant.KeyId);
+            var request = new TransferRequest(Scoped(c, grant, b.TxnId), type, Account(from), Account(Need(b.To)), Need(b.Amount), region, b.ObjectId, b.ObjectName, grant.KeyId);
             if (await c.Ledger.EarlierAsync(request, ct) is { } earlier) return await Repeat(c, open, request.To.AgentId, earlier, ct);
             if (await open.OpenAsync(ct) is not { } covered) return Code("unavailable");
             return await WithPayer(c, from, covered, region, ct) is { } refusal
@@ -130,13 +130,15 @@ internal static class MoneyApi
         {
             var b = await Read<PayoutBody>(http, ct);
             var region = Need(b.RegionId);
-            var request = new PayoutRequest(Scoped(grant, b.TxnId), Need(b.OwnerId), Account(Need(b.To)), Need(b.Amount), region, Need(b.ObjectId), Need(b.ObjectName), grant.KeyId);
+            var request = new PayoutRequest(Scoped(c, grant, b.TxnId), Need(b.OwnerId), Account(Need(b.To)), Need(b.Amount), region, Need(b.ObjectId), Need(b.ObjectName), grant.KeyId);
             if (await c.Ledger.EarlierAsync(request, ct) is { } earlier) return await Repeat(c, open, request.To.AgentId, earlier, ct);
             if (await open.OpenAsync(ct) is not { } covered) return Code("unavailable");
             if (!covered.Regions.Contains(region)) return Code("wrong_region");
             if (!await Verification(c).IsVerifiedAsync(covered, region, ct)) return Code("unverified_region");
             // The owner's payout limit isn't their spending limit: only the key's limit raises an alert here.
-            return await PayeeSeen(c, covered, request.To.AgentId, Of(await Watched(c, covered, null, await c.Ledger.PayoutAsync(request, ct))), ct);
+            var paid = await Watched(c, covered, null, await c.Ledger.PayoutAsync(request, ct));
+            if (paid.Outcome == MoneyOutcome.Ok) await WatchPayoutOwners(c, grant, ct);
+            return await PayeeSeen(c, covered, request.To.AgentId, Of(paid), ct);
         });
         PostEarly(app, "/money/v1/charge", c, async (http, grant, open, ct) =>
         {
@@ -144,7 +146,7 @@ internal static class MoneyApi
             var (payer, region) = (Need(b.Payer), Need(b.RegionId));
             // A charge carries no region, so neither does its repeat check: the key is the unit of trust, and a same-key
             // repeat sent from another of its regions is answered from the store.
-            var request = new ChargeRequest(Scoped(grant, b.TxnId), Need(b.Type), Account(payer), Need(b.Amount), b.PayTo, grant.KeyId);
+            var request = new ChargeRequest(Scoped(c, grant, b.TxnId), Need(b.Type), Account(payer), Need(b.Amount), b.PayTo, grant.KeyId);
             if (await c.Ledger.EarlierAsync(request, ct) is { } earlier) return await Repeat(c, open, request.PayTo, earlier, ct);
             if (await open.OpenAsync(ct) is not { } covered) return Code("unavailable");
             // A fee paid to the grid has no payee to show: Fees' balance is nobody's.
@@ -159,7 +161,7 @@ internal static class MoneyApi
             var b = await Read<HoldBody>(http, ct);
             var (buyer, region, kind) = (Need(b.Buyer), Need(b.RegionId), Need(b.Kind));
             AccountRef? seller = b.Seller is { } s ? Account(s) : MoneyLedger.IsFeeKind(kind) ? null : throw new BadRequest();
-            var request = new HoldRequest(Scoped(grant, b.TxnId), kind, Account(buyer), seller, Need(b.Amount), region, b.ObjectId, b.ObjectName, grant.KeyId);
+            var request = new HoldRequest(Scoped(c, grant, b.TxnId), kind, Account(buyer), seller, Need(b.Amount), region, b.ObjectId, b.ObjectName, grant.KeyId);
             // Holding's balance (ToBalance) is nobody's balance: it never leaves the service (plan 1 deferred finding).
             if (await c.Ledger.EarlierAsync(request, ct) is { } earlier) return Of(earlier) with { ToBalance = null };
             if (await open.OpenAsync(ct) is not { } covered) return Code("unavailable");
@@ -361,16 +363,56 @@ internal static class MoneyApi
     private static async Task<object> Settle(HttpContext http, Context c, RegionKeyGrant grant, Opening open, bool complete, CancellationToken ct)
     {
         var b = await Read<SettleBody>(http, ct);
-        var (txn, hold) = (Scoped(grant, b.TxnId), Need(b.HoldId));
+        var (txn, hold) = (Scoped(c, grant, b.TxnId), Need(b.HoldId));
         // A repeat of a settlement that went through gets its first answer, whatever changed since; it moves nothing.
-        if (await c.Ledger.EarlierAsync(txn, hold, complete, ct) is { } earlier) return Of(earlier) with { Balance = null };
+        if (await c.Ledger.EarlierAsync(txn, hold, complete, ct) is { } earlier)
+            return complete ? await SellerSeen(c, open, hold, Of(earlier) with { Balance = null }, ct) : Of(earlier) with { Balance = null };
         var covered = await open.OpenAsync(ct) ?? grant;
         // Only the key that made a hold, in the region it was made in, may settle it. A hold whose key is gone is returned by
         // the expiry sweep.
         if (await c.Ledger.HoldMadeByAsync(hold, ct) is not { RegionId: { } region, KeyId: { } madeBy } || madeBy != grant.KeyId) return Code("unknown_hold");
         if (!covered.Regions.Contains(region)) return Code("wrong_region");
-        // Balance would be Holding's; ToBalance is the seller's on complete and the buyer's on return.
-        return Of(complete ? await c.Ledger.CompleteHoldAsync(txn, hold, ct) : await c.Ledger.ReturnHoldAsync(txn, hold, ct)) with { Balance = null };
+        // Balance would be Holding's; ToBalance is the seller's on complete and the buyer's on return. Coins off: a complete
+        // that came after the sweep returned its hold takes nothing from the buyer.
+        var result = complete ? await c.Ledger.CompleteHoldAsync(txn, hold, ct, coinsOn: CoinsOn(c)) : await c.Ledger.ReturnHoldAsync(txn, hold, ct);
+        var answer = Of(result) with { Balance = null };
+        if (!complete) return answer;
+        // The seller wasn't paid: the owner is told, whatever the caller does with its answer.
+        if (result.SaleUnpaid && c.Alerts is { } alerts)
+            await alerts.SaleNotPaidAsync(grant.KeyId, region, await BuyerOf(c, hold, ct), AlertToken);
+        return await SellerSeen(c, open, hold, answer, ct);
+    }
+
+    /// <summary>
+    /// A complete's answer with the seller's balance only when the seller is placed verified in a region this key covers
+    /// (the rule a transfer's payee has); otherwise none. When the hold's parties or the coverage can't be read, none.
+    /// </summary>
+    private static async Task<Answer> SellerSeen(Context c, Opening open, long hold, Answer answer, CancellationToken ct)
+    {
+        if (answer.ToBalance is null) return answer;
+        try
+        {
+            if (await c.Ledger.HoldPartiesAsync(hold, ct) is { } parties)
+                return await PayeeSeen(c, await open.CoveredAsync(ct), parties.Seller, answer, ct);
+        }
+        catch (MoneyUnavailableException)
+        {
+            // Told nothing.
+        }
+        return answer with { ToBalance = null };
+    }
+
+    /// <summary>The buyer of a hold, for an alert; null when it can't be read.</summary>
+    private static async Task<Guid?> BuyerOf(Context c, long hold, CancellationToken ct)
+    {
+        try
+        {
+            return (await c.Ledger.HoldPartiesAsync(hold, ct))?.Buyer;
+        }
+        catch (MoneyUnavailableException)
+        {
+            return null;
+        }
     }
 
     /// <summary>
@@ -608,6 +650,25 @@ internal static class MoneyApi
         return r;
     }
 
+    /// <summary>
+    /// After a payout went through: when the key has now paid out for more than <see cref="MoneyRules.PayoutOwnersAlertAbove"/>
+    /// different owners in a day, the owner is told once. Never fails or changes the answer; a database that can't be read
+    /// raises nothing.
+    /// </summary>
+    private static async Task WatchPayoutOwners(Context c, RegionKeyGrant grant, CancellationToken ct)
+    {
+        if (c.Alerts is not { } alerts) return;
+        try
+        {
+            if (await c.Ledger.KeyPayoutOwnersAsync(grant.KeyId, ct) > MoneyRules.PayoutOwnersAlertAbove)
+                await alerts.ManyPayoutOwnersAsync(grant.KeyId, AlertToken);
+        }
+        catch (MoneyUnavailableException)
+        {
+            // The payout stands; the next one looks again.
+        }
+    }
+
     /// <summary>The answer to a handoff or an arrival. Conflict is an unverified place, as the arriving region sees it.</summary>
     private static string PlaceCode(PlaceOutcome outcome) => outcome switch
     {
@@ -631,8 +692,8 @@ internal static class MoneyApi
     /// The region's transaction id, made unique to its key: two programs that happen to use the same id never see each
     /// other's answers (review M2).
     /// </summary>
-    private static Guid Scoped(RegionKeyGrant grant, Guid? txn) =>
-        new(SHA256.HashData(Encoding.UTF8.GetBytes(grant.KeyId + "\n" + Need(txn).ToString("D"))).AsSpan(0, 16));
+    private static Guid Scoped(Context c, RegionKeyGrant grant, Guid? txn) =>
+        new(SHA256.HashData(Encoding.UTF8.GetBytes(MoneyRules.TxnScope(c.Settings().Money, grant) + "\n" + Need(txn).ToString("D"))).AsSpan(0, 16));
 
     private static AccountRef Account(Who w) => new(Need(w.AgentId), w.Home ?? "");
 

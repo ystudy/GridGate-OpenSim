@@ -85,7 +85,7 @@ public sealed class MoneyLedgerGapTests(MoneyMariaDb maria) : IClassFixture<Mone
     {
         // The §12 race covered one payee and transfers only, and never ran the self-check.
         var (ledger, db, _) = await MoneyLedgerTransferTests.Setup(maria,
-            new MoneySettings(Mode: MoneyMode.Play, ScriptPayouts: true, DailyPayoutLimit: 1_000));
+            new MoneySettings(Mode: MoneyMode.Play, ScriptPayouts: true, DailyPayoutLimit: 1_000, UploadFee: 1));
         await db.AddUser(C);
         await ledger.SetPayoutsAllowedAsync(A, true, Ct);
         await ledger.BalanceAsync(AccountRef.Resident(B), Ct);
