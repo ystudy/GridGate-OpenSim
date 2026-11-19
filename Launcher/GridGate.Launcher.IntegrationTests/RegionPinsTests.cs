@@ -283,6 +283,20 @@ public sealed class RegionPinsTests(MoneyMariaDb maria) : IClassFixture<MoneyMar
     }
 
     [Fact]
+    public async Task A_waiting_region_that_moves_to_a_later_pairing_keeps_its_first_seen_time()
+    {
+        var (db, pins) = await StartAsync(maria);
+        var (low, high, region) = (Server(HostA, firstPort: 9000), Server(HostA, firstPort: 9100), Guid.NewGuid());
+        await db.AddRegion(region, HostA, port: 9100);
+        await pins.PinWaitingAsync(low, 9000, 65536, Ct);
+        await db.Sql($"UPDATE `money`.`region_pins` SET pinned = '2026-01-01 00:00:00' WHERE region_id = '{region}'");
+
+        await pins.PinWaitingAsync(high, 9100, 65536, Ct);
+
+        Assert.Equal(new DateTime(2026, 1, 1, 0, 0, 0), (await pins.WaitingSinceAsync(high.Id, Ct))[region]);
+    }
+
+    [Fact]
     public async Task A_region_already_pinned_to_another_server_is_not_made_waiting()
     {
         var (db, pins) = await StartAsync(maria);

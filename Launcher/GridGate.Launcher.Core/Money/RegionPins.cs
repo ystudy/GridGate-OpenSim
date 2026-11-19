@@ -119,11 +119,10 @@ public sealed class RegionPins(Func<CancellationToken, Task<MySqlConnection>> op
                 pinned += await Exec(conn, null, "INSERT IGNORE INTO region_pins (region_id, server_id, machine_id, pinned, waiting) VALUES (@r, @s, @m, @t, 1)", ct,
                     ("@r", id.ToString()), ("@s", server.Id.ToString("N")), ("@m", (object?)server.MachineId ?? DBNull.Value),
                     ("@t", time.GetUtcNow().UtcDateTime));
-            // A region another server's pairing left waiting covers nothing yet; if it is in this server's ports it goes to this one.
+            // A region another server's pairing left waiting covers nothing yet; if it is in this server's ports it goes to this one, and keeps the time it was first seen.
             foreach (var id in listed)
-                pinned += await Exec(conn, null, "UPDATE region_pins SET server_id = @s, machine_id = @m, pinned = @t WHERE region_id = @r AND waiting = 1 AND server_id <> @s", ct,
-                    ("@r", id.ToString()), ("@s", server.Id.ToString("N")), ("@m", (object?)server.MachineId ?? DBNull.Value),
-                    ("@t", time.GetUtcNow().UtcDateTime));
+                pinned += await Exec(conn, null, "UPDATE region_pins SET server_id = @s, machine_id = @m WHERE region_id = @r AND waiting = 1 AND server_id <> @s", ct,
+                    ("@r", id.ToString()), ("@s", server.Id.ToString("N")), ("@m", (object?)server.MachineId ?? DBNull.Value));
         }
         catch (MySqlException e)
         {
