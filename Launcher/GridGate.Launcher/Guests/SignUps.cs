@@ -16,7 +16,22 @@ namespace GridGate.Launcher.Guests;
 
 /// <summary>What the sign-up form typed.</summary>
 /// <summary>A sign-up form; <see cref="Avatar"/> is the starter avatar picked on step 2 (its GridGate id, never a model name).</summary>
-public sealed record SignUpForm(string? First, string? Last, string? Email, string? Password, string? Again, bool AcceptTerms, Guid? Avatar = null);
+public sealed record SignUpForm(string? First, string? Last, string? Email, string? Password, string? Again, bool AcceptTerms, Guid? Avatar = null)
+{
+    // What this record holds is never printed, so a log line or an exception that shows it can't leak it.
+    private bool PrintMembers(System.Text.StringBuilder sb)
+    {
+        sb.Append($"First = {First}, Last = {Last}, Email = {Email}, Passwords = hidden");
+        return true;
+    }
+
+    public override string ToString()
+    {
+        var sb = new System.Text.StringBuilder("SignUpForm { ");
+        PrintMembers(sb);
+        return sb.Append(" }").ToString();
+    }
+}
 
 /// <summary>How a sign-up post or a "send the link again" went.</summary>
 public enum SignUpOutcome { Closed, Invalid, NameTaken, CheckEmail, SignedUp, WaitingForStaff, Busy }

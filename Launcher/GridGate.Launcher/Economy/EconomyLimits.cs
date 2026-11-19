@@ -8,7 +8,7 @@ namespace GridGate.Launcher.Economy;
 /// (see <see cref="TryTakeLookupSecond"/>), at most <see cref="MaxAddresses"/> addresses tracked, and at most
 /// <see cref="MaxLookups"/> session lookups at once. A session that was looked up and found good is remembered for
 /// <see cref="CheckedFor"/>, so a viewer in use does not compete for the lookup limits. In memory only;
-/// an IPv4-mapped IPv6 address counts as its IPv4 address, and an unknown address counts nothing. Safe from any thread.
+/// an IPv4-mapped IPv6 address counts as its IPv4 address, and an unknown address counts against the grid-wide second. Safe from any thread.
 /// </summary>
 public sealed class EconomyLimits(TimeProvider time, int maxAddresses = EconomyLimits.MaxAddresses,
     int perSecond = EconomyLimits.PerSecond, int maxLookups = EconomyLimits.MaxLookups, int checkedCapacity = EconomyLimits.CheckedSessions)
@@ -45,7 +45,10 @@ public sealed class EconomyLimits(TimeProvider time, int maxAddresses = EconomyL
     /// <summary>Counts this call and says whether it is within the limits.</summary>
     public bool Allow(IPAddress? ip)
     {
-        if (ip is null) return true;
+        // An unknown address has no per-address count, so it counts against the grid-wide second instead.
+        if (ip is null) return TryTakeLookupSecond();
+        // The table is keyed by the whole address. Kestrel listens on IPv4 only today; an IPv6 listener must key by the /64 (the
+        // first 8 bytes), since one household or host holds a whole /64 of addresses.
         if (ip.IsIPv4MappedToIPv6) ip = ip.MapToIPv4();
         var now = time.GetUtcNow();
         lock (_gate)

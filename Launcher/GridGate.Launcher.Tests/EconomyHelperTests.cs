@@ -41,11 +41,12 @@ public sealed class EconomyHelperTests
     }
 
     private static LauncherFactory Make(FakeSessions sessions, MoneyMode mode = MoneyMode.Play, bool open = true, IReadOnlyList<string>? adminNetworks = null,
-        IPAddress? caller = null, bool lenientRate = false, EconomyLimits? limits = null) =>
+        IPAddress? caller = null, bool lenientRate = false, EconomyLimits? limits = null, string? defaultLanguage = null) =>
         new(s => s with
         {
             Security = adminNetworks is null ? s.Security : s.Security with { AdminNetworks = adminNetworks },
             GridName = "Avalon",
+            Languages = defaultLanguage is null ? s.Languages : s.Languages with { Default = defaultLanguage },
             SetupToken = null,
             Plan = OwnerPlan.Local,
             Setup = s.Setup with { WorldNamed = true, OwnerCreated = true, Finished = true, Owner = new OwnerInfo("Test", "Owner", TestAuth.OwnerId) },
@@ -56,12 +57,12 @@ public sealed class EconomyHelperTests
         {
             Before = app =>
             {
-                if (caller is not null)
-                    app.Use((ctx, next) =>
-                    {
-                        ctx.Connection.RemoteIpAddress = caller;
-                        return next(ctx);
-                    });
+                // The test server has no remote address, which counts against the grid-wide second; a real caller always has one.
+                app.Use((ctx, next) =>
+                {
+                    ctx.Connection.RemoteIpAddress = caller ?? IPAddress.Parse("198.18.0.1");
+                    return next(ctx);
+                });
             },
             ExtraServices = services =>
             {
@@ -364,6 +365,52 @@ public sealed class EconomyHelperTests
 
         Assert.Equal("0", Member(last, "success"));
         Assert.Equal("Too many requests. Please wait a minute and try again.", Member(last, "errorMessage"));
+    }
+
+    [Fact]
+    public async Task A_refused_caller_is_answered_in_the_owners_language_without_reading_its_body()
+    {
+        var caller = IPAddress.Parse("203.0.113.9");
+        var limits = new EconomyLimits(TimeProvider.System);
+        for (var i = 0; i < EconomyLimits.PerMinute; i++) Assert.True(limits.Allow(caller));
+        var sessions = new FakeSessions();
+        await using var f = Make(sessions, caller: caller, limits: limits, defaultLanguage: "de");
+        var c = Client(f);
+
+        // Garbage is answered as a refusal, not a fault, which shows the body was never parsed; the call's own language is ignored.
+        var garbage = AssertFirestormSafe((await Post(c, "/economy/currency.php", "not xml at all")).Xml);
+        var french = AssertFirestormSafe((await Post(c, "/economy/currency.php", Call("getCurrencyQuote", Who("fr", ("currencyBuy", 5))))).Xml);
+
+        Assert.Equal("0", Member(garbage, "success"));
+        Assert.Contains("Zu viele Anfragen", Member(garbage, "errorMessage"));
+        Assert.Contains("Zu viele Anfragen", Member(french, "errorMessage"));
+        Assert.Empty(sessions.Asked);
+    }
+
+    [Fact]
+    public async Task Helper_answers_carry_no_per_person_data()
+    {
+        // The session check only proves some Presence row matches; so an answer may hold the mode, the symbol and the caller's own
+        // shortfall, never a balance or anything else about a person.
+        await using var f = Make(new FakeSessions());
+        var c = Client(f);
+        var answers = new List<string>();
+        foreach (var (path, method, extra) in new (string, string, (string, object)[])[]
+                 {
+                     ("/economy/currency.php", "getCurrencyQuote", [("currencyBuy", 100)]),
+                     ("/economy/landtool.php", "preflightBuyLandPrep", [("currencyBuy", 0)]),
+                     ("/economy/landtool.php", "preflightBuyLandPrep", [("currencyBuy", 25)]),
+                 })
+            answers.Add((await Post(c, path, Call(method, Who(more: extra)))).Xml);
+
+        foreach (var xml in answers)
+        {
+            Assert.DoesNotContain(Agent.ToString(), xml, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain(Secure.ToString(), xml, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("alance", xml);
+            var names = XDocument.Parse(xml).Descendants("name").Select(n => n.Value).ToList();
+            Assert.All(names, n => Assert.Contains(n, new[] { "success", "errorMessage", "errorURI", "confirm", "membership", "landUse", "currency", "upgrade", "action", "levels", "estimatedCost" }));
+        }
     }
 
     [Fact]

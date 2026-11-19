@@ -7,7 +7,22 @@ using Microsoft.AspNetCore.Mvc;
 namespace GridGate.Launcher.Pages.Security;
 
 /// <summary>A model's login, shown once: its name, the new password and where its outfit is.</summary>
-public sealed record ModelLogin(string Avatar, string ModelName, string Password, string Folder);
+public sealed record ModelLogin(string Avatar, string ModelName, string Password, string Folder)
+{
+    // What this record holds is never printed, so a log line or an exception that shows it can't leak it.
+    private bool PrintMembers(System.Text.StringBuilder sb)
+    {
+        sb.Append($"Avatar = {Avatar}, ModelName = {ModelName}, Password = hidden, Folder = {Folder}");
+        return true;
+    }
+
+    public override string ToString()
+    {
+        var sb = new System.Text.StringBuilder("ModelLogin { ");
+        PrintMembers(sb);
+        return sb.Append(" }").ToString();
+    }
+}
 
 /// <summary>A check just run, shown on the page.</summary>
 public sealed record ModelCheck(string Avatar, CheckResult Result);

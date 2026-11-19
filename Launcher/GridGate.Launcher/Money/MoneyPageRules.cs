@@ -57,7 +57,7 @@ public static class MoneyPageRules
         if (!offered.Contains(m.Mode)) return "That money mode isn't available here.";
         if (m.Mode == MoneyMode.Gloebit && m.Gloebit?.Complete != true) return "Enter this computer's Gloebit app first, under Gloebit.";
         if (!MoneySymbolRule.Valid(m.CurrencySymbol))
-            return "The currency symbol must be 1 to 4 characters, with no spaces and none of ; \" = [ ] < > & \\.";
+            return $"The currency symbol must be 1 to 4 characters, with no spaces and none of {string.Join(' ', MoneySymbolRule.ForbiddenCharacters)}.";
         if (m.CurrencyName.Trim().Length is < 1 or > 20 || m.CurrencyName.Any(char.IsControl))
             return "The currency name must be 1 to 20 characters.";
         if (m.MaxPayment is < 1 or > MaxMaxPayment) return $"The largest payment must be 1 to {MaxMaxPayment.ToString("N0", CultureInfo.InvariantCulture)}.";

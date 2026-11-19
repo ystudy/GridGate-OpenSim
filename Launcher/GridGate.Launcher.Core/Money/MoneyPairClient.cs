@@ -36,7 +36,22 @@ public sealed class MoneyPairClient(IGridJoinClient join, TimeProvider time) : I
 
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
-    private sealed record PairAnswer(string? Code, string? Key, string? Proof);
+    private sealed record PairAnswer(string? Code, string? Key, string? Proof)
+    {
+        // What this record holds is never printed, so a log line or an exception that shows it can't leak it.
+        private bool PrintMembers(System.Text.StringBuilder sb)
+        {
+            sb.Append($"Code = hidden, Key = hidden, Proof = hidden");
+            return true;
+        }
+
+        public override string ToString()
+        {
+            var sb = new System.Text.StringBuilder("PairAnswer { ");
+            PrintMembers(sb);
+            return sb.Append(" }").ToString();
+        }
+    }
     private sealed record HealthAnswer(string? Code, bool? Ok, int? Regions);
 
     public async Task<PairOutcome> PairAsync(LauncherSettings s, string typedCode, CancellationToken ct)
