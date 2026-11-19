@@ -54,6 +54,8 @@ namespace OpenSim.Groups
 
         // GridGate: the join fee each invitation showed (see JoinFeeOffers), one per module.
         private readonly JoinFeeOffers m_joinFeeOffers = new JoinFeeOffers();
+        // GridGate: the fee each person was last shown in a group's profile: a direct join charges no more than that.
+        private readonly ShownPrices m_shownJoinFees = new ShownPrices();
         // GridGate: the paid joins under way, one per person and group (see JoinsInProgress).
         private readonly JoinsInProgress m_joinsInProgress = new JoinsInProgress();
 
@@ -910,6 +912,8 @@ namespace OpenSim.Groups
                 profile.InsigniaID = groupInfo.GroupPicture;
                 profile.MaturePublish = groupInfo.MaturePublish;
                 profile.MembershipFee = groupInfo.MembershipFee;
+                // GridGate: this is the fee the viewer's join dialog will show.
+                m_shownJoinFees.Remember(remoteClient.AgentId, groupID, groupInfo.MembershipFee);
                 profile.Money = 0;
                 profile.Name = groupInfo.GroupName;
                 profile.OpenEnrollment = groupInfo.OpenEnrollment;
@@ -1238,6 +1242,15 @@ namespace OpenSim.Groups
                     if (m_groupData.GetAgentGroupMembership(requestingAgentIDStr, requestingAgentIDStr, groupID) != null)
                     {
                         remoteClient.SendJoinGroupReply(groupID, true);
+                        return;
+                    }
+
+                    // GridGate: a join charges no more than the fee the viewer was shown; a higher fee, or none shown, is
+                    // refused with the current fee, and the next click pays it.
+                    if (!m_shownJoinFees.MayCharge(remoteClient.AgentId, groupID, groupRecord.MembershipFee))
+                    {
+                        remoteClient.SendAlertMessage(string.Format("The fee to join this group is now {0}, not the one shown. Click Join again to pay it.", groupRecord.MembershipFee));
+                        remoteClient.SendJoinGroupReply(groupID, false);
                         return;
                     }
 
