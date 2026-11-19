@@ -44,6 +44,13 @@ internal static class MoneyRules
     public const string LandTooFastText = "You're buying land too quickly. Please wait a minute and try again.";
     public const string GroupPassText = "Passes to group-owned land can't be bought with coins on this grid.";
     public const string NoEconomyText = "Fees can't be paid yet: this region hasn't reached the grid's money service. Try again in a minute.";
+
+    /// <summary>
+    /// What an uploader is told on a Region Server that isn't paired with the grid's money: it never learns the fees, so
+    /// uploads that cost a fee are refused until it is paired.
+    /// </summary>
+    public const string NotPairedUploadText =
+        "This Region Server isn't paired with the money service yet, so uploads that cost a fee are refused until it is.";
     public const string VisitorsOffText = "Visitors can't pay or be paid on this grid.";
     public const string AbsentVisitorText = "That person is a visitor who isn't here, and this grid can't tell which grid their account is on, so they can't be paid right now.";
     public const string CheckingText = "This payment is being checked: the money service didn't answer in time. Please look at your balance before you pay again.";

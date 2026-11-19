@@ -84,9 +84,8 @@ public sealed class UploadDataTests
     [Fact]
     public void Animation_data_out_of_range_is_not_one()
     {
-        Assert.False(UploadData.IsAnimation(Animation(priority: -1)));
-        Assert.False(UploadData.IsAnimation(Animation(priority: 99)));
-        Assert.False(UploadData.IsAnimation(Animation(duration: 0f)));
+        Assert.False(UploadData.IsAnimation(Animation(priority: -2)));
+        Assert.False(UploadData.IsAnimation(Animation(duration: -1f)));
         Assert.False(UploadData.IsAnimation(Animation(duration: 61f)));
         Assert.False(UploadData.IsAnimation(Animation(duration: float.NaN)));
         Assert.False(UploadData.IsAnimation(Animation(easeIn: float.PositiveInfinity)));
@@ -94,11 +93,27 @@ public sealed class UploadDataTests
         Assert.False(UploadData.IsAnimation(Animation(loop: 5)));
     }
 
+    /// <summary>Viewers play what this accepts (priority clamped, a zero duration, a long emote name), so the fee check must too.</summary>
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(7)]
+    [InlineData(100)]
+    [InlineData(int.MaxValue)]
+    public void An_animation_with_any_priority_of_minus_one_or_more_is_one(int priority) =>
+        Assert.True(UploadData.IsAnimation(Animation(priority: priority)));
+
+    [Fact]
+    public void An_animation_with_a_zero_duration_or_a_long_emote_name_is_one()
+    {
+        Assert.True(UploadData.IsAnimation(Animation(duration: 0f)));
+        Assert.True(UploadData.IsAnimation(Animation(emote: new string('x', 70))));
+        Assert.True(UploadData.IsAnimation(Animation(emote: new string('x', 5000))));
+    }
+
     [Fact]
     public void Animation_data_that_ends_early_or_has_no_name_end_is_not_one()
     {
         Assert.False(UploadData.IsAnimation(Animation(truncate: true)));
-        Assert.False(UploadData.IsAnimation(Animation(emote: new string('x', 70))));
         Assert.False(UploadData.IsAnimation(Animation()[..14]));
         Assert.False(UploadData.IsAnimation(null!));
         Assert.False(UploadData.IsAnimation([]));

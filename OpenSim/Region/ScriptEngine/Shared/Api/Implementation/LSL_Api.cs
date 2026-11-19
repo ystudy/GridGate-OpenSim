@@ -3265,14 +3265,28 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
                 return 0;
             }
 
+            // GridGate: the payout is paid from the owner who made the call, and only while that owner still owns the object and
+            // the script still holds their PERMISSION_DEBIT when the job runs. A sale in between drops it.
+            UUID payer = m_host.OwnerID;
+
             void act(string _)
             {
-                money.ObjectGiveMoney(m_host.ParentGroup.RootPart.UUID, m_host.ParentGroup.RootPart.OwnerID,
+                if (!PayoutStillAllowed(payer))
+                {
+                    m_log.Warn($"[LSL]: llGiveMoney in {m_host.Name} ({m_host.UUID}) was dropped: its owner or its debit permission changed while it waited.");
+                    return;
+                }
+                money.ObjectGiveMoney(m_host.ParentGroup.RootPart.UUID, payer,
                                         toID, amount, UUID.Zero, out _);
             }
 
-            // GridGate: payouts run on their own queue, so money never holds up the dataserver pool.
-            m_AsyncCommands.PayoutsPlugin.Enqueue(act);
+            // GridGate: payouts run on their own queue, so money never holds up the dataserver pool. An owner has at most
+            // Payouts.MaxWaitingPerOwner waiting.
+            if (!m_AsyncCommands.PayoutsPlugin.TryEnqueue(payer, act))
+            {
+                Error("llGiveMoney", "Too many payouts are waiting");
+                return 0;
+            }
             return 0;
         }
 
@@ -17675,12 +17689,23 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
                 return txn.ToString();
             }
 
+            // GridGate: the payout is paid from the owner who made the call, and only while that owner still owns the object and
+            // the script still holds their PERMISSION_DEBIT when the job runs. A sale in between drops it.
+            UUID payer = m_host.OwnerID;
+
             //fire and forget...
             void act(string eventID)
             {
                 int replycode = 0;
                 try
                 {
+                    if (!PayoutStillAllowed(payer))
+                    {
+                        m_log.Warn($"[LSL]: llTransferLindenDollars in {m_host.Name} ({m_host.UUID}) was dropped: its owner or its debit permission changed while it waited.");
+                        replydata = "MISSING_PERMISSION_DEBIT";
+                        return;
+                    }
+
                     UserAccount account = m_userAccountService.GetUserAccount(RegionScopeID, toID);
                     // GridGate: a hypergrid visitor has no account here, but the money module may still pay them.
                     if (account is null && !(money is IVisitorMoneyModule visitors && visitors.CanPayVisitor(toID)))
@@ -17689,7 +17714,7 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
                         return;
                     }
 
-                    bool result = money.ObjectGiveMoney(m_host.ParentGroup.RootPart.UUID, m_host.ParentGroup.RootPart.OwnerID,
+                    bool result = money.ObjectGiveMoney(m_host.ParentGroup.RootPart.UUID, payer,
                                 toID, amount, txn, out string reason);
                     if (result)
                     {
@@ -17710,9 +17735,31 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
                 }
             }
 
-            // GridGate: payouts run on their own queue, so money never holds up the dataserver pool.
-            m_AsyncCommands.PayoutsPlugin.Enqueue(act);
+            // GridGate: payouts run on their own queue, so money never holds up the dataserver pool. An owner has at most
+            // Payouts.MaxWaitingPerOwner waiting.
+            if (!m_AsyncCommands.PayoutsPlugin.TryEnqueue(payer, act))
+            {
+                Error("llTransferLindenDollars", "Too many payouts are waiting");
+                m_ScriptEngine.PostScriptEvent(m_item.ItemID, new EventParams(
+                        "transaction_result", new Object[] {
+                            new LSL_String(txn.ToString()),
+                            LSL_Integer.Zero,
+                            new LSL_String("THROTTLED") },
+                        Array.Empty<DetectParams>()));
+            }
             return txn.ToString();
+        }
+
+        // GridGate: whether a payout queued for payer may still be paid: the object is still theirs, and the script still
+        // holds PERMISSION_DEBIT granted by them.
+        private bool PayoutStillAllowed(UUID payer)
+        {
+            return m_host.ParentGroup is { } group
+                && group.RootPart.OwnerID.Equals(payer)
+                && m_host.OwnerID.Equals(payer)
+                && m_item.PermsGranter.Equals(payer)
+                && (m_item.PermsMask & ScriptBaseClass.PERMISSION_DEBIT) != 0
+                && m_host.Inventory.GetInventoryItem(m_item.ItemID) is not null;
         }
 
         #endregion

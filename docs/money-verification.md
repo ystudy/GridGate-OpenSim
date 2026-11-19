@@ -46,6 +46,9 @@ The region runs on a computer that isn't paired with this grid's money, so money
 **What to do:** pair it. On this Money page, under **Region Servers**, make a pairing code, and type it into that Region
 Server's Money page. Its regions are verified once their programs check in, within a few minutes.
 
+Until a Region Server is paired, uploads that cost a fee (textures, sounds, animations and meshes) are refused there, and
+the uploader is told that the server isn't paired with the money service yet. Nothing is charged.
+
 A pairing code works once, for 15 minutes. Five wrong tries from one address block that address until the code ends, and the
 code still works from other addresses; only you can cancel it, with **Cancel the code** below. Only computers on this
 computer's own network (or this computer itself) can reach the money port at all.

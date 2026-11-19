@@ -44,10 +44,19 @@ public sealed class SavedDebitStateTests
     {
         public ConcurrentDictionary<UUID, string> Stored { get; } = new();
 
+        /// <summary>Whether each state was given as captured from one of this program's own running scripts.</summary>
+        public ConcurrentDictionary<UUID, bool> FromRunningScript { get; } = new();
+
         public bool SetXMLState(UUID itemID, string xml)
         {
             Stored[itemID] = xml;
             return true;
+        }
+
+        bool IScriptModule.SetXMLState(UUID itemID, string xml, bool fromRunningScript)
+        {
+            FromRunningScript[itemID] = fromRunningScript;
+            return SetXMLState(itemID, xml);
         }
 
         public string Name => "State store";
@@ -246,5 +255,103 @@ public sealed class SavedDebitStateTests
         group.StateFromOutside = false;
 
         Assert.Equal(Debit | Anim, group.RootPart.Inventory.GetInventoryItem(item.ItemID).PermsMask);
+    }
+
+    // --- A state YEngine writes from an asset or from outside carries no grant and no mark. -------------------------
+
+    private static XmlElement MarkedScriptState(string mask)
+    {
+        var doc = new XmlDocument();
+        doc.LoadXml($"<ScriptState Engine=\"YEngine\" Asset=\"{ScriptAsset}\" {DebitPermission.MarkAttribute}=\"1\">"
+            + $"<Permissions granter=\"{Owner}\" mask=\"{mask}\" /></ScriptState>");
+        return doc.DocumentElement!;
+    }
+
+    [Fact]
+    public void A_state_from_an_asset_is_written_without_debit_and_without_the_mark()
+    {
+        var state = MarkedScriptState((Debit | Anim).ToString());
+
+        DebitPermission.ForStoredState(state, fromRunningScript: false);
+
+        var written = new XmlDocument();
+        written.LoadXml(state.OuterXml);
+        Assert.False(DebitPermission.IsMarked(written.DocumentElement!));
+        Assert.DoesNotContain(DebitPermission.MarkAttribute, state.OuterXml);
+        var permissions = (XmlElement)written.SelectSingleNode("ScriptState/Permissions")!;
+        Assert.Equal(Anim, Convert.ToInt32(permissions.GetAttribute("mask")));
+        Assert.Equal(Owner.ToString(), permissions.GetAttribute("granter"));
+    }
+
+    [Fact]
+    public void A_state_whose_mask_is_not_a_number_is_written_with_no_permissions()
+    {
+        var state = MarkedScriptState("lots");
+
+        DebitPermission.ForStoredState(state, fromRunningScript: false);
+
+        var permissions = (XmlElement)state.SelectSingleNode("Permissions")!;
+        Assert.Equal("0", permissions.GetAttribute("mask"));
+    }
+
+    [Fact]
+    public void A_state_captured_from_a_running_script_is_written_as_it_is()
+    {
+        var state = MarkedScriptState((Debit | Anim).ToString());
+        var before = state.OuterXml;
+
+        DebitPermission.ForStoredState(state, fromRunningScript: true);
+
+        Assert.Equal(before, state.OuterXml);
+    }
+
+    [Fact]
+    public void A_state_carried_by_a_crossing_between_this_programs_regions_is_stored_as_a_running_scripts()
+    {
+        var (scene, store) = RegionWithStore();
+        var group = SceneHelpers.CreateSceneObject(1, Owner);
+
+        group.SetState(ObjectState(ScriptItem, Debit | Anim), scene);
+
+        Assert.True(store.FromRunningScript[ScriptItem]);
+    }
+
+    [Fact]
+    public void A_state_from_outside_is_never_stored_as_a_running_scripts()
+    {
+        var (scene, store) = RegionWithStore();
+        var group = SceneHelpers.CreateSceneObject(1, Owner);
+        group.StateFromOutside = true;
+
+        group.SetState(ObjectState(ScriptItem, Debit | Anim), scene);
+
+        Assert.False(store.FromRunningScript[ScriptItem]);
+    }
+
+    [Fact]
+    public void A_state_saved_in_an_objects_asset_is_stored_as_not_from_a_running_script_when_the_object_is_rezzed()
+    {
+        var (scene, store) = RegionWithStore();
+        var packed = SceneHelpers.CreateSceneObject(1, Owner, "Gadget", 0x10);
+        TaskInventoryHelpers.AddScript(scene.AssetService, packed.RootPart, ScriptItem, ScriptAsset, "gadget",
+            "default { state_entry() { } }");
+        string xml = SceneObjectSerializer.ToXml2Format(packed).Replace("</SceneObjectGroup>",
+            $"<GroupScriptStates><SavedScriptState UUID=\"{ScriptItem}\">{ScriptState(ScriptItem, Debit | Anim)}"
+            + "</SavedScriptState></GroupScriptStates></SceneObjectGroup>");
+
+        // A rez reads the object from its asset: the group isn't marked, and the saved state is the asset's own.
+        var rezzed = SceneObjectSerializer.FromXml2Format(xml);
+        rezzed.ResetIDs();
+        scene.AddNewSceneObject(rezzed, false);
+        int n = rezzed.CreateScriptInstances(0, true, scene.DefaultScriptEngine, 1);
+
+        // The scripts start on a thread of their own, and the state is stored as each one starts.
+        var deadline = DateTime.UtcNow.AddSeconds(15);
+        while (store.FromRunningScript.IsEmpty)
+        {
+            Assert.True(DateTime.UtcNow < deadline, "No script state was stored.");
+            Thread.Sleep(20);
+        }
+        Assert.False(Assert.Single(store.FromRunningScript).Value);
     }
 }

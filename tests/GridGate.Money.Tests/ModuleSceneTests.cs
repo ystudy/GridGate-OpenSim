@@ -583,7 +583,7 @@ public sealed class ModuleSceneTests
         Assert.Equal(5L, transfer.Args[3]);
     }
 
-    private static (MoneyScene Region, LandManagementModule Lmm, ILandObject Parcel, RecordingClient Buyer) PassParcel()
+    private static (MoneyScene Region, LandManagementModule Lmm, ILandObject Parcel, RecordingClient Buyer) PassParcel(bool priceShown = true)
     {
         var lmm = new LandManagementModule();
         var region = Build(others: [lmm]);
@@ -594,7 +594,10 @@ public sealed class ModuleSceneTests
         parcel.LandData.PassPrice = 10;
         parcel.LandData.Flags |= (uint)ParcelFlags.UsePassList;
         region.Service.Answer = _ => Rich;
-        return (region, lmm, parcel, region.Arrive(Buyer));
+        var buyer = region.Arrive(Buyer);
+        // The viewer has the parcel's properties, with the pass price, before it offers the pass.
+        if (priceShown) parcel.SendLandProperties(0, false, 0, buyer);
+        return (region, lmm, parcel, buyer);
     }
 
     /// <summary>money review 2026-11-15, R-10: buying a pass through the land module checks the balance, then pays the owner.</summary>
@@ -610,6 +613,64 @@ public sealed class ModuleSceneTests
         Assert.Equal(Seller.Guid, ((MoneyWho)transfer.Args[2]!).AgentId);
         Assert.Equal(10L, transfer.Args[3]);
         lock (region.Service.Order) Assert.Equal(new[] { "balance", "transfer" }, region.Service.Order);
+    }
+
+    [Fact]
+    public void A_pass_with_no_price_shown_is_refused_with_the_current_price()
+    {
+        var (region, lmm, parcel, _) = PassParcel();
+        // A viewer the region has sent no parcel properties to (the buyer in the region was sent them on arrival).
+        var data = SceneHelpers.GenerateAgentData(Stranger);
+        var unshown = new RecordingClient(data, region.Scene);
+
+        lmm.ClientParcelBuyPass(unshown, Stranger, parcel.LandData.LocalID);
+
+        unshown.WaitForAlert("10");
+        Thread.Sleep(200);
+        Assert.Empty(region.Service.Calls);
+        Assert.DoesNotContain(parcel.LandData.ParcelAccessList, e => e.AgentID == Stranger);
+    }
+
+    [Fact]
+    public void A_pass_bought_after_the_price_went_up_is_refused_with_the_new_price_and_the_next_click_pays_it()
+    {
+        var (region, lmm, parcel, buyer) = PassParcel();
+        parcel.LandData.PassPrice = 500;
+
+        lmm.ClientParcelBuyPass(buyer, Buyer, parcel.LandData.LocalID);
+
+        buyer.WaitForAlert("500");
+        Thread.Sleep(200);
+        Assert.Empty(region.Service.Calls);
+
+        lmm.ClientParcelBuyPass(buyer, Buyer, parcel.LandData.LocalID);
+
+        Assert.Equal(500L, region.WaitFor("transfer").Args[3]);
+    }
+
+    [Fact]
+    public void With_a_money_module_that_charges_nothing_a_pass_needs_no_price_shown()
+    {
+        var (region, lmm, parcel, _) = PassParcel();
+        region.Scene.UnregisterModuleInterface<IMoneyModule>(region.Module);
+        region.Scene.RegisterModuleInterface<IMoneyModule>(new OpenSim.Region.OptionalModules.World.MoneyModule.SampleMoneyModule());
+        var unshown = new RecordingClient(SceneHelpers.GenerateAgentData(Stranger), region.Scene);
+
+        lmm.ClientParcelBuyPass(unshown, Stranger, parcel.LandData.LocalID);
+
+        WaitUntil(() => parcel.LandData.ParcelAccessList.Any(e => e.AgentID == Stranger));
+        Assert.Empty(unshown.Alerts);
+    }
+
+    [Fact]
+    public void A_pass_bought_after_the_price_went_down_costs_the_lower_price()
+    {
+        var (region, lmm, parcel, buyer) = PassParcel();
+        parcel.LandData.PassPrice = 4;
+
+        lmm.ClientParcelBuyPass(buyer, Buyer, parcel.LandData.LocalID);
+
+        Assert.Equal(4L, region.WaitFor("transfer").Args[3]);
     }
 
     /// <summary>money review 2026-11-15, R-10: a pass to group-owned land is refused: a group holds no coins on this grid.</summary>

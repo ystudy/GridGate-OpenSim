@@ -80,6 +80,8 @@ namespace OpenSim.Region.OptionalModules.Avatar.XmlRpcGroups
 
         // GridGate: the join fee each invitation showed (see JoinFeeOffers), and the joins under way (see JoinsInProgress).
         private readonly JoinFeeOffers m_joinFeeOffers = new JoinFeeOffers();
+        // GridGate: the fee each person was last shown in a group's profile: a direct join charges no more than that.
+        private readonly ShownPrices m_shownJoinFees = new ShownPrices();
         private readonly JoinsInProgress m_joinsInProgress = new JoinsInProgress();
 
         private IGroupsMessagingModule m_groupsMessagingModule;
@@ -449,7 +451,10 @@ namespace OpenSim.Region.OptionalModules.Avatar.XmlRpcGroups
                         IFeeHold fee = null;
                         GroupRecord group = m_groupData.GetGroupRecord(remoteAgentID, inviteInfo.GroupID, null);
                         IMoneyModule money = scene.RequestModuleInterface<IMoneyModule>();
-                        // GridGate: with money on, a group whose record can't be read has no known fee: nobody joins it free
+                        // GridGate: a money module that never charges leaves joins as OpenSim has them
+                        if (!FeeHolds.Charges(money))
+                            money = null;
+                        // GridGate: with a money module that charges, a group whose record can't be read has no known fee: nobody joins it free
                         if (group == null && money != null)
                         {
                             if (remoteAgentID == inviteInfo.AgentID)
@@ -1020,6 +1025,8 @@ namespace OpenSim.Region.OptionalModules.Avatar.XmlRpcGroups
                 profile.InsigniaID = groupInfo.GroupPicture;
                 profile.MaturePublish = groupInfo.MaturePublish;
                 profile.MembershipFee = groupInfo.MembershipFee;
+                // GridGate: this is the fee the viewer's join dialog will show.
+                m_shownJoinFees.Remember(remoteClient.AgentId, groupID, groupInfo.MembershipFee);
                 profile.Money = 0; // TODO: Get this from the currency server?
                 profile.Name = groupInfo.GroupName;
                 profile.OpenEnrollment = groupInfo.OpenEnrollment;
@@ -1315,6 +1322,9 @@ namespace OpenSim.Region.OptionalModules.Avatar.XmlRpcGroups
             UUID agentID = GetRequestingAgentID(remoteClient);
             GroupRecord groupRecord = m_groupData.GetGroupRecord(agentID, groupID, null);
             IMoneyModule money = remoteClient.Scene.RequestModuleInterface<IMoneyModule>();
+            // GridGate: a money module that never charges leaves joins as OpenSim has them
+            if (!FeeHolds.Charges(money))
+                money = null;
             // Someone who is a member already pays nothing again (the reply says the join worked), and only one paid join of
             // theirs to a group goes on at a time.
             IFeeHold fee = null;
@@ -1336,6 +1346,15 @@ namespace OpenSim.Region.OptionalModules.Avatar.XmlRpcGroups
                     if (m_groupData.GetAgentGroupMembership(agentID, agentID, groupID) != null)
                     {
                         remoteClient.SendJoinGroupReply(groupID, true);
+                        return;
+                    }
+
+                    // GridGate: a join charges no more than the fee the viewer was shown; a higher fee, or none shown, is
+                    // refused with the current fee, and the next click pays it.
+                    if (!m_shownJoinFees.MayCharge(agentID, groupID, groupRecord.MembershipFee))
+                    {
+                        remoteClient.SendAlertMessage(string.Format("The fee to join this group is now {0}, not the one shown. Click Join again to pay it.", groupRecord.MembershipFee));
+                        remoteClient.SendJoinGroupReply(groupID, false);
                         return;
                     }
 
@@ -1643,7 +1662,7 @@ namespace OpenSim.Region.OptionalModules.Avatar.XmlRpcGroups
         /// </summary>
         private int JoinFeeOnAccept(GroupRecord group)
         {
-            if (group == null || group.MembershipFee <= 0 || m_sceneList[0].RequestModuleInterface<IMoneyModule>() == null)
+            if (group == null || group.MembershipFee <= 0 || !FeeHolds.Charges(m_sceneList[0].RequestModuleInterface<IMoneyModule>()))
                 return 0;
             return group.MembershipFee;
         }

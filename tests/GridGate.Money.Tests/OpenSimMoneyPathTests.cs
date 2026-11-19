@@ -137,6 +137,84 @@ public sealed class OpenSimMoneyPathTests
         Assert.Equal("upload_fee", Assert.Single(region.Service.Of("hold")).Args[0]);
     }
 
+    /// <summary>While the fee isn't known it reads 0, which isn't free: texture data declared as a notecard stores nothing.</summary>
+    [Fact]
+    public void A_udp_upload_of_texture_data_declared_free_before_the_fee_is_known_is_refused_and_not_stored()
+    {
+        var (region, uploads, uploader) = UploadRegion(balance: 100);
+        region.ForgetEconomy();
+
+        Upload(uploads, uploader, type: (sbyte)AssetType.Notecard, createAs: (sbyte)AssetType.Notecard, data: TextureData);
+
+        uploader.WaitForAlert("The upload fee isn't known yet");
+        Assert.Null(region.Scene.AssetService.Get(UploadAssetId.ToString()));
+        Assert.Empty(region.Service.Of("hold"));
+        Assert.Empty(region.Service.Of("charge"));
+    }
+
+    /// <summary>A notecard is still free while the fee isn't known.</summary>
+    [Fact]
+    public void A_udp_notecard_is_still_stored_before_the_fee_is_known()
+    {
+        var (region, uploads, uploader) = UploadRegion(balance: 100);
+        region.ForgetEconomy();
+
+        Assert.True(Upload(uploads, uploader, type: (sbyte)AssetType.Notecard, createAs: (sbyte)AssetType.Notecard, data: NotecardData));
+
+        Assert.NotNull(region.Scene.AssetService.Get(UploadAssetId.ToString()));
+    }
+
+    private static void MakeUnpaired(MoneyScene region)
+    {
+        var client = typeof(GridGateMoneyModule).GetField("_client", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        client.SetValue(region.Module, new UnpairedMoneyService());
+        region.ForgetEconomy();
+    }
+
+    /// <summary>An unpaired Region Server never learns the fees: its uploads that cost a fee are refused, and it says it isn't paired.</summary>
+    [Fact]
+    public void A_udp_upload_on_an_unpaired_server_is_refused_and_says_it_is_not_paired()
+    {
+        var (region, uploads, uploader) = UploadRegion(balance: 100);
+        MakeUnpaired(region);
+
+        Upload(uploads, uploader);
+
+        uploader.WaitForAlert("isn't paired with the money service yet");
+        Assert.Null(region.Scene.AssetService.Get(UploadAssetId.ToString()));
+        Assert.Empty(Textures(region));
+    }
+
+    [Fact]
+    public void A_caps_upload_request_on_an_unpaired_server_says_it_is_not_paired()
+    {
+        var (region, caps) = CapsRegion();
+        MakeUnpaired(region);
+
+        var response = caps.NewAgentInventoryRequest(new LLSDAssetUploadRequest { asset_type = "sound", inventory_type = "sound", name = "A thing" });
+
+        Assert.Equal("error", response.state);
+        Assert.Contains("isn't paired with the money service yet", response.error.message);
+        Assert.DoesNotContain("minute", response.error.message);
+    }
+
+    /// <summary>
+    /// The owner raised the upload fee less than a minute ago: the region's copy is old, the ledger refuses the old fee,
+    /// and the upload goes through after the settings are read again.
+    /// </summary>
+    [Fact]
+    public void A_udp_upload_refused_for_an_out_of_date_fee_is_held_again_at_the_new_fee()
+    {
+        var (region, uploads, uploader) = UploadRegion(balance: 100);
+        region.Service.Economy = region.Service.Economy! with { UploadFee = 20 };
+        region.Service.Queue("hold", new MoneyAnswer("bad_amount"));
+
+        Assert.True(Upload(uploads, uploader));
+
+        Assert.Single(Textures(region));
+        Assert.Equal([(long)UploadFee, 20L], region.Service.Of("hold").Select(c => c.Args[3]));
+    }
+
     /// <summary>The fee is for the type the upload was checked as: a texture can't be saved under a type with no fee.</summary>
     [Fact]
     public void A_udp_texture_saved_as_a_notecard_is_refused_and_not_charged()
@@ -637,6 +715,13 @@ public sealed class OpenSimMoneyPathTests
         return new GroupsRig(region, groupsModule, service, region.Arrive(Buyer), sent);
     }
 
+    /// <summary>The joiner opens the group's profile (the viewer shows the fee), then clicks Join.</summary>
+    private static void Join(GroupsRig g)
+    {
+        g.Groups.GroupProfileRequest(g.Joiner, GroupId);
+        g.Groups.JoinGroupRequest(g.Joiner, GroupId);
+    }
+
     /// <summary>The joiner invites <see cref="MoneyScene.Stranger"/> (not in the region) to "Club"; the invitation sent.</summary>
     private static GridInstantMessage Invite(GroupsRig g)
     {
@@ -716,7 +801,7 @@ public sealed class OpenSimMoneyPathTests
         var g = GroupsRegion(V2);
         var added = AddedBeforeHold(g);
 
-        g.Groups.JoinGroupRequest(g.Joiner, GroupId);
+        Join(g);
 
         AssertHeldThenCompleted(g, added);
     }
@@ -727,7 +812,7 @@ public sealed class OpenSimMoneyPathTests
         var g = GroupsRegion(V2);
         g.Service.Refuse = true;
 
-        g.Groups.JoinGroupRequest(g.Joiner, GroupId);
+        Join(g);
 
         g.Region.WaitFor("return");
         Assert.Empty(g.Region.Service.Of("complete"));
@@ -740,17 +825,104 @@ public sealed class OpenSimMoneyPathTests
         var g = GroupsRegion(V2);
         g.Region.Service.Queue("hold", new MoneyAnswer("not_enough"));
 
-        g.Groups.JoinGroupRequest(g.Joiner, GroupId);
+        Join(g);
 
         g.Joiner.WaitForAlert("Insufficient funds to join the group.");
         Assert.DoesNotContain("AddAgentToGroup", g.Service.Order);
         Assert.Empty(g.Region.Service.Of("charge"));
     }
 
+    // --- a direct join charges at most the fee the viewer was shown ---------------------------------------------------
+
+    [Theory]
+    [InlineData(V2)]
+    [InlineData(Flotsam)]
+    public void A_join_with_no_fee_shown_is_refused_with_the_current_fee_and_the_next_click_pays_it(string module)
+    {
+        var g = GroupsRegion(module);
+
+        g.Groups.JoinGroupRequest(g.Joiner, GroupId);
+
+        AssertNoHoldAndNotAdded(g);
+        Assert.Contains(g.Joiner.Alerts, a => a.Contains($"{JoinFee}", StringComparison.Ordinal));
+
+        g.Groups.JoinGroupRequest(g.Joiner, GroupId);
+
+        g.Region.WaitFor("complete");
+        Assert.Equal((long)JoinFee, Assert.Single(g.Region.Service.Of("hold")).Args[3]);
+        Assert.Contains(Buyer, g.Service.Members);
+    }
+
+    [Theory]
+    [InlineData(V2)]
+    [InlineData(Flotsam)]
+    public void A_join_after_the_fee_went_up_is_refused_with_the_new_fee_and_the_next_click_pays_it(string module)
+    {
+        var g = GroupsRegion(module, balance: 100000);
+        g.Groups.GroupProfileRequest(g.Joiner, GroupId);
+        g.Service.Fee = 5000;
+
+        g.Groups.JoinGroupRequest(g.Joiner, GroupId);
+
+        AssertNoHoldAndNotAdded(g);
+        Assert.Contains(g.Joiner.Alerts, a => a.Contains("5000", StringComparison.Ordinal));
+
+        g.Groups.JoinGroupRequest(g.Joiner, GroupId);
+
+        g.Region.WaitFor("complete");
+        Assert.Equal((long)5000, Assert.Single(g.Region.Service.Of("hold")).Args[3]);
+        Assert.Contains(Buyer, g.Service.Members);
+    }
+
+    [Theory]
+    [InlineData(V2)]
+    [InlineData(Flotsam)]
+    public void A_join_after_the_fee_went_down_charges_the_lower_fee(string module)
+    {
+        var g = GroupsRegion(module);
+        g.Groups.GroupProfileRequest(g.Joiner, GroupId);
+        g.Service.Fee = 5;
+
+        g.Groups.JoinGroupRequest(g.Joiner, GroupId);
+
+        g.Region.WaitFor("complete");
+        Assert.Equal((long)5, Assert.Single(g.Region.Service.Of("hold")).Args[3]);
+        Assert.Contains(Buyer, g.Service.Members);
+    }
+
+    [Theory]
+    [InlineData(V2)]
+    [InlineData(Flotsam)]
+    public void A_free_group_is_joined_without_a_fee_shown(string module)
+    {
+        var g = GroupsRegion(module);
+        g.Service.Fee = 0;
+
+        g.Groups.JoinGroupRequest(g.Joiner, GroupId);
+
+        Assert.Empty(g.Region.Service.Of("hold"));
+        Assert.Contains(Buyer, g.Service.Members);
+    }
+
+    [Theory]
+    [InlineData(V2)]
+    [InlineData(Flotsam)]
+    public void A_fee_shown_to_one_person_does_not_cover_another(string module)
+    {
+        var g = GroupsRegion(module);
+        var other = g.Region.Arrive(Stranger);
+        g.Groups.GroupProfileRequest(other, GroupId);
+
+        g.Groups.JoinGroupRequest(g.Joiner, GroupId);
+
+        AssertNoHoldAndNotAdded(g);
+    }
+
     [Fact]
     public void Accepting_a_group_invitation_holds_and_completes_the_join_fee()
     {
         var g = GroupsRegion(V2);
+        Invite(g);
         var added = AddedBeforeHold(g);
 
         AcceptInvitation(g);
@@ -838,6 +1010,69 @@ public sealed class OpenSimMoneyPathTests
         AssertOffersFee(g, FreshInvitation(g), JoinFee);
     }
 
+    /// <summary>An invitation another program stored, with a fee this module never offered the invitee, offers the fee first.</summary>
+    [Fact]
+    public void An_invitation_this_module_did_not_send_is_not_charged_on_its_stored_fee()
+    {
+        var g = GroupsRegion(V2);
+        g.Service.StoredFee = 5000; // written by another program, not tied to the message the invitee saw
+
+        AcceptInvitation(g);
+
+        AssertNoHoldAndNotAdded(g);
+        AssertOffersFee(g, FreshInvitation(g), JoinFee);
+    }
+
+    /// <summary>The region has OpenSim's own money module, which charges nothing (money is off): groups work as in OpenSim.</summary>
+    private static void UseTheSampleMoneyModule(GroupsRig g)
+    {
+        g.Region.Scene.UnregisterModuleInterface<IMoneyModule>(g.Region.Module);
+        g.Region.Scene.RegisterModuleInterface<IMoneyModule>(new OpenSim.Region.OptionalModules.World.MoneyModule.SampleMoneyModule());
+    }
+
+    [Theory]
+    [InlineData(V2)]
+    [InlineData(Flotsam)]
+    public void With_a_money_module_that_charges_nothing_a_group_that_cannot_be_read_is_still_joined(string module)
+    {
+        var g = GroupsRegion(module);
+        UseTheSampleMoneyModule(g);
+        g.Service.NoRecord = true;
+
+        g.Groups.JoinGroupRequest(g.Joiner, GroupId);
+
+        Assert.Contains(Buyer, g.Service.Members);
+        Assert.Empty(g.Region.Service.Calls);
+    }
+
+    [Theory]
+    [InlineData(V2)]
+    [InlineData(Flotsam)]
+    public void With_a_money_module_that_charges_nothing_an_invitation_to_a_paid_group_says_there_is_no_cost(string module)
+    {
+        var g = GroupsRegion(module);
+        UseTheSampleMoneyModule(g);
+
+        var sent = Invite(g);
+
+        Assert.EndsWith("There is no cost to join this group.", sent.message, StringComparison.Ordinal);
+        Assert.Equal(new byte[20], sent.binaryBucket);
+    }
+
+    [Theory]
+    [InlineData(V2)]
+    [InlineData(Flotsam)]
+    public void With_a_money_module_that_charges_nothing_a_paid_group_is_joined_without_a_fee_shown(string module)
+    {
+        var g = GroupsRegion(module);
+        UseTheSampleMoneyModule(g);
+
+        g.Groups.JoinGroupRequest(g.Joiner, GroupId);
+
+        Assert.Contains(Buyer, g.Service.Members);
+        Assert.Empty(g.Joiner.Alerts);
+    }
+
     [Theory]
     [InlineData(V2)]
     [InlineData(Flotsam)]
@@ -846,7 +1081,7 @@ public sealed class OpenSimMoneyPathTests
         var g = GroupsRegion(module);
         g.Service.NoRecord = true;
 
-        g.Groups.JoinGroupRequest(g.Joiner, GroupId);
+        Join(g);
 
         AssertNoHoldAndNotAdded(g);
         Assert.DoesNotContain("AddAgentToGroup", g.Service.Order);
@@ -908,7 +1143,7 @@ public sealed class OpenSimMoneyPathTests
     {
         var g = GroupsRegion(module);
         Invite(g);
-        g.Groups.JoinGroupRequest(g.Joiner, GroupId);
+        Join(g);
         g.Region.WaitFor("complete");
 
         AcceptInvitation(g);
@@ -927,8 +1162,8 @@ public sealed class OpenSimMoneyPathTests
     {
         var g = GroupsRegion(module);
 
-        g.Groups.JoinGroupRequest(g.Joiner, GroupId);
-        g.Groups.JoinGroupRequest(g.Joiner, GroupId);
+        Join(g);
+        Join(g);
 
         g.Region.WaitFor("complete");
         Assert.Single(g.Region.Service.Of("hold"));
@@ -999,9 +1234,9 @@ public sealed class OpenSimMoneyPathTests
     public void A_second_join_while_the_first_is_adding_the_member_holds_nothing_and_adds_nobody(string module)
     {
         var g = GroupsRegion(module);
-        var finishFirst = StartJoinHeldAtTheAdd(g, () => g.Groups.JoinGroupRequest(g.Joiner, GroupId));
+        var finishFirst = StartJoinHeldAtTheAdd(g, () => Join(g));
 
-        g.Groups.JoinGroupRequest(g.Joiner, GroupId);
+        Join(g);
 
         // Turned away without a word of its own while the first one is still going: the first one answers.
         Assert.Empty(g.Joiner.JoinReplies);
@@ -1054,7 +1289,7 @@ public sealed class OpenSimMoneyPathTests
     {
         var g = GroupsRegion(module);
         Invite(g);
-        var finishFirst = StartJoinHeldAtTheAdd(g, () => g.Groups.JoinGroupRequest(g.Joiner, GroupId));
+        var finishFirst = StartJoinHeldAtTheAdd(g, () => Join(g));
 
         AcceptInvitation(g);
 
@@ -1101,11 +1336,11 @@ public sealed class OpenSimMoneyPathTests
     {
         var g = GroupsRegion(module);
         g.Service.Refuse = true;
-        g.Groups.JoinGroupRequest(g.Joiner, GroupId);
+        Join(g);
         g.Region.WaitFor("return");
         g.Service.Refuse = false;
 
-        g.Groups.JoinGroupRequest(g.Joiner, GroupId);
+        Join(g);
 
         g.Region.WaitFor("complete");
         Assert.Contains(Buyer, g.Service.Members);
@@ -1118,7 +1353,7 @@ public sealed class OpenSimMoneyPathTests
         var g = GroupsRegion(Flotsam);
         var added = AddedBeforeHold(g);
 
-        g.Groups.JoinGroupRequest(g.Joiner, GroupId);
+        Join(g);
 
         AssertHeldThenCompleted(g, added);
     }
@@ -1129,7 +1364,7 @@ public sealed class OpenSimMoneyPathTests
         var g = GroupsRegion(Flotsam);
         g.Region.Service.Queue("hold", new MoneyAnswer("not_enough"));
 
-        g.Groups.JoinGroupRequest(g.Joiner, GroupId);
+        Join(g);
 
         Assert.DoesNotContain("AddAgentToGroup", g.Service.Order);
         Assert.Empty(g.Region.Service.Of("charge"));
@@ -1142,7 +1377,7 @@ public sealed class OpenSimMoneyPathTests
         var g = GroupsRegion(Flotsam);
         g.Service.Refuse = true;
 
-        g.Groups.JoinGroupRequest(g.Joiner, GroupId);
+        Join(g);
 
         g.Region.WaitFor("return");
         Assert.Contains("AddAgentToGroup", g.Service.Order);
@@ -1168,7 +1403,7 @@ public sealed class OpenSimMoneyPathTests
     {
         var g = GroupsRegion(module, feeHolds: false);
 
-        g.Groups.JoinGroupRequest(g.Joiner, GroupId);
+        Join(g);
 
         AssertNoHoldAndNotAdded(g);
         Assert.Contains(MoneyRules.Message("unavailable"), g.Joiner.Alerts);
@@ -1183,9 +1418,10 @@ public sealed class OpenSimMoneyPathTests
         g.Region.Scene.RegisterModuleInterface(Stand.Create<IMoneyModule>(g.Service.Order,
             (m, _) => m.Name is nameof(IMoneyModule.AmountCovered) or nameof(IMoneyModule.UploadCovered) ? (true, true) : (false, null)));
 
-        g.Groups.JoinGroupRequest(g.Joiner, GroupId);
+        Join(g);
 
-        Assert.Equal(["GetGroupRecord", nameof(IMoneyModule.AmountCovered), "AddAgentToGroup", nameof(IMoneyModule.ApplyCharge)],
+        // The profile the joiner opened first reads the record too.
+        Assert.Equal(["GetGroupRecord", "GetGroupRecord", nameof(IMoneyModule.AmountCovered), "AddAgentToGroup", nameof(IMoneyModule.ApplyCharge)],
             g.Service.Order.Where(c => c is "GetGroupRecord" or nameof(IMoneyModule.AmountCovered) or "AddAgentToGroup" or nameof(IMoneyModule.ApplyCharge)));
         Assert.Empty(g.Region.Service.Calls);
     }

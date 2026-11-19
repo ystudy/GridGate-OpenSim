@@ -286,6 +286,13 @@ namespace OpenSim.Region.CoreModules.Agent.AssetTransaction
                 // check funds
                 IMoneyModule mm = scene.RequestModuleInterface<IMoneyModule>();
 
+                // GridGate: while the money module doesn't know the fee (an unpaired Region Server never does), say so
+                if (mm is IUploadFeeKnown { UploadFeeKnown: false } feeNotKnown)
+                {
+                    remoteClient.SendAgentAlertMessage("Unable to upload asset. " + feeNotKnown.UploadFeeUnknownText, false);
+                    return;
+                }
+
                 if (mm != null)
                 {
                     if (!mm.UploadCovered(remoteClient.AgentId, mm.UploadCharge))
