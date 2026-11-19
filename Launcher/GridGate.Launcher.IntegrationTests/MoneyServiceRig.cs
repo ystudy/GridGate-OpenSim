@@ -124,9 +124,19 @@ internal sealed class MoneyServiceRig : IAsyncDisposable
         var pins = new RegionPins(MoneyConnections.Money(() => dbSettings), new RegionHosts(MoneyConnections.Robust(() => dbSettings)), TimeProvider.System, Alerts);
         Verification = new RegionVerification(MoneyConnections.Money(() => dbSettings), MoneyConnections.Robust(() => dbSettings), pins, VerifyClock);
         Locations = new MoneyLocations(MoneyConnections.Money(() => dbSettings), MoneyConnections.Robust(() => dbSettings), Verification, presence, LocationClock);
+        var status = new MoneyStatus();
         _host = new MoneyServiceHost(Ledger, presence, () => Settings, () => Mode, () => cert,
-            Failures, loggers, new MoneyStatus(), Pairing, change => Settings = change(Settings), pins, Verification, Locations, Alerts);
+            Failures, loggers, status, Pairing, change => Settings = change(Settings), pins, Verification, Locations, Alerts);
         await _host.StartAsync(Ct);
+        // A free port can be taken by another test before the service binds it, and the host only logs a failed start:
+        // try a fresh port a few times, then fail here with the reason instead of on the first request.
+        for (var tries = 1; !status.ServiceRunning && tries < 5; tries++)
+        {
+            port = Port = MoneyMariaDb.FreePort();
+            Settings = Settings with { MoneyPort = port };
+            await _host.StartAsync(Ct);
+        }
+        Assert.True(status.ServiceRunning, "The money service didn't start: " + status.ServiceError);
         _http = new HttpClient(new SocketsHttpHandler
         {
             SslOptions = { RemoteCertificateValidationCallback = (_, c, _, _) => c is not null && MoneyCertificate.Fingerprint(X509CertificateLoader.LoadCertificate(c.GetRawCertData())) == Fingerprint },
