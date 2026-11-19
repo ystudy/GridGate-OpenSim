@@ -258,7 +258,7 @@ namespace Gloebit.GloebitMoneyModule {
                 string response_str = response_stream.ReadToEnd();
 
                 OSDMap responseData = (OSDMap)OSDParser.DeserializeJson(response_str);
-                m_log.DebugFormat("[GLOEBITMONEYMODULE] GloebitAPI.balance responseData:{0}", responseData.ToString());
+                m_log.DebugFormat("[GLOEBITMONEYMODULE] GloebitAPI.balance response members:{0}", String.Join(",", responseData.Keys));
 
                 if (responseData["success"]) {
                     double balance = responseData["balance"].AsReal();
@@ -324,7 +324,7 @@ namespace Gloebit.GloebitMoneyModule {
 			                                          new GloebitRequestState(request, 
 			                        delegate(OSDMap responseDataMap) {
                                         
-                m_log.DebugFormat("[GLOEBITMONEYMODULE] GloebitAPI.Transact response: {0}", responseDataMap);
+                m_log.DebugFormat("[GLOEBITMONEYMODULE] GloebitAPI.Transact response members: {0}", String.Join(",", responseDataMap.Keys));
 
                 //************ PARSE AND HANDLE TRANSACT-U2U RESPONSE *********//
 
@@ -408,7 +408,7 @@ namespace Gloebit.GloebitMoneyModule {
 			                                          new GloebitRequestState(request, 
 			                        delegate(OSDMap responseDataMap) {
                                         
-                m_log.DebugFormat("[GLOEBITMONEYMODULE] GloebitAPI.Transact-U2U response: {0}", responseDataMap);
+                m_log.DebugFormat("[GLOEBITMONEYMODULE] GloebitAPI.Transact-U2U response members: {0}", String.Join(",", responseDataMap.Keys));
 
                 //************ PARSE AND HANDLE TRANSACT-U2U RESPONSE *********//
 
@@ -518,7 +518,7 @@ namespace Gloebit.GloebitMoneyModule {
                 string response_str = response_stream.ReadToEnd();
                 
                 OSDMap responseDataMap = (OSDMap)OSDParser.DeserializeJson(response_str);
-                m_log.DebugFormat("[GLOEBITMONEYMODULE] GloebitAPI.Transact-U2U-Sync responseData:{0}", responseDataMap.ToString());
+                m_log.DebugFormat("[GLOEBITMONEYMODULE] GloebitAPI.Transact-U2U-Sync response members:{0}", String.Join(",", responseDataMap.Keys));
                 
                 // read response and store in txn
                 PopulateTransactResponse(txn, responseDataMap);
@@ -817,7 +817,7 @@ namespace Gloebit.GloebitMoneyModule {
             
             sub_params["application-key"] = m_key;  // TODO: consider getting rid of this.
             if (m_key != subscription.AppKey) {
-                m_log.ErrorFormat("[GLOEBITMONEYMODULE] GloebitAPI.CreateSubscription GloebitAPI.m_key:{0} differs from GloebitSubscription.AppKey:{1}", m_key, subscription.AppKey);
+                m_log.ErrorFormat("[GLOEBITMONEYMODULE] GloebitAPI.CreateSubscription GloebitAPI.m_key:{0} differs from GloebitSubscription.AppKey:{1}", GloebitMoneyModule.MaskedKey(m_key), GloebitMoneyModule.MaskedKey(subscription.AppKey));
                 return false;
             }
             sub_params["local-id"] = subscription.ObjectID;
@@ -839,7 +839,7 @@ namespace Gloebit.GloebitMoneyModule {
 			                                          new GloebitRequestState(request, 
 			                        delegate(OSDMap responseDataMap) {
                                         
-                m_log.DebugFormat("[GLOEBITMONEYMODULE] GloebitAPI.CreateSubscription response: {0}", responseDataMap);
+                m_log.DebugFormat("[GLOEBITMONEYMODULE] GloebitAPI.CreateSubscription response members: {0}", String.Join(",", responseDataMap.Keys));
 
                 //************ PARSE AND HANDLE CREATE SUBSCRIPTION RESPONSE *********//
 
@@ -938,7 +938,7 @@ namespace Gloebit.GloebitMoneyModule {
 			                                          new GloebitRequestState(request, 
 			                        delegate(OSDMap responseDataMap) {
                                         
-                m_log.DebugFormat("[GLOEBITMONEYMODULE] GloebitAPI.CreateSubscriptionAuthorization response: {0}", responseDataMap);
+                m_log.DebugFormat("[GLOEBITMONEYMODULE] GloebitAPI.CreateSubscriptionAuthorization response members: {0}", String.Join(",", responseDataMap.Keys));
 
                 //************ PARSE AND HANDLE CREATE SUBSCRIPTION AUTHORIZATION RESPONSE *********//
 

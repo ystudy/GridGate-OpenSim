@@ -69,11 +69,13 @@ public sealed class RegionServerMoneyPageTests
         return f;
     }
 
-    private static async Task<HttpClient> SignedInAsync(LauncherFactory f, string role = "owner")
+    /// <summary>Signed in as <paramref name="role"/>; the owner has two-factor on unless <paramref name="twoFactor"/> is false.</summary>
+    private static async Task<HttpClient> SignedInAsync(LauncherFactory f, string role = "owner", bool twoFactor = true)
     {
         var c = f.CreateClient(new() { AllowAutoRedirect = false });
         (await c.GetAsync("/__test/signin?role=" + role, Ct)).Dispose();
-        return c;
+        if (role == "owner" && twoFactor) OwnerTwoFactorKit.Enrol(f);
+        return OwnerTwoFactorKit.Track(c, f);
     }
 
     private static async Task<IHtmlDocument> PageAsync(HttpClient c, string url)
@@ -87,6 +89,9 @@ public sealed class RegionServerMoneyPageTests
     {
         var doc = await PageAsync(c, "/advanced/money");
         var token = doc.QuerySelector("input[name=__RequestVerificationToken]")!.GetAttribute("value")!;
+        // The Gloebit form asks for the owner's current two-factor code; a test that sets TwoFactorCode itself keeps its own.
+        if (handler == "Gloebit" && !fields.ContainsKey("TwoFactorCode") && OwnerTwoFactorKit.CodeFor(c) is { } code)
+            fields = new(fields) { ["TwoFactorCode"] = code };
         using var r = await c.PostAsync($"/advanced/money?handler={handler}",
             new FormUrlEncodedContent(new Dictionary<string, string>(fields) { ["__RequestVerificationToken"] = token }), Ct);
         Assert.Equal(HttpStatusCode.OK, r.StatusCode);
@@ -432,6 +437,118 @@ public sealed class RegionServerMoneyPageTests
         Assert.NotNull(doc.QuerySelector(".alert-danger"));
         Assert.Null(f.Grid.CurrentSettings().Money.Gloebit);
         Assert.Empty(await RestartsAsync(f, 0));
+    }
+
+    // ---- the owner's two-factor code for the Gloebit app ----
+
+    private static Dictionary<string, string> AppFields(string? code = null)
+    {
+        var fields = new Dictionary<string, string>
+        {
+            ["Environment"] = "sandbox", ["Key"] = GApp.Key, ["Secret"] = GApp.Secret, ["OwnerName"] = "RS Owner", ["OwnerEmail"] = "",
+        };
+        if (code is not null) fields["TwoFactorCode"] = code;
+        return fields;
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("000000")]
+    public async Task Saving_the_gloebit_app_needs_a_right_two_factor_code(string code)
+    {
+        await using var f = GloebitGrid(regions: ThreeRegions());
+        var c = await SignedInAsync(f);
+
+        var doc = await PostAsync(c, "Gloebit", AppFields(code));
+
+        Assert.Null(f.Grid.CurrentSettings().Money.Gloebit);
+        Assert.NotNull(doc.QuerySelector(".alert-danger"));
+        Assert.Empty(await RestartsAsync(f, 0));
+        var line = Assert.Single(Audit(f), a => a.GetProperty("action").GetString() == "money-gloebit");
+        Assert.StartsWith("refused", line.GetProperty("result").GetString());
+        Assert.DoesNotContain(GApp.Secret, line.GetRawText());
+        Assert.DoesNotContain(GApp.Secret, doc.DocumentElement.OuterHtml);
+    }
+
+    [Fact]
+    public async Task Five_wrong_two_factor_codes_lock_the_owner_out_even_with_the_right_one()
+    {
+        await using var f = GloebitGrid(regions: ThreeRegions());
+        var c = await SignedInAsync(f);
+        for (var i = 0; i < 5; i++) await PostAsync(c, "Gloebit", AppFields("000000"));
+
+        var doc = await PostAsync(c, "Gloebit", AppFields(OwnerTwoFactorKit.NextCode(f)));
+
+        Assert.Null(f.Grid.CurrentSettings().Money.Gloebit);
+        Assert.Contains("Too many attempts", MainText(doc));
+    }
+
+    [Fact]
+    public async Task A_two_factor_code_that_was_used_does_not_save_a_second_time()
+    {
+        await using var f = GloebitGrid(regions: ThreeRegions());
+        var c = await SignedInAsync(f);
+        var code = OwnerTwoFactorKit.NextCode(f);
+        await PostAsync(c, "Gloebit", AppFields(code));
+        Assert.Equal(GApp, f.Grid.CurrentSettings().Money.Gloebit);
+        f.Grid.UpdateSettings(s => s with { Money = s.Money with { Gloebit = null } }, writeConfig: false);
+
+        await PostAsync(c, "Gloebit", AppFields(code));
+
+        Assert.Null(f.Grid.CurrentSettings().Money.Gloebit);
+    }
+
+    [Fact]
+    public async Task Without_two_factor_the_owner_is_told_where_to_turn_it_on_and_nothing_saves()
+    {
+        await using var f = GloebitGrid(regions: ThreeRegions());
+        var c = await SignedInAsync(f, twoFactor: false);
+
+        var page = await PageAsync(c, "/advanced/money");
+        var doc = await PostAsync(c, "Gloebit", AppFields("123456"));
+
+        Assert.Null(page.QuerySelector("form[action*='handler=Gloebit'] button[type=submit]"));
+        Assert.Null(page.QuerySelector("input[name=TwoFactorCode]"));
+        Assert.NotNull(page.QuerySelector("a[href='/profile/two-factor']"));
+        Assert.Null(f.Grid.CurrentSettings().Money.Gloebit);
+        Assert.NotNull(doc.QuerySelector(".alert-danger"));
+        Assert.Empty(await RestartsAsync(f, 0));
+        var line = Assert.Single(Audit(f), a => a.GetProperty("action").GetString() == "money-gloebit");
+        Assert.StartsWith("refused", line.GetProperty("result").GetString());
+    }
+
+    [Fact]
+    public async Task The_gloebit_form_asks_for_the_code_and_never_shows_one_back()
+    {
+        await using var f = GloebitGrid();
+        var c = await SignedInAsync(f);
+
+        var page = await PageAsync(c, "/advanced/money");
+        var input = page.QuerySelector("form[action*='handler=Gloebit'] input[name=TwoFactorCode]");
+        var after = await PostAsync(c, "Gloebit", AppFields("654321"));
+
+        Assert.NotNull(input);
+        Assert.Equal("one-time-code", input!.GetAttribute("autocomplete"));
+        Assert.DoesNotContain("654321", after.DocumentElement.OuterHtml);
+    }
+
+    [Fact]
+    public async Task The_dashboard_shows_the_masked_key_and_time_when_this_servers_gloebit_app_changes()
+    {
+        await using var f = GloebitGrid();
+        var c = await SignedInAsync(f);
+        var before = await PageAsync(c, "/");
+        Assert.Null(before.QuerySelector("#gloebit-app-changed"));
+        await PostAsync(c, "Gloebit", AppFields());
+        var at = f.Time.GetUtcNow();
+
+        var doc = await PageAsync(c, "/");
+
+        var text = doc.QuerySelector("#gloebit-app-changed")!.TextContent;
+        Assert.Contains(GloebitRules.Masked(GApp.Key), text);
+        Assert.Contains(at.ToString("yyyy-MM-dd HH:mm"), text);
+        Assert.DoesNotContain(GApp.Key, doc.DocumentElement.OuterHtml);
+        Assert.DoesNotContain(GApp.Secret, doc.DocumentElement.OuterHtml);
     }
 
     [Fact]

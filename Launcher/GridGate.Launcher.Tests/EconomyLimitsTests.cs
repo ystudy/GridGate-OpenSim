@@ -88,6 +88,52 @@ public sealed class EconomyLimitsTests
     }
 
     [Fact]
+    public void A_checked_session_that_is_used_stays_remembered()
+    {
+        var l = new EconomyLimits(Clock);
+        var (a, s) = (Guid.NewGuid(), Guid.NewGuid());
+        l.RememberChecked(a, s);
+
+        for (var i = 0; i < 4; i++)
+        {
+            Clock.Advance(TimeSpan.FromMinutes(6));
+            Assert.True(l.IsChecked(a, s));
+        }
+
+        Clock.Advance(EconomyLimits.CheckedFor);
+        Assert.False(l.IsChecked(a, s));
+    }
+
+    [Fact]
+    public void An_address_gets_three_lookups_a_minute_that_find_no_session()
+    {
+        var l = new EconomyLimits(Clock);
+        for (var i = 0; i < EconomyLimits.MissesPerMinute; i++)
+        {
+            Assert.True(l.MayLookUp(Ip(1)));
+            l.RememberMiss(Ip(1), Guid.NewGuid(), Guid.NewGuid());
+        }
+
+        Assert.False(l.MayLookUp(Ip(1)));
+        Assert.True(l.MayLookUp(Ip(2)));
+        Clock.Advance(EconomyLimits.Window);
+        Assert.True(l.MayLookUp(Ip(1)));
+    }
+
+    [Fact]
+    public void A_pair_that_found_no_session_is_unknown_for_a_short_time()
+    {
+        var l = new EconomyLimits(Clock);
+        var (a, s) = (Guid.NewGuid(), Guid.NewGuid());
+        l.RememberMiss(Ip(1), a, s);
+
+        Assert.True(l.IsUnknown(a, s));
+        Assert.False(l.IsUnknown(a, Guid.NewGuid()));
+        Clock.Advance(EconomyLimits.UnknownFor);
+        Assert.False(l.IsUnknown(a, s));
+    }
+
+    [Fact]
     public void The_checked_session_cache_drops_the_oldest_past_its_capacity()
     {
         var l = new EconomyLimits(Clock, checkedCapacity: 3);

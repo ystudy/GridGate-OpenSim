@@ -28,6 +28,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Linq;
 using System.Reflection;
 using log4net;
 
@@ -157,7 +158,7 @@ namespace Gloebit.GloebitMoneyModule {
         /// <param name="requestData">response data from GloebitAPI.Authorize</param>
         public Hashtable authComplete_func(Hashtable requestData) {
             m_log.InfoFormat("[GLOEBITMONEYMODULE] authComplete_func");
-            foreach(DictionaryEntry e in requestData) { m_log.DebugFormat("{0}: {1}", e.Key, e.Value); }
+            m_log.DebugFormat("[GLOEBITMONEYMODULE] callback members: {0}", String.Join(",", requestData.Keys.Cast<String>()));
 
             string agentId = requestData["agentId"] as string;
             string code = requestData["code"] as string;
@@ -689,7 +690,7 @@ namespace Gloebit.GloebitMoneyModule {
         /// </returns>
         public Hashtable transactionState_func(Hashtable requestData) {
             m_log.DebugFormat("[GLOEBITMONEYMODULE] transactionState_func **************** Got Callback");
-            foreach(DictionaryEntry e in requestData) { m_log.DebugFormat("{0}: {1}", e.Key, e.Value); }
+            m_log.DebugFormat("[GLOEBITMONEYMODULE] callback members: {0}", String.Join(",", requestData.Keys.Cast<String>()));
 
             // TODO: check that these exist in requestData.  If not, signal error and send response with false.
             string transactionIDstr = requestData["id"] as string;

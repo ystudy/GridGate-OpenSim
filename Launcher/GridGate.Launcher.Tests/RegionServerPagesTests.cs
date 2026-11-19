@@ -74,17 +74,23 @@ public sealed class RegionServerPagesTests
         Before = TestAuth.Apply,
     };
 
-    private static async Task<HttpClient> SignedInAsync(LauncherFactory f, string? role = null)
+    /// <summary>Signed in as <paramref name="role"/>; the owner has two-factor on unless <paramref name="twoFactor"/> is false.</summary>
+    private static async Task<HttpClient> SignedInAsync(LauncherFactory f, string? role = null, bool twoFactor = true)
     {
         var client = f.CreateClient(new() { AllowAutoRedirect = false });
         (await client.GetAsync(role is null ? "/__test/signin" : "/__test/signin?role=" + role, Ct)).Dispose();
-        return client;
+        if (role == "owner" && twoFactor) OwnerTwoFactorKit.Enrol(f);
+        return OwnerTwoFactorKit.Track(client, f);
     }
 
     private static async Task<HttpResponseMessage> PostAsync(HttpClient client, string url, Dictionary<string, string> fields, string? tokenFrom = null)
     {
         var page = await client.GetStringAsync(tokenFrom ?? url.Split('?')[0], Ct);
         var token = new HtmlParser().ParseDocument(page).QuerySelector("input[name=__RequestVerificationToken]")!.GetAttribute("value")!;
+        // Confirming a re-point asks for the owner's current two-factor code; a test that sets TwoFactorCode itself keeps its own.
+        if (url.Contains("/advanced/join?handler=Confirm", StringComparison.Ordinal) && !fields.ContainsKey("TwoFactorCode")
+            && OwnerTwoFactorKit.CodeFor(client) is { } code)
+            fields = new(fields) { ["TwoFactorCode"] = code };
         return await client.PostAsync(url, new FormUrlEncodedContent(new Dictionary<string, string>(fields) { ["__RequestVerificationToken"] = token }), Ct);
     }
 
@@ -459,6 +465,108 @@ public sealed class RegionServerPagesTests
         Assert.Equal("192.168.1.5", f.Store.LoadOrCreate().Join!.Host);
         Assert.Equal(writes, f.Grid.UpdateWriteConfig.Count);
         Assert.DoesNotContain("SetEstateOwner", f.Grid.Snapshot());
+    }
+
+    // ---- the owner's two-factor code for a re-point ----
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("000000")]
+    public async Task Join_page_confirm_needs_a_right_two_factor_code(string code)
+    {
+        await using var f = WithSavedMoney();
+        SeedNewGridOwner(f);
+        f.Join.Result = Elsewhere();
+        using var client = await SignedInAsync(f, "owner");
+        var writes = f.Grid.UpdateWriteConfig.Count;
+
+        using var resp = await PostAsync(client, "/advanced/join?handler=Confirm",
+            new() { ["Address"] = "192.168.1.9", ["Password"] = NewPassword, ["TwoFactorCode"] = code }, tokenFrom: "/advanced/join");
+        var html = await resp.Content.ReadAsStringAsync(Ct);
+
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+        Assert.NotNull(new HtmlParser().ParseDocument(html).QuerySelector(".alert-danger"));
+        Assert.DoesNotContain(NewPassword, html);
+        AssertNothingSaved(f, writes);
+        Assert.StartsWith("refused", AuditLines(f).Last(l => l.GetProperty("action").GetString() == "grid-join").GetProperty("result").GetString());
+    }
+
+    [Fact]
+    public async Task Join_page_confirm_without_two_factor_is_refused_and_says_where_to_turn_it_on()
+    {
+        await using var f = WithSavedMoney();
+        SeedNewGridOwner(f);
+        f.Join.Result = Elsewhere();
+        using var client = await SignedInAsync(f, "owner", twoFactor: false);
+        var writes = f.Grid.UpdateWriteConfig.Count;
+
+        using var found = await PostAsync(client, "/advanced/join", new() { ["Address"] = "192.168.1.9" });
+        var foundDoc = new HtmlParser().ParseDocument(await found.Content.ReadAsStringAsync(Ct));
+        using var resp = await PostAsync(client, "/advanced/join?handler=Confirm",
+            new() { ["Address"] = "192.168.1.9", ["Password"] = NewPassword, ["TwoFactorCode"] = "123456" }, tokenFrom: "/advanced/join");
+        var doc = new HtmlParser().ParseDocument(await resp.Content.ReadAsStringAsync(Ct));
+
+        Assert.Null(foundDoc.QuerySelector("input[name=TwoFactorCode]"));
+        Assert.NotNull(foundDoc.QuerySelector("main a[href='/profile/two-factor']"));
+        Assert.NotNull(doc.QuerySelector(".alert-danger"));
+        AssertNothingSaved(f, writes);
+        Assert.StartsWith("refused", AuditLines(f).Last(l => l.GetProperty("action").GetString() == "grid-join").GetProperty("result").GetString());
+    }
+
+    [Fact]
+    public async Task Join_page_five_wrong_codes_lock_the_owner_out_even_with_the_right_one()
+    {
+        await using var f = WithSavedMoney();
+        SeedNewGridOwner(f);
+        f.Join.Result = Elsewhere();
+        using var client = await SignedInAsync(f, "owner");
+        var writes = f.Grid.UpdateWriteConfig.Count;
+        for (var i = 0; i < 5; i++)
+            (await PostAsync(client, "/advanced/join?handler=Confirm",
+                new() { ["Address"] = "192.168.1.9", ["Password"] = NewPassword, ["TwoFactorCode"] = "000000" }, tokenFrom: "/advanced/join")).Dispose();
+
+        using var resp = await PostAsync(client, "/advanced/join?handler=Confirm",
+            new() { ["Address"] = "192.168.1.9", ["Password"] = NewPassword, ["TwoFactorCode"] = OwnerTwoFactorKit.NextCode(f) }, tokenFrom: "/advanced/join");
+
+        Assert.Contains("Too many attempts", MainText(await resp.Content.ReadAsStringAsync(Ct)));
+        AssertNothingSaved(f, writes);
+    }
+
+    [Fact]
+    public async Task Join_page_found_view_asks_for_the_code_and_never_shows_one_back()
+    {
+        await using var f = Factory(OwnerPlan.RegionServer);
+        SeedNewGridOwner(f);
+        f.Join.Result = Elsewhere();
+        using var client = await SignedInAsync(f, "owner");
+
+        using var resp = await PostAsync(client, "/advanced/join", new() { ["Address"] = "192.168.1.9", ["TwoFactorCode"] = "654321" });
+        var html = await resp.Content.ReadAsStringAsync(Ct);
+
+        var input = new HtmlParser().ParseDocument(html).QuerySelector("input[name=TwoFactorCode]");
+        Assert.NotNull(input);
+        Assert.Null(input!.GetAttribute("value"));
+        Assert.Equal("one-time-code", input.GetAttribute("autocomplete"));
+        Assert.DoesNotContain("654321", html);
+    }
+
+    [Fact]
+    public async Task Join_page_with_a_right_code_re_points_and_the_dashboard_shows_the_dropped_gloebit_app()
+    {
+        await using var f = Factory(OwnerPlan.RegionServer, s => s with { Money = s.Money with { Gloebit = SavedApp } });
+        SeedNewGridOwner(f);
+        f.Join.Result = Elsewhere();
+        using var client = await SignedInAsync(f, "owner");
+
+        (await PostAsync(client, "/advanced/join?handler=Confirm", new() { ["Address"] = "192.168.1.9", ["Password"] = NewPassword }, tokenFrom: "/advanced/join")).Dispose();
+        var home = new HtmlParser().ParseDocument(await client.GetStringAsync("/", Ct));
+
+        Assert.Equal("192.168.1.9", f.Store.LoadOrCreate().Join!.Host);
+        Assert.Null(f.Store.LoadOrCreate().Money.Gloebit);
+        var notice = home.QuerySelector("#gloebit-app-changed")!.TextContent;
+        Assert.Contains("removed", notice);
+        Assert.Contains(GloebitRules.Masked(SavedApp.Key), notice);
+        Assert.DoesNotContain(SavedApp.Key, home.DocumentElement.OuterHtml);
     }
 
     [Fact]

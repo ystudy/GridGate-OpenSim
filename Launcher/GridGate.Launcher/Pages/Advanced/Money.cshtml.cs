@@ -13,9 +13,11 @@ namespace GridGate.Launcher.Pages.Advanced;
 /// <summary>
 /// A Region Server's money (<c>/advanced/money</c>; money design §7.7, money plan 3): the mode its Grid Asset Server
 /// publishes, and pairing with that server's money service by a one-time code. Region Servers only; admins only (the
-/// Advanced folder's rule), and only the owner saves the Gloebit app. The code and the key are never shown or audited.
+/// Advanced folder's rule), and only the owner saves the Gloebit app, and only with a current two-factor code of theirs (kept on this
+/// computer, so the grid's staff can't reset it) in the same form. The code and the key are never shown or audited.
 /// </summary>
-public sealed class MoneyModel(IGridController grid, MoneyGate gate, IMoneyPairClient pair, AuditLog audit, RegionActions regions) : PageModel
+public sealed class MoneyModel(IGridController grid, MoneyGate gate, IMoneyPairClient pair, AuditLog audit, RegionActions regions,
+    TwoFactorStore twoFactor, LoginThrottle throttle, ILogger<MoneyModel> log) : PageModel
 {
     public enum PairState { NotPaired, Paired, CertificateChanged }
 
@@ -32,6 +34,9 @@ public sealed class MoneyModel(IGridController grid, MoneyGate gate, IMoneyPairC
 
     /// <summary>Only this computer's owner saves its Gloebit app (money design §9.1).</summary>
     public bool IsOwner => StaffSignIn.RoleOf(User) == StaffRole.Owner;
+
+    /// <summary>The owner has two-factor on here; saving the Gloebit app needs a code from it.</summary>
+    public bool TwoFactorOn { get; private set; }
     public string? Error { get; private set; }
     public string? Notice { get; private set; }
 
@@ -110,7 +115,7 @@ public sealed class MoneyModel(IGridController grid, MoneyGate gate, IMoneyPairC
         return Page();
     }
 
-    public IActionResult OnPostGloebit(string? environment, string? key, string? secret, string? ownerName, string? ownerEmail)
+    public IActionResult OnPostGloebit(string? environment, string? key, string? secret, string? ownerName, string? ownerEmail, string? twoFactorCode)
     {
         if (!Show()) return NotFound();
         // Residents' dollars go through this app: only this computer's owner sets it.
@@ -124,10 +129,29 @@ public sealed class MoneyModel(IGridController grid, MoneyGate gate, IMoneyPairC
             Error = "The grid doesn't use Gloebit.";
             return Page();
         }
+        // The owner on a Region Server is a grid account, which the Grid Asset Server's admins can reset: so a current two-factor code
+        // of this computer's own is needed too.
+        if (!OwnerCodeStep.IsSetUp(twoFactor, User))
+        {
+            audit.Write(User, Ip, "money-gloebit", "money", OwnerCodeStep.AuditResult(OwnerCodeResult.NotSetUp));
+            Error = OwnerCodeStep.Words(OwnerCodeResult.NotSetUp);
+            Show();
+            return Page();
+        }
         (var app, Error) = GridGate.Launcher.Money.MoneyPageRules.GloebitFromForm(grid.CurrentSettings().Money.Gloebit, environment, key, secret, ownerName, ownerEmail);
         if (Error is null)
         {
+            // Checked after the form, so a mistyped form doesn't use up a code.
+            var code = OwnerCodeStep.Check(twoFactor, throttle, log, User, HttpContext.Connection.RemoteIpAddress, twoFactorCode);
+            if (code != OwnerCodeResult.Ok)
+            {
+                audit.Write(User, Ip, "money-gloebit", "money", OwnerCodeStep.AuditResult(code));
+                Error = OwnerCodeStep.Words(code);
+                Show();
+                return Page();
+            }
             grid.UpdateSettings(s => s with { Money = s.Money with { Gloebit = app } }, writeConfig: true);
+            GloebitAppNotice.Saved(audit, User, Ip, app!.Key);
             // Gloebit's module reads its app when its region program starts: the running ones restart now.
             Notice = regions.RestartRunning("Gloebit app saved").Count == 0
                 ? "Saved. This server's regions start Gloebit when they start."
@@ -164,6 +188,7 @@ public sealed class MoneyModel(IGridController grid, MoneyGate gate, IMoneyPairC
         Gloebit = GridMode == MoneyMode.Gloebit;
         CanPair = gate.Approved(MoneyMode.Play) && !Gloebit;
         App = s.Money.Gloebit;
+        TwoFactorOn = OwnerCodeStep.IsSetUp(twoFactor, User);
         var p = s.Money.Pairing;
         PairedAt = p?.PairedAt;
         State = p is null || s.Join is not { } join || !string.Equals(p.GridHost, join.Host, StringComparison.OrdinalIgnoreCase) ? PairState.NotPaired

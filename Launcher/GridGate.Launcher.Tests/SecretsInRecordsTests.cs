@@ -133,4 +133,33 @@ public sealed class SecretsInRecordsTests
         Assert.DoesNotContain(", m_key,", statement);
         Assert.Contains("MaskedKey(m_key)", statement);
     }
+
+    /// <summary>No log line of the Gloebit module, at any level, prints an app key, a secret, a callback's members or a whole response.</summary>
+    [Fact]
+    public void No_gloebit_module_log_line_prints_a_key_a_secret_or_a_whole_response()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, "addon-modules"))) dir = dir.Parent;
+        Assert.NotNull(dir);
+        var statement = new System.Text.RegularExpressions.Regex(@"\bm_log\.\w+\s*\(.*?\);", System.Text.RegularExpressions.RegexOptions.Singleline);
+        var seen = 0;
+        var bad = new List<string>();
+        foreach (var file in Directory.EnumerateFiles(Path.Combine(dir.FullName, "addon-modules", "Gloebit", "GloebitMoneyModule"), "*.cs", SearchOption.AllDirectories))
+        {
+            // Commented-out lines are not code.
+            var code = string.Join(Environment.NewLine, File.ReadAllLines(file).Where(l => !l.TrimStart().StartsWith("//", StringComparison.Ordinal)));
+            foreach (System.Text.RegularExpressions.Match m in statement.Matches(code))
+            {
+                seen++;
+                // What may appear: the masked key, a dictionary's key names, and a named field that isn't a key, secret, token or code.
+                var rest = System.Text.RegularExpressions.Regex.Replace(m.Value, @"MaskedKey\([^)]*\)|\b\w+\.Keys\b|m_secret == null|\w+\[""(?![^""]*(key|secret|token|code))[^""]*""\]", "", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                // The words inside the message's own text are not values.
+                rest = System.Text.RegularExpressions.Regex.Replace(rest, @"""(?:[^""\\]|\\.)*""", "");
+                if (System.Text.RegularExpressions.Regex.IsMatch(rest,@"appKey|\.AppKey|m_key\b|m_secret|requestData|responseData|\be\.Value", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+                    bad.Add($"{Path.GetFileName(file)}: {string.Join(' ', m.Value.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries))}");
+            }
+        }
+        Assert.True(seen > 50, $"the scan found {seen} log lines");
+        Assert.Empty(bad);
+    }
 }

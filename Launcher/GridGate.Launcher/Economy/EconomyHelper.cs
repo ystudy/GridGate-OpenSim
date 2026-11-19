@@ -49,9 +49,12 @@ public sealed class EconomyHelper(
             || agent == Guid.Empty || secure == Guid.Empty)
             return Refuse(s, t["Economy.LogInAgain"]);
         var known = limits.IsChecked(agent, secure);
-        // The lookup cap is asked first, so a refusal there doesn't use up the grid-wide second.
         if (!known)
         {
+            // A pair that just found no session, or an address that keeps finding none, gets no lookup. So a few addresses
+            // sending fresh well-formed ids can't use up the lookups a new viewer needs.
+            if (limits.IsUnknown(agent, secure) || !limits.MayLookUp(caller)) return Refuse(s, t["Economy.LogInAgain"]);
+            // The lookup cap is asked first, so a refusal there doesn't use up the grid-wide second.
             if (!limits.TryStartLookup()) return Refuse(s, t["Economy.TooMany"]);
             if (!limits.TryTakeLookupSecond())
             {
@@ -69,6 +72,7 @@ public sealed class EconomyHelper(
                 case PresenceOutcome.Unavailable:
                     return Refuse(s, t["Economy.Unavailable"]);
                 default:
+                    limits.RememberMiss(caller, agent, secure);
                     return Refuse(s, t["Economy.LogInAgain"]);
             }
         }
