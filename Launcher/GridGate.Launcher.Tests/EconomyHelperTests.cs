@@ -318,6 +318,59 @@ public sealed class EconomyHelperTests
     }
 
     [Fact]
+    public async Task Addresses_sending_unknown_ids_cannot_use_up_the_lookups_of_a_new_viewer()
+    {
+        var sessions = new FakeSessions { Outcome = PresenceOutcome.NoSession };
+        var limits = new EconomyLimits(TimeProvider.System);
+        var factories = new List<LauncherFactory>();
+        try
+        {
+            // Twenty-five addresses each send many well-formed calls with fresh random ids.
+            for (var i = 1; i <= 25; i++)
+            {
+                var f = Make(sessions, caller: IPAddress.Parse($"198.51.100.{i}"), limits: limits);
+                factories.Add(f);
+                var c = Client(f);
+                for (var n = 0; n < 10; n++)
+                    await Post(c, "/economy/currency.php", Call("getCurrencyQuote", ("agentId", Guid.NewGuid().ToString()), ("secureSessionId", Guid.NewGuid().ToString())));
+            }
+            // Each address was looked up for only a few of its ids.
+            Assert.True(sessions.Asked.Count <= 25 * 3, $"{sessions.Asked.Count} lookups for 250 calls");
+
+            // A new viewer from another address still gets through once its session exists.
+            sessions.Outcome = PresenceOutcome.Ok;
+            await using var viewer = Make(sessions, caller: IPAddress.Parse("203.0.113.77"), limits: limits);
+            var s = AssertFirestormSafe((await Post(Client(viewer), "/economy/currency.php", Call("getCurrencyQuote", Who(more: [("currencyBuy", 5)])))).Xml);
+            Assert.DoesNotContain("Too many", Member(s, "errorMessage"));
+            Assert.Contains((Agent, Secure), sessions.Asked);
+        }
+        finally
+        {
+            foreach (var f in factories) await f.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task An_address_that_keeps_missing_is_refused_without_a_lookup_but_a_good_session_still_answers()
+    {
+        var sessions = new FakeSessions();
+        var limits = new EconomyLimits(TimeProvider.System);
+        await using var f = Make(sessions, limits: limits);
+        var c = Client(f);
+        Assert.Equal("0", Member(AssertFirestormSafe((await Post(c, "/economy/currency.php", Call("getCurrencyQuote", Who(more: [("currencyBuy", 5)])))).Xml), "success"));
+        sessions.Outcome = PresenceOutcome.NoSession;
+        for (var n = 0; n < 6; n++)
+            await Post(c, "/economy/currency.php", Call("getCurrencyQuote", ("agentId", Guid.NewGuid().ToString()), ("secureSessionId", Guid.NewGuid().ToString())));
+        var asked = sessions.Asked.Count;
+
+        var again = AssertFirestormSafe((await Post(c, "/economy/currency.php", Call("getCurrencyQuote", Who(more: [("currencyBuy", 5)])))).Xml);
+
+        Assert.Equal(asked, sessions.Asked.Count);
+        Assert.True(asked <= 1 + 3);
+        Assert.Equal("0", Member(again, "success"));
+    }
+
+    [Fact]
     public async Task Junk_calls_from_twenty_addresses_do_not_lock_out_a_known_viewer()
     {
         var sessions = new FakeSessions();
