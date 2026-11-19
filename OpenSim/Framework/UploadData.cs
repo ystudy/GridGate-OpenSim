@@ -36,14 +36,14 @@ namespace OpenSim.Framework
         }
 
         private const int MaxAnimationJoints = 216;
-        private const int MaxAnimationNameBytes = 64;
         private const float MaxAnimationSeconds = 60f;
 
         /// <summary>
-        /// True for Second Life animation data: version 1, sub-version 0, a base priority of 0 to 7, a finite duration over 0
-        /// and up to 60 seconds, a NUL-terminated emote name (at most 64 bytes), the loop points and ease times as finite
-        /// numbers, a loop flag of 0 or 1, a hand pose and a joint count of at most 216. Data that ends before all of that
-        /// has been read is not an animation.
+        /// True for Second Life animation data as viewers play it: version 1, sub-version 0, a base priority of -1 or more
+        /// (viewers clamp a high one), a finite duration of 0 to 60 seconds, a NUL-terminated emote name of any length that
+        /// ends before the data does, the loop points and ease times as finite numbers, a loop flag of 0 or 1, a hand pose
+        /// and a joint count of at most 216. Data that ends before all of that has been read is not an animation. The check
+        /// is no narrower than playback: what a viewer plays pays the fee.
         /// </summary>
         public static bool IsAnimation(byte[] data)
         {
@@ -55,16 +55,17 @@ namespace OpenSim.Framework
                 return false;
 
             int priority = BinaryPrimitives.ReadInt32LittleEndian(span[4..]);
-            if (priority < 0 || priority > 7)
+            // GridGate: viewers accept a priority of -1 or more and clamp a high one, so no upper limit here.
+            if (priority < -1)
                 return false;
 
             float duration = BitConverter.Int32BitsToSingle(BinaryPrimitives.ReadInt32LittleEndian(span[8..]));
-            if (!float.IsFinite(duration) || duration <= 0f || duration > MaxAnimationSeconds)
+            if (!float.IsFinite(duration) || duration < 0f || duration > MaxAnimationSeconds)
                 return false;
 
             ReadOnlySpan<byte> rest = span[12..];
             int nul = rest.IndexOf((byte)0);
-            if (nul < 0 || nul > MaxAnimationNameBytes)
+            if (nul < 0)
                 return false;
 
             rest = rest[(nul + 1)..];
