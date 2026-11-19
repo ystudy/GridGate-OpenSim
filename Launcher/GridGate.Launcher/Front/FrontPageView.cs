@@ -31,7 +31,7 @@ public sealed record FrontView(string? PhotoUrl, FrontMainButton Main, IReadOnly
 /// The owner's text shows in the visitor's language, else in English, else not at all.
 /// </summary>
 public sealed class FrontPageView(FrontPageStore store, SplashStore splash, FrontPageSnapshot snapshot,
-    [FromKeyedServices("front")] PictureStore pictures, Func<LauncherSettings> settings)
+    [FromKeyedServices("front")] PictureStore pictures, Func<LauncherSettings> settings, FrontMapTiles tiles)
 {
     public const int MaxNews = 5;
 
@@ -46,8 +46,10 @@ public sealed class FrontPageView(FrontPageStore store, SplashStore splash, Fron
         IEnumerable<FrontCard> places = s.PlacesSource switch
         {
             FrontPlacesSource.Own => s.Places.Select(p => Card(p, language, FrontApi.PictureUrl)),
-            FrontPlacesSource.Automatic => live.Busiest.Select(p => new FrontCard(p.Name, null, FrontApi.MapUrl(p.RegionId))),
-            _ => Blocks(published, SplashBlockKind.Places).SelectMany(b => b.Content.Places ?? []).Select(p => Card(p, language, SplashSnapshot.PictureUrl)),
+            // A region the grid has no map tile for gets the blank card rather than a picture that would be a 404.
+            FrontPlacesSource.Automatic => live.Busiest.Select(p => new FrontCard(p.Name, null, tiles.KnownMissing(p.RegionId) ? null : FrontApi.MapUrl(p.RegionId))),
+            // Top to bottom, then left to right, as the splash page shows them (the design keeps blocks in the order they were made).
+            _ => Blocks(published, SplashBlockKind.Places).OrderBy(b => b.Y).ThenBy(b => b.X).SelectMany(b => b.Content.Places ?? []).Select(p => Card(p, language, SplashSnapshot.PictureUrl)),
         };
         var news = s.NewsSource == FrontNewsSource.Own ? s.News : Blocks(published, SplashBlockKind.News).SelectMany(b => b.Content.News ?? []);
 

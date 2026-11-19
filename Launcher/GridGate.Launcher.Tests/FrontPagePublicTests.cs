@@ -164,6 +164,21 @@ public sealed class FrontPagePublicTests
     }
 
     [Fact]
+    public async Task Splash_places_follow_the_splash_page_top_to_bottom_then_left_to_right()
+    {
+        // The design keeps its blocks in the order they were made, not where they sit on the page.
+        await using var rig = Rig();
+        PublishSplash(rig.F,
+            Block(1, SplashBlockKind.Places, new(Places: [new SplashPlace(Guid.NewGuid(), "Harbour", En("Boats"), null)])) with { X = 0, Y = 500 },
+            Block(2, SplashBlockKind.Places, new(Places: [new SplashPlace(Guid.NewGuid(), "Club", En("Music"), null)])) with { X = 600, Y = 100 },
+            Block(3, SplashBlockKind.Places, new(Places: [new SplashPlace(Guid.NewGuid(), "Hills", En("Views"), null)])) with { X = 0, Y = 100 });
+
+        var page = await PageAsync(Client(rig.F));
+
+        Assert.Equal(["Hills", "Club", "Harbour"], page.QuerySelectorAll("#front-places .front-card .front-card-name").Select(e => e.TextContent.Trim()));
+    }
+
+    [Fact]
     public async Task Places_section_is_hidden_with_no_published_splash()
     {
         await using var rig = Rig();
@@ -212,6 +227,24 @@ public sealed class FrontPagePublicTests
 
         Assert.Equal(["Day 6", "Day 5", "Day 4", "Day 3", "Day 2"],
             page.QuerySelectorAll("#front-news article .front-news-text").Select(e => e.TextContent.Trim()));
+    }
+
+    [Fact]
+    public async Task News_headings_sit_below_the_news_heading()
+    {
+        await using var rig = Rig();
+        Save(rig.F, FrontPageSettings.Default with
+        {
+            NewsSource = FrontNewsSource.Own,
+            News = [new SplashNewsItem(new DateOnly(2026, 11, 1), En("# Opening\n\n## Music\n\n###### Small print\n\nCome along."), false)],
+        });
+
+        var page = await PageAsync(Client(rig.F));
+
+        var news = page.QuerySelector("#front-news")!;
+        Assert.Equal(["front-news-title"], news.QuerySelectorAll("h1, h2").Select(h => h.Id));
+        var text = news.QuerySelector(".front-news-text")!;
+        Assert.Equal(["H3 Opening", "H4 Music", "H6 Small print"], text.QuerySelectorAll("h1, h2, h3, h4, h5, h6").Select(h => h.TagName + " " + h.TextContent.Trim()));
     }
 
     [Fact]

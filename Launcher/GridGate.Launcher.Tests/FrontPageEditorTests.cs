@@ -279,6 +279,89 @@ public sealed class FrontPageEditorTests
     }
 
     [Fact]
+    public async Task An_upload_larger_than_a_picture_is_refused_before_it_is_kept()
+    {
+        await using var f = Rig();
+        var admin = await StaffAsync(f, "admin");
+        var body = new MultipartFormDataContent
+        {
+            { new StringContent(await PageTokenAsync(admin)), "__RequestVerificationToken" },
+            { new ByteArrayContent(new byte[PictureStore.MaxUploadBytes + 128 * 1024]), "file", "huge.png" },
+        };
+
+        using var r = await admin.PostAsync($"{Url}?handler=Photo", body, Ct);
+
+        Assert.Equal(HttpStatusCode.BadRequest, r.StatusCode); // the form is never read past the limit
+        Assert.Null(Store(f).Load().Photo);
+        // Kestrel's own limit for the whole request is set to match (the test server has none to check).
+        var limit = typeof(Pages.FrontPage.IndexModel).GetCustomAttributes(inherit: true)
+            .OfType<Microsoft.AspNetCore.Http.Metadata.IRequestSizeLimitMetadata>().Single();
+        Assert.InRange(limit.MaxRequestBodySize!.Value, PictureStore.MaxUploadBytes, PictureStore.MaxUploadBytes + 128 * 1024);
+    }
+
+    [Fact]
+    public async Task Own_place_pictures_show_in_the_editor_whichever_source_is_chosen()
+    {
+        await using var f = Rig();
+        var admin = await StaffAsync(f, "admin");
+        Saved(await PostAsync(admin, "AddPlace", new() { ["regionId"] = Harbour.ToString() }));
+        Saved(await UploadAsync(admin, "SavePlace", new() { ["index"] = "0", ["regionId"] = Harbour.ToString(), ["line[en]"] = "Boats" }));
+        var pic = Store(f).Load().Places[0].Picture!;
+        Assert.Equal(FrontPlacesSource.Splash, Store(f).Load().PlacesSource);
+
+        var thumb = (await PageAsync(admin)).QuerySelector("#front-own-places img.front-editor-thumb")!;
+
+        Assert.Equal(FrontApi.StaffPictureUrl(pic), thumb.GetAttribute("src"));
+        using var r = await admin.GetAsync(thumb.GetAttribute("src"), Ct);
+        Assert.Equal(HttpStatusCode.OK, r.StatusCode);
+    }
+
+    [Fact]
+    public async Task Each_source_choice_is_a_fieldset_with_a_legend()
+    {
+        await using var f = Rig();
+        var page = await PageAsync(await StaffAsync(f, "admin"));
+
+        foreach (var form in new[] { "#front-places-source", "#front-news-source" })
+        {
+            var fieldset = page.QuerySelector($"{form} fieldset")!;
+            Assert.False(string.IsNullOrWhiteSpace(fieldset.QuerySelector("legend")?.TextContent), form + ": a legend names the choice");
+            Assert.Equal(page.QuerySelectorAll($"{form} input[type=radio]").Length, fieldset.QuerySelectorAll("input[type=radio]").Length);
+        }
+    }
+
+    [Fact]
+    public async Task The_same_region_is_not_added_twice()
+    {
+        await using var f = Rig();
+        var admin = await StaffAsync(f, "admin");
+        Saved(await PostAsync(admin, "AddPlace", new() { ["regionId"] = Harbour.ToString() }));
+
+        using var again = await PostAsync(admin, "AddPlace", new() { ["regionId"] = Harbour.ToString() });
+
+        Assert.Equal(["Harbour"], Store(f).Load().Places.Select(p => p.RegionName));
+        var page = await PageAsync(admin);
+        Assert.Contains("already", page.QuerySelector("main .alert-danger")!.TextContent);
+        // The picker offers only regions not on the list yet.
+        Assert.Empty(page.QuerySelectorAll($"#front-add-place option[value='{Harbour}']"));
+    }
+
+    [Fact]
+    public async Task The_news_list_shows_a_short_preview()
+    {
+        await using var f = Rig();
+        var admin = await StaffAsync(f, "admin");
+        var longText = "Opening night " + new string('x', 400);
+        Saved(await PostAsync(admin, "AddNews", new() { ["date"] = "2026-11-19", ["text[en]"] = longText }));
+
+        var preview = (await PageAsync(admin)).QuerySelector("#front-own-news .front-own-news-text")!.TextContent.Trim();
+
+        Assert.StartsWith("Opening night", preview);
+        Assert.EndsWith("…", preview);
+        Assert.True(preview.Length <= Pages.FrontPage.IndexModel.NewsPreviewLength + 1, $"{preview.Length} characters");
+    }
+
+    [Fact]
     public void Menu_lists_front_page_after_splash_page()
     {
         var settings = TestSettings.Create() with { Plan = OwnerPlan.Local };

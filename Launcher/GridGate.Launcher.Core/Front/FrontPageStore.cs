@@ -25,8 +25,24 @@ public sealed class FrontPageStore(LauncherPaths paths, ILogger<FrontPageStore>?
     private readonly Lock _gate = new();
     private readonly JsonStateFile<FrontPageSettings> _file = new(Path.Combine(paths.Front, "front.json"), () => FrontPageSettings.Default, log);
 
-    /// <summary>The saved settings, or the defaults when there are none; fields a file lacks read as their defaults.</summary>
+    /// <summary>What the file held when last read; dropped by every save. Only this store writes the file.</summary>
+    private volatile FrontPageSettings? _loaded;
+
+    /// <summary>
+    /// The saved settings, or the defaults when there are none; fields a file lacks read as their defaults. Read from the file
+    /// once and kept until the next save, since every public visit asks.
+    /// </summary>
     public FrontPageSettings Load()
+    {
+        if (_loaded is { } kept) return kept;
+        // Read under the save lock, so a read that began before a save can't keep the old settings after it.
+        lock (_gate)
+        {
+            return _loaded ??= Read();
+        }
+    }
+
+    private FrontPageSettings Read()
     {
         var s = _file.Load();
         // A field missing from the file comes back null from the JSON reader.
@@ -46,6 +62,8 @@ public sealed class FrontPageStore(LauncherPaths paths, ILogger<FrontPageStore>?
         {
             var problems = Check(settings);
             if (problems.Count > 0) return problems;
+            // Dropped before the write, so a failed or partial write is read back from the file as it now is.
+            _loaded = null;
             if (!_file.Save(settings)) throw new IOException("The front page settings could not be saved.");
             return [];
         }

@@ -63,9 +63,9 @@ The owner picks one source:
 
 | Source | What shows |
 |---|---|
-| **Same as the splash page** (default) | The places in the *published* splash design's Places blocks, in their order, with their pictures and lines. |
+| **Same as the splash page** (default) | The places in the *published* splash design's Places blocks, top to bottom and then left to right as the splash page shows them, with their pictures and lines. |
 | **Its own list** | Places picked on the Front page staff page: a region, one line per language and a picture. The picture is either uploaded or made from the region's map tile, as in the splash editor. |
-| **Automatic** | The grid's own running regions (never hypergrid links), at most 6, the ones with the most people first, then by name. Each card shows the region's map tile and its name and has no line. |
+| **Automatic** | The grid's own running regions (never hypergrid links), at most 6, the ones with the most people first, then by name. Each card shows the region's map tile and its name and has no line. A region the grid has no map tile for gets the blank card. |
 
 - Each card shows the picture, the region name and the line, if there is one, in the visitor's language, falling back to English.
 - Cards have no teleport links yet; nothing in GridGate makes them.
@@ -80,7 +80,7 @@ The owner picks one source:
 | **Same as the splash page** (default) | The news items of the published splash design, newest first, without the hidden ones. |
 | **Its own list** | News items edited on the Front page staff page: a date, the text per language and a hidden switch. |
 
-- At most 5 items show, newest first, rendered through `LegalMarkdown` as on the splash page, in the visitor's language with English as the fallback.
+- At most 5 items show, newest first, rendered through `LegalMarkdown` as on the splash page, in the visitor's language with English as the fallback. Their headings start at h3, under the section's own h2.
 - If there's nothing to show, the section is hidden.
 
 ### 5. Ready to join
@@ -99,11 +99,11 @@ It is an ordinary form page, not a canvas editor, in four parts:
 3. **Featured places:**
    - The source choice: Same as the splash page, Its own list, or Automatic.
    - The own-list editor:
-     - add a place by picking a region from the grid's regions;
+     - add a place by picking a region from the grid's regions (each region once);
      - write its line in each offered language;
      - upload a picture or make one from the map tile;
      - move it up or down, or remove it.
-   - The own-list editor is shown, and kept, whichever source is chosen, so switching back never loses the list.
+   - The own-list editor is shown, and kept, whichever source is chosen, so switching back never loses the list. Its pictures show there through a staff-only address (`/api/front/pictures/{name}`, admin role), since the public one answers only while the list is showing.
 4. **News:**
    - The source choice: Same as the splash page, or Its own list.
    - The own-list editor: add an item (date and text per language), hide or show it, or remove it.
@@ -118,8 +118,8 @@ Changes are live once saved; there is no draft. A "See the front page" link open
     - **Served:** pictures are served at `/front/images/{name}` only while the page **shows** them: the photo, plus the own-list place pictures while the places source is "Its own list". That works like `/welcome/images`, which serves only pictures the published splash uses.
     - **Kept:** the cleanup counts every picture the saved settings **mention** as in use, including an own list that isn't showing right now. Switching the source away and back, even after months, never loses a picture.
   - A cleanup pass removes front pictures that no saved setting has mentioned for 30 days, like `SplashPictureCleanup`. The splash cleanup must never see or remove front pictures, and the front cleanup must never touch splash pictures.
-- **Automatic map tiles:** served through a public endpoint that returns the map tile of a region **only while that region is on the automatic list** (so never a hypergrid link's tile). They are fetched from Robust and cached for the same length of time as the stats build. A visitor can't use the endpoint to fetch any other tile.
-- **Storage:** the front page settings live in `Data/front/front.json` (a `JsonStateFile`, like `ThemeStore`), with owner-only file permissions like the other data folders.
+- **Automatic map tiles:** served through a public endpoint that returns the map tile of a region **only while that region is on the automatic list** (so never a hypergrid link's tile). They are fetched from Robust and cached for the same length of time as the stats build; visitors who come while a tile is missing or expired share one fetch. A visitor can't use the endpoint to fetch any other tile.
+- **Storage:** the front page settings live in `Data/front/front.json` (a `JsonStateFile`, like `ThemeStore`), with owner-only file permissions like the other data folders. They are read once and kept in memory until the next save, since every public visit needs them.
 - **Words:**
   - Every visitor-facing word goes through `ResidentText`, in all six built-in languages.
   - The owner's own text (place lines, news) is stored per language, like the splash design's text.

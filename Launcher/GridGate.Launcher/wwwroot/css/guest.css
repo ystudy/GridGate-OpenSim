@@ -149,7 +149,8 @@
 .guest-site .front-section > h2 { text-align: center; margin-bottom: 1.25rem; }
 .guest-site .front-cards-grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr)); }
 .guest-site .front-card { overflow: hidden; }
-.guest-site .front-card-picture { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: cover; background: var(--gg-bg); }
+/* The blank card's gradient sits behind every picture too, so one that fails to load shows as a blank card. */
+.guest-site .front-card-picture { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: cover; background: radial-gradient(ellipse at top, #12206b 0%, var(--gg-bg) 80%); }
 .guest-site .front-card-blank { background: radial-gradient(ellipse at top, #12206b 0%, var(--gg-bg) 80%); }
 .guest-site .front-card-body { padding: .9rem 1rem 1rem; }
 .guest-site .front-card-name { margin: 0; font-size: 1.1rem; }
