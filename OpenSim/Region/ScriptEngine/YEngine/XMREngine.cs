@@ -1162,7 +1162,13 @@ namespace OpenSim.Region.ScriptEngine.Yengine
         // - called just before a script is instantiated
         // So we write the .state file so the .state file will be seen when 
         // the script is instantiated.
-        public bool SetXMLState(UUID itemID, string xml)
+        // GridGate: a state given without saying where it comes from is stored as from outside.
+        public bool SetXMLState(UUID itemID, string xml) => SetXMLState(itemID, xml, false);
+
+        // GridGate: fromRunningScript is true only for a state this program captured from its own running script. Any other
+        // state (from an object's asset, an archive, another grid) is written without PERMISSION_DEBIT and without the mark
+        // that says this program wrote it, so a later start from the .state file can't bring a grant back.
+        public bool SetXMLState(UUID itemID, string xml, bool fromRunningScript)
         {
             XmlDocument doc = new();
 
@@ -1208,6 +1214,8 @@ namespace OpenSim.Region.ScriptEngine.Yengine
             XmlAttribute assetA = doc.CreateAttribute("", "Asset", "");
             assetA.Value = stateN.GetAttribute("Asset");
             scriptStateN.Attributes.Append(assetA);
+
+            DebitPermission.ForStoredState(scriptStateN, fromRunningScript);
 
             // Write out the .state file with the <ScriptState ...>...</ScriptState> XML text
             string statePath = XMRInstance.GetStateFileName(m_ScriptBasePath, itemID);

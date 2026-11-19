@@ -45,7 +45,8 @@ internal interface IMoneyView
 /// transaction id and is sent again with that same id while the service is unavailable: the service answers a repeat with
 /// its first answer, so nothing is paid twice.
 /// </summary>
-internal sealed class MoneyActions(IMoneyService service, Guid regionId, Func<EconomyInfo?> economy, IMoneyView view)
+internal sealed class MoneyActions(IMoneyService service, Guid regionId, Func<EconomyInfo?> economy, IMoneyView view,
+    Func<EconomyInfo?>? refreshEconomy = null)
 {
     /// <summary>libomv's transaction types, which the viewer's notices are keyed by.</summary>
     public static readonly Type TransactionTypes = typeof(MoneyTransactionType);
@@ -78,6 +79,17 @@ internal sealed class MoneyActions(IMoneyService service, Guid regionId, Func<Ec
 
     /// <summary>True while script payouts are failing at once because the money service didn't answer one.</summary>
     public bool PayoutsPaused => Interlocked.Read(ref Pause.Until) is var until && until != 0 && Time.GetTimestamp() < until;
+
+    /// <summary>How long land buys in this region fail at once after a land hold ran out of time.</summary>
+    public static readonly TimeSpan LandPause = TimeSpan.FromSeconds(30);
+
+    private long _landPauseUntil;
+
+    /// <summary>
+    /// True while land buys in this region fail at once because a land hold got no answer in time: each one holds the
+    /// region's packet thread while it waits, so a slow money service would otherwise stall it for every buyer.
+    /// </summary>
+    public bool LandPaused => Interlocked.Read(ref _landPauseUntil) is var until && until != 0 && Time.GetTimestamp() < until;
 
     public async Task PayAvatarAsync(Payer p, Guid source, MoneyWho to, int amount)
     {
@@ -205,17 +217,32 @@ internal sealed class MoneyActions(IMoneyService service, Guid regionId, Func<Ec
     public async Task<long?> HoldLandAsync(Payer p, MoneyWho seller, int price, int parcelLocalId, TimeSpan? limit = null)
     {
         if (price <= 0) return 0;
-        using var cts = new CancellationTokenSource(limit ?? MoneyServiceClient.Timeout);
+        if (LandPaused)
+        {
+            view.Tell(p.AgentId, MoneyRules.Message(MoneyAnswer.UnavailableCode));
+            return null;
+        }
+        // The call has its own bound and carries on when the wait for it runs out; a hold it places then is returned.
+        var cts = new CancellationTokenSource(MoneyServiceClient.Timeout);
+        var call = service.HoldAsync(Guid.NewGuid(), "land", p.Who, seller, price, regionId, null, $"parcel {parcelLocalId}", cts.Token);
         MoneyAnswer hold;
         try
         {
-            hold = await service.HoldAsync(Guid.NewGuid(), "land", p.Who, seller, price, regionId, null, $"parcel {parcelLocalId}", cts.Token);
+            hold = await call.WaitAsync(limit ?? MoneyServiceClient.Timeout).ConfigureAwait(false);
         }
-        catch (OperationCanceledException) when (cts.IsCancellationRequested)
+        catch (TimeoutException)
         {
-            // A hold the service did place after all is returned to the buyer when it expires.
+            Interlocked.Exchange(ref _landPauseUntil, Time.GetTimestamp() + (long)(LandPause.TotalSeconds * Time.TimestampFrequency));
+            view.Warn($"The money service didn't answer a land hold in time; land buys here fail at once for {LandPause.TotalSeconds:0} seconds.");
+            _ = ReturnLateLandHoldAsync(call, cts, p, seller);
+            view.Tell(p.AgentId, MoneyRules.Message(MoneyAnswer.UnavailableCode));
+            return null;
+        }
+        catch (OperationCanceledException)
+        {
             hold = MoneyAnswer.Unavailable;
         }
+        cts.Dispose();
         if (!hold.Ok || hold.HoldId is not { } holdId)
         {
             view.Tell(p.AgentId, MoneyRules.Message(hold.Ok ? MoneyAnswer.UnavailableCode : hold.Code));
@@ -224,6 +251,32 @@ internal sealed class MoneyActions(IMoneyService service, Guid regionId, Func<Ec
         if (hold.Balance is { } after)
             view.PushBalance(p.AgentId, after, new BalanceNote((int)MoneyTransactionType.LandSale, p.AgentId, seller.AgentId, price, ""));
         return holdId;
+    }
+
+    /// <summary>
+    /// A land hold the buyer was told was unavailable may still have been placed. When its answer comes it is returned at
+    /// once, so the buyer's coins aren't locked until the hold expires.
+    /// </summary>
+    private async Task ReturnLateLandHoldAsync(Task<MoneyAnswer> call, CancellationTokenSource cts, Payer p, MoneyWho seller)
+    {
+        try
+        {
+            var late = await call.ConfigureAwait(false);
+            if (late.Ok && late.HoldId is { } holdId and not 0)
+            {
+                view.Warn($"Land hold {holdId} was placed after the wait ran out; returning it.");
+                await SettleLandAsync(p, seller, holdId, false).ConfigureAwait(false);
+            }
+        }
+        catch (Exception e)
+        {
+            // Cancelled or failed with no answer: no hold is known, and one placed anyway is returned when it expires.
+            view.Warn($"A late land hold ended with {e.GetType().Name}.");
+        }
+        finally
+        {
+            cts.Dispose();
+        }
     }
 
     /// <summary>After the land module ran: complete when the buyer is now the owner, otherwise return the coins.</summary>
@@ -320,6 +373,12 @@ internal sealed class MoneyActions(IMoneyService service, Guid regionId, Func<Ec
     {
         if (amount <= 0) return;
         var answer = Wait(service.ChargeAsync(Guid.NewGuid(), type, p.Who, amount, payTo, regionId, CancellationToken.None));
+        // As for a hold: a fee the ledger refuses as not its configured one is tried once more after reading the settings again.
+        if (!answer.Ok && answer.Code == "bad_amount" && FeeAfterChange(type, amount) is { } current)
+        {
+            amount = current;
+            answer = Wait(service.ChargeAsync(Guid.NewGuid(), type, p.Who, amount, payTo, regionId, CancellationToken.None));
+        }
         if (!answer.Ok)
         {
             view.Warn($"Uncollected {type} of {amount} from {p.AgentId}: {answer.Code}");
@@ -342,8 +401,21 @@ internal sealed class MoneyActions(IMoneyService service, Guid regionId, Func<Ec
     {
         if (!FeesKnown(p)) return null;
         if (amount <= 0) return 0;
+        // A service from before fee holds can't hold one: fees are unavailable until it is updated.
+        if (!FeeHolds)
+        {
+            view.Tell(p.AgentId, MoneyRules.Message(MoneyAnswer.UnavailableCode));
+            return null;
+        }
         var founder = payTo is { } f ? new MoneyWho(f, "") : null;
         var hold = Wait(service.HoldAsync(Guid.NewGuid(), type, p.Who, founder, amount, regionId, null, null, CancellationToken.None));
+        // The ledger refuses a fee that isn't its configured one: right after the owner changed it, this region's copy may be
+        // old. Read the settings again and hold the fee once more at the current one.
+        if (!hold.Ok && hold.Code == "bad_amount" && FeeAfterChange(type, amount) is { } current)
+        {
+            amount = current;
+            hold = Wait(service.HoldAsync(Guid.NewGuid(), type, p.Who, founder, amount, regionId, null, null, CancellationToken.None));
+        }
         if (!hold.Ok || hold.HoldId is not { } holdId)
         {
             // A hold the service did place after all, without an answer, is returned to the payer when it expires.
@@ -394,8 +466,26 @@ internal sealed class MoneyActions(IMoneyService service, Guid regionId, Func<Ec
     private bool FeesKnown(Payer p)
     {
         if (economy() is not null) return true;
-        view.Tell(p.AgentId, MoneyRules.NoEconomyText);
+        // An unpaired Region Server never learns the fees: say so, not "try again in a minute".
+        view.Tell(p.AgentId, service is UnpairedMoneyService ? MoneyRules.NotPairedUploadText : MoneyRules.NoEconomyText);
         return false;
+    }
+
+    /// <summary>
+    /// The fee to send again after the ledger refused <paramref name="sent"/> as a <paramref name="type"/> fee, or null when
+    /// nothing says it was out of date: reads the settings again, and answers the fee they give now when that differs from
+    /// what was sent. A classified fee is the configured one; an upload fee is the configured one when that was what was
+    /// sent (a mesh priced above it stays as quoted).
+    /// </summary>
+    private int? FeeAfterChange(string type, int sent)
+    {
+        if (refreshEconomy is null || type is not ("upload_fee" or "classified_fee")) return null;
+        var before = economy();
+        if (refreshEconomy() is not { } now) return null;
+        long fee = type == "classified_fee"
+            ? now.ClassifiedFee
+            : before is null || sent <= before.UploadFee ? Math.Max(sent, now.UploadFee) : sent;
+        return fee > 0 && fee != sent ? (int)Math.Min(fee, int.MaxValue) : null;
     }
 
     /// <summary>
@@ -435,6 +525,8 @@ internal sealed class MoneyActions(IMoneyService service, Guid regionId, Func<Ec
     /// attempts and the waits between them together) is spent; an attempt the budget cuts short got no answer. Any final
     /// answer but Ok is <see cref="MoneyAnswer.Lost"/> when an attempt got no answer: that attempt may have gone through,
     /// whatever a later one was told.
+    /// A txn id must never be reused for a payment the viewer was told failed: every new payment takes a new id, and only
+    /// the retries here repeat one.
     /// </summary>
     private async Task<MoneyAnswer> RetriedAsync(Func<CancellationToken, Task<MoneyAnswer>> send, TimeSpan? budget = null)
     {

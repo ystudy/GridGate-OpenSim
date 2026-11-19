@@ -40,9 +40,13 @@ public sealed partial class MoneyLedger
         // A fee held before its action completes into Fees; the hold check below says which holds may.
         [EntryType.HoldCompleted] = new(Holding, [.. Wallets, .. Fees], Hold: true),
         [EntryType.HoldReturned] = new(Holding, Wallets, Hold: true),
+        // A sale completed after the sweep returned its hold: the buyer to the seller (or Fees); the hold check below says which.
+        [EntryType.LateSale] = new(Wallets, [.. Wallets, .. Fees], Hold: true),
         [EntryType.Refund] = new(NotHolding, NotHolding, Staff: true, Reverses: true),
         [EntryType.WalletMerge] = new(Wallets, Wallets, Staff: true),
         [EntryType.FeeMoved] = new(Fees, Wallets, Staff: true),
+        // The owner gave back a fee taken through a hold: from whoever was paid, never from the bank or Holding.
+        [EntryType.FeeRefund] = new([.. Fees, .. Residents], Wallets, Staff: true, Reverses: true),
     };
 
     /// <summary>
@@ -127,7 +131,10 @@ public sealed partial class MoneyLedger
                OR (h.kind NOT IN ('{EntryType.UploadFee}', '{EntryType.ClassifiedFee}', '{EntryType.GroupJoinFee}') AND h.seller_id = {MoneySchema.FeesId})
                OR (h.kind = '{EntryType.GroupJoinFee}' AND (h.seller_id = h.buyer_id
                      OR (h.seller_id <> {MoneySchema.FeesId} AND NOT EXISTS (SELECT 1 FROM accounts a WHERE a.id = h.seller_id AND a.kind = 'Person'))))
-               OR (SELECT COUNT(*) FROM entries e WHERE e.hold_id = h.id) <> IF(h.state = 'open', 1, 2)
+               OR (SELECT COUNT(*) FROM entries e WHERE e.hold_id = h.id AND e.type <> '{EntryType.LateSale}') <> IF(h.state = 'open', 1, 2)
+               OR (SELECT COUNT(*) FROM entries e WHERE e.hold_id = h.id AND e.type = '{EntryType.LateSale}') > IF(h.state = 'returned', 1, 0)
+               OR EXISTS (SELECT 1 FROM entries e WHERE e.hold_id = h.id AND e.type = '{EntryType.LateSale}'
+                     AND NOT (e.from_id = h.buyer_id AND e.to_id = h.seller_id AND e.amount = h.amount))
                OR (SELECT COUNT(*) FROM entries e WHERE e.hold_id = h.id AND e.type = '{EntryType.Hold}'
                      AND e.from_id = h.buyer_id AND e.to_id = {MoneySchema.HoldingId} AND e.amount = h.amount) <> 1
                OR (h.state = 'completed' AND NOT EXISTS (SELECT 1 FROM entries e WHERE e.hold_id = h.id AND e.type = '{EntryType.HoldCompleted}'
@@ -195,9 +202,18 @@ public sealed partial class MoneyLedger
             SELECT r.id FROM entries r LEFT JOIN entries o ON o.id = r.reverses
             WHERE r.type = '{EntryType.Refund}'
               AND (o.id IS NULL OR o.id >= r.id OR o.from_id <> r.to_id OR o.to_id <> r.from_id OR o.amount <> r.amount
-                   OR o.type IN ('{EntryType.Hold}', '{EntryType.HoldCompleted}', '{EntryType.HoldReturned}'))
+                   OR o.type IN ('{EntryType.Hold}', '{EntryType.HoldCompleted}', '{EntryType.HoldReturned}', '{EntryType.LateSale}', '{EntryType.FeeRefund}'))
             ORDER BY r.id LIMIT {ProblemsPerCheck}
             """, r => $"Refund {r.GetInt64(0)} doesn't reverse its entry.", ct);
+        // A fee refund reverses what paid a fee out of a hold, to the hold's buyer, for the same amount.
+        await ReadLinesAsync(conn, tx, problems, $"""
+            SELECT r.id FROM entries r LEFT JOIN entries o ON o.id = r.reverses LEFT JOIN holds h ON h.id = o.hold_id
+            WHERE r.type = '{EntryType.FeeRefund}'
+              AND (o.id IS NULL OR o.id >= r.id
+                   OR o.type NOT IN ('{EntryType.HoldCompleted}', '{EntryType.LateSale}') OR o.to_id <> r.from_id OR o.amount <> r.amount
+                   OR h.id IS NULL OR h.buyer_id <> r.to_id OR h.kind NOT IN ('{EntryType.UploadFee}', '{EntryType.ClassifiedFee}', '{EntryType.GroupJoinFee}'))
+            ORDER BY r.id LIMIT {ProblemsPerCheck}
+            """, r => $"Fee refund {r.GetInt64(0)} doesn't reverse the payment of its fee.", ct);
         await ReadLinesAsync(conn, tx, problems, $"""
             SELECT reverses FROM entries WHERE reverses IS NOT NULL GROUP BY reverses HAVING COUNT(*) > 1 ORDER BY reverses LIMIT {ProblemsPerCheck}
             """, r => $"Entry {r.GetInt64(0)} was refunded more than once.", ct);

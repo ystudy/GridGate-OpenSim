@@ -41,11 +41,12 @@ public sealed class EconomyHelperTests
     }
 
     private static LauncherFactory Make(FakeSessions sessions, MoneyMode mode = MoneyMode.Play, bool open = true, IReadOnlyList<string>? adminNetworks = null,
-        IPAddress? caller = null, bool lenientRate = false, EconomyLimits? limits = null) =>
+        IPAddress? caller = null, bool lenientRate = false, EconomyLimits? limits = null, string? defaultLanguage = null) =>
         new(s => s with
         {
             Security = adminNetworks is null ? s.Security : s.Security with { AdminNetworks = adminNetworks },
             GridName = "Avalon",
+            Languages = defaultLanguage is null ? s.Languages : s.Languages with { Default = defaultLanguage },
             SetupToken = null,
             Plan = OwnerPlan.Local,
             Setup = s.Setup with { WorldNamed = true, OwnerCreated = true, Finished = true, Owner = new OwnerInfo("Test", "Owner", TestAuth.OwnerId) },
@@ -56,12 +57,12 @@ public sealed class EconomyHelperTests
         {
             Before = app =>
             {
-                if (caller is not null)
-                    app.Use((ctx, next) =>
-                    {
-                        ctx.Connection.RemoteIpAddress = caller;
-                        return next(ctx);
-                    });
+                // The test server has no remote address, which counts against the grid-wide second; a real caller always has one.
+                app.Use((ctx, next) =>
+                {
+                    ctx.Connection.RemoteIpAddress = caller ?? IPAddress.Parse("198.18.0.1");
+                    return next(ctx);
+                });
             },
             ExtraServices = services =>
             {
@@ -317,6 +318,59 @@ public sealed class EconomyHelperTests
     }
 
     [Fact]
+    public async Task Addresses_sending_unknown_ids_cannot_use_up_the_lookups_of_a_new_viewer()
+    {
+        var sessions = new FakeSessions { Outcome = PresenceOutcome.NoSession };
+        var limits = new EconomyLimits(TimeProvider.System);
+        var factories = new List<LauncherFactory>();
+        try
+        {
+            // Twenty-five addresses each send many well-formed calls with fresh random ids.
+            for (var i = 1; i <= 25; i++)
+            {
+                var f = Make(sessions, caller: IPAddress.Parse($"198.51.100.{i}"), limits: limits);
+                factories.Add(f);
+                var c = Client(f);
+                for (var n = 0; n < 10; n++)
+                    await Post(c, "/economy/currency.php", Call("getCurrencyQuote", ("agentId", Guid.NewGuid().ToString()), ("secureSessionId", Guid.NewGuid().ToString())));
+            }
+            // Each address was looked up for only a few of its ids.
+            Assert.True(sessions.Asked.Count <= 25 * 3, $"{sessions.Asked.Count} lookups for 250 calls");
+
+            // A new viewer from another address still gets through once its session exists.
+            sessions.Outcome = PresenceOutcome.Ok;
+            await using var viewer = Make(sessions, caller: IPAddress.Parse("203.0.113.77"), limits: limits);
+            var s = AssertFirestormSafe((await Post(Client(viewer), "/economy/currency.php", Call("getCurrencyQuote", Who(more: [("currencyBuy", 5)])))).Xml);
+            Assert.DoesNotContain("Too many", Member(s, "errorMessage"));
+            Assert.Contains((Agent, Secure), sessions.Asked);
+        }
+        finally
+        {
+            foreach (var f in factories) await f.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task An_address_that_keeps_missing_is_refused_without_a_lookup_but_a_good_session_still_answers()
+    {
+        var sessions = new FakeSessions();
+        var limits = new EconomyLimits(TimeProvider.System);
+        await using var f = Make(sessions, limits: limits);
+        var c = Client(f);
+        Assert.Equal("0", Member(AssertFirestormSafe((await Post(c, "/economy/currency.php", Call("getCurrencyQuote", Who(more: [("currencyBuy", 5)])))).Xml), "success"));
+        sessions.Outcome = PresenceOutcome.NoSession;
+        for (var n = 0; n < 6; n++)
+            await Post(c, "/economy/currency.php", Call("getCurrencyQuote", ("agentId", Guid.NewGuid().ToString()), ("secureSessionId", Guid.NewGuid().ToString())));
+        var asked = sessions.Asked.Count;
+
+        var again = AssertFirestormSafe((await Post(c, "/economy/currency.php", Call("getCurrencyQuote", Who(more: [("currencyBuy", 5)])))).Xml);
+
+        Assert.Equal(asked, sessions.Asked.Count);
+        Assert.True(asked <= 1 + 3);
+        Assert.Equal("0", Member(again, "success"));
+    }
+
+    [Fact]
     public async Task Junk_calls_from_twenty_addresses_do_not_lock_out_a_known_viewer()
     {
         var sessions = new FakeSessions();
@@ -364,6 +418,52 @@ public sealed class EconomyHelperTests
 
         Assert.Equal("0", Member(last, "success"));
         Assert.Equal("Too many requests. Please wait a minute and try again.", Member(last, "errorMessage"));
+    }
+
+    [Fact]
+    public async Task A_refused_caller_is_answered_in_the_owners_language_without_reading_its_body()
+    {
+        var caller = IPAddress.Parse("203.0.113.9");
+        var limits = new EconomyLimits(TimeProvider.System);
+        for (var i = 0; i < EconomyLimits.PerMinute; i++) Assert.True(limits.Allow(caller));
+        var sessions = new FakeSessions();
+        await using var f = Make(sessions, caller: caller, limits: limits, defaultLanguage: "de");
+        var c = Client(f);
+
+        // Garbage is answered as a refusal, not a fault, which shows the body was never parsed; the call's own language is ignored.
+        var garbage = AssertFirestormSafe((await Post(c, "/economy/currency.php", "not xml at all")).Xml);
+        var french = AssertFirestormSafe((await Post(c, "/economy/currency.php", Call("getCurrencyQuote", Who("fr", ("currencyBuy", 5))))).Xml);
+
+        Assert.Equal("0", Member(garbage, "success"));
+        Assert.Contains("Zu viele Anfragen", Member(garbage, "errorMessage"));
+        Assert.Contains("Zu viele Anfragen", Member(french, "errorMessage"));
+        Assert.Empty(sessions.Asked);
+    }
+
+    [Fact]
+    public async Task Helper_answers_carry_no_per_person_data()
+    {
+        // The session check only proves some Presence row matches; so an answer may hold the mode, the symbol and the caller's own
+        // shortfall, never a balance or anything else about a person.
+        await using var f = Make(new FakeSessions());
+        var c = Client(f);
+        var answers = new List<string>();
+        foreach (var (path, method, extra) in new (string, string, (string, object)[])[]
+                 {
+                     ("/economy/currency.php", "getCurrencyQuote", [("currencyBuy", 100)]),
+                     ("/economy/landtool.php", "preflightBuyLandPrep", [("currencyBuy", 0)]),
+                     ("/economy/landtool.php", "preflightBuyLandPrep", [("currencyBuy", 25)]),
+                 })
+            answers.Add((await Post(c, path, Call(method, Who(more: extra)))).Xml);
+
+        foreach (var xml in answers)
+        {
+            Assert.DoesNotContain(Agent.ToString(), xml, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain(Secure.ToString(), xml, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("alance", xml);
+            var names = XDocument.Parse(xml).Descendants("name").Select(n => n.Value).ToList();
+            Assert.All(names, n => Assert.Contains(n, new[] { "success", "errorMessage", "errorURI", "confirm", "membership", "landUse", "currency", "upgrade", "action", "levels", "estimatedCost" }));
+        }
     }
 
     [Fact]

@@ -58,10 +58,14 @@ public sealed class MoneyMaintenance(MoneyLedger ledger, Func<MoneyMode> effecti
         {
             Unexpected("returning expired holds", e);
         }
-        if (locations is null || _lastCleanup is { } last && time.GetUtcNow() - last < CleanupEvery) return;
+        if (_lastCleanup is { } last && time.GetUtcNow() - last < CleanupEvery) return;
         try
         {
-            await locations.CleanupAsync(ct);
+            // Stored answers to transaction ids older than the retry window are dropped.
+            var dropped = await ledger.PruneRequestsAsync(ct);
+            if (dropped > 0)
+                log.LogInformation("Dropped {Count} stored payment answers older than {Days} days.", dropped, MoneyRules.RequestKeep.Days);
+            if (locations is not null) await locations.CleanupAsync(ct);
             _lastCleanup = time.GetUtcNow();
         }
         catch (MoneyUnavailableException)

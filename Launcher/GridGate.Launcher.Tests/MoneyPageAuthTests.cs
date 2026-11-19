@@ -87,6 +87,7 @@ public sealed class MoneyPageAuthTests
         new(AnnPage, "UnfreezeAccount", Site.GridAsset, Why(), Effect.Books, $"freeze-account {Ann} False"),
         new(AnnPage, "Payouts", Site.GridAsset, new() { ["On"] = "true" }, Effect.Books, "payouts"),
         new(AnnPage, "Limits", Site.GridAsset, Why(new() { ["DailySpend"] = "5" }), Effect.Books, "set-person-limits", OwnerOnly: true),
+        new(AnnPage, "RefundFee", Site.GridAsset, Why(new() { ["EntryId"] = "77" }), Effect.Books, "refund-fee", OwnerOnly: true),
         new(HopePage, "Merge", Site.GridAsset, Why(new() { ["NewHome"] = "http://new.example:8002/" }), Effect.Books, "merge"),
         new("/guest/coins", "Payouts", Site.GridAsset, new() { ["On"] = "true" }, Effect.Books, "payouts"),
         new("/advanced/money", "Pair", Site.RegionCoins, new() { ["Code"] = "7K2M-9QXD-4HTB-ZW3R" }, Effect.PairClient),
@@ -341,6 +342,9 @@ public sealed class MoneyPageAuthTests
         Arrange(h, k);
         var c = await ClientAsync(h.F, who);
         var token = await TokenAsync(c, who, k.Site);
+        // A Region Server's Gloebit app is saved only with the owner's current two-factor code.
+        if (k is { Page: "/advanced/money", Handler: "Gloebit" } && who == "owner")
+            k = k with { Form = new(k.Form) { ["TwoFactorCode"] = OwnerTwoFactorKit.NextCode(h.F) } };
         var before = Look(h);
 
         using var r = await PostAsync(c, k, token);

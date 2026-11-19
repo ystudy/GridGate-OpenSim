@@ -19,7 +19,7 @@ public sealed class MoneySchemaTests(MoneyMariaDb maria) : IClassFixture<MoneyMa
         await db.EnsureSchemaAsync();
 
         Assert.Equal(3, await db.Scalar("SELECT COUNT(*) FROM `money`.`accounts`"));
-        Assert.Equal("5", await db.Text("SELECT value FROM `money`.`state` WHERE name = 'schema_version'"));
+        Assert.Equal("7", await db.Text("SELECT value FROM `money`.`state` WHERE name = 'schema_version'"));
         Assert.Equal("0", await db.Text("SELECT value FROM `money`.`state` WHERE name = 'frozen'"));
         Assert.Equal("system:bank", await db.Text("SELECT home FROM `money`.`accounts` WHERE id = 1"));
         Assert.Equal("system:fees", await db.Text("SELECT home FROM `money`.`accounts` WHERE id = 2"));
@@ -53,7 +53,7 @@ public sealed class MoneySchemaTests(MoneyMariaDb maria) : IClassFixture<MoneyMa
         await db.EnsureSchemaAsync();
 
         Assert.Equal("utf8mb4_bin", await HomeCollation(db));
-        Assert.Equal("5", await db.Text("SELECT value FROM `money`.`state` WHERE name = 'schema_version'"));
+        Assert.Equal("7", await db.Text("SELECT value FROM `money`.`state` WHERE name = 'schema_version'"));
         Assert.Equal(3, await db.Scalar("SELECT COUNT(*) FROM `money`.`accounts`"));
     }
 
@@ -61,13 +61,13 @@ public sealed class MoneySchemaTests(MoneyMariaDb maria) : IClassFixture<MoneyMa
         ["session_locations", "handoffs", "region_pins", "key_heard", "region_heard", "limit_overrides", "alerts", "key_locks"];
 
     [Fact]
-    public async Task Fresh_schema_is_version_5_with_the_new_tables()
+    public async Task Fresh_schema_is_version_7_with_the_new_tables()
     {
         var db = await maria.FreshAsync();
 
         await db.EnsureSchemaAsync();
 
-        Assert.Equal("5", await db.Text("SELECT value FROM `money`.`state` WHERE name = 'schema_version'"));
+        Assert.Equal("7", await db.Text("SELECT value FROM `money`.`state` WHERE name = 'schema_version'"));
         foreach (var table in V3Tables)
             Assert.Equal(1, await db.Scalar($"SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = 'money' AND TABLE_NAME = '{table}'"));
         foreach (var table in new[] { "entries", "holds" })
@@ -83,7 +83,7 @@ public sealed class MoneySchemaTests(MoneyMariaDb maria) : IClassFixture<MoneyMa
     }
 
     [Fact]
-    public async Task Version_2_database_moves_to_5_and_keeps_entries()
+    public async Task Version_2_database_moves_to_6_and_keeps_entries()
     {
         var db = await maria.FreshAsync();
         await db.EnsureSchemaAsync();
@@ -100,7 +100,7 @@ public sealed class MoneySchemaTests(MoneyMariaDb maria) : IClassFixture<MoneyMa
 
         await db.EnsureSchemaAsync();
 
-        Assert.Equal("5", await db.Text("SELECT value FROM `money`.`state` WHERE name = 'schema_version'"));
+        Assert.Equal("7", await db.Text("SELECT value FROM `money`.`state` WHERE name = 'schema_version'"));
         Assert.Equal(1, await db.Scalar("SELECT COUNT(*) FROM `money`.`entries`"));
         Assert.Equal(1, await db.Scalar("SELECT COUNT(*) FROM `money`.`entries` WHERE key_id IS NULL"));
         Assert.Equal(1, await db.Scalar("SELECT COUNT(*) FROM `money`.`holds` WHERE key_id IS NULL"));
@@ -117,7 +117,29 @@ public sealed class MoneySchemaTests(MoneyMariaDb maria) : IClassFixture<MoneyMa
     }
 
     [Fact]
-    public async Task Version_3_migrates_to_5()
+    public async Task Version_6_clears_a_pins_machine_id_that_is_not_the_derived_value()
+    {
+        var db = await maria.FreshAsync();
+        await db.EnsureSchemaAsync();
+        var (raw, upper, good) = (Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid());
+        var key = new string('a', 64);
+        await db.Sql($"""
+            INSERT INTO `money`.`region_pins` (region_id, server_id, machine_id, pinned, waiting) VALUES
+              ('{raw}', '{Guid.NewGuid():N}', 'my-command-password', UTC_TIMESTAMP(6), 0),
+              ('{upper}', '{Guid.NewGuid():N}', '{new string('A', 64)}', UTC_TIMESTAMP(6), 0),
+              ('{good}', '{Guid.NewGuid():N}', '{key}', UTC_TIMESTAMP(6), 0);
+            UPDATE `money`.`state` SET value = '6' WHERE name = 'schema_version';
+            """);
+
+        await db.EnsureSchemaAsync();
+
+        Assert.Equal(1, await db.Scalar($"SELECT COUNT(*) FROM `money`.`region_pins` WHERE region_id = '{raw}' AND machine_id IS NULL"));
+        Assert.Equal(1, await db.Scalar($"SELECT COUNT(*) FROM `money`.`region_pins` WHERE region_id = '{upper}' AND machine_id IS NULL"));
+        Assert.Equal(1, await db.Scalar($"SELECT COUNT(*) FROM `money`.`region_pins` WHERE region_id = '{good}' AND machine_id = '{key}'"));
+    }
+
+    [Fact]
+    public async Task Version_3_migrates_to_7()
     {
         // A version 3 database has handoffs without a destination address. They keep none, so they count for no paired key;
         // they expire within minutes anyway.
@@ -133,13 +155,13 @@ public sealed class MoneySchemaTests(MoneyMariaDb maria) : IClassFixture<MoneyMa
 
         await db.EnsureSchemaAsync();
 
-        Assert.Equal("5", await db.Text("SELECT value FROM `money`.`state` WHERE name = 'schema_version'"));
+        Assert.Equal("7", await db.Text("SELECT value FROM `money`.`state` WHERE name = 'schema_version'"));
         Assert.Equal(("varchar(64)", "int(11)"), await HandoffAddressTypes(db));
         Assert.Equal(1, await db.Scalar($"SELECT COUNT(*) FROM `money`.`handoffs` WHERE id = '{handoff}' AND to_host IS NULL AND to_port IS NULL"));
     }
 
     [Fact]
-    public async Task Version_4_migrates_to_5_and_its_pins_stay_confirmed()
+    public async Task Version_4_migrates_to_6_and_its_pins_stay_confirmed()
     {
         var db = await maria.FreshAsync();
         await db.EnsureSchemaAsync();
@@ -152,9 +174,28 @@ public sealed class MoneySchemaTests(MoneyMariaDb maria) : IClassFixture<MoneyMa
 
         await db.EnsureSchemaAsync();
 
-        Assert.Equal("5", await db.Text("SELECT value FROM `money`.`state` WHERE name = 'schema_version'"));
+        Assert.Equal("7", await db.Text("SELECT value FROM `money`.`state` WHERE name = 'schema_version'"));
         Assert.Equal("tinyint(1)", await db.Text("SELECT COLUMN_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = 'money' AND TABLE_NAME = 'region_pins' AND COLUMN_NAME = 'waiting'"));
         Assert.Equal(1, await db.Scalar($"SELECT COUNT(*) FROM `money`.`region_pins` WHERE region_id = '{region}' AND waiting = 0"));
+    }
+
+    [Fact]
+    public async Task Version_5_migrates_to_6_and_its_locations_are_not_matched()
+    {
+        var db = await maria.FreshAsync();
+        await db.EnsureSchemaAsync();
+        var session = Guid.NewGuid();
+        await db.Sql($"""
+            INSERT INTO `money`.`session_locations` (session_id, agent_id, region_id, key_id, state, updated)
+              VALUES ('{session}', '{Guid.NewGuid()}', '{Guid.NewGuid()}', 'p1', 'Unverified', UTC_TIMESTAMP(6));
+            ALTER TABLE `money`.`session_locations` DROP COLUMN matched;
+            UPDATE `money`.`state` SET value = '5' WHERE name = 'schema_version';
+            """);
+
+        await db.EnsureSchemaAsync();
+
+        Assert.Equal("7", await db.Text("SELECT value FROM `money`.`state` WHERE name = 'schema_version'"));
+        Assert.Equal(1, await db.Scalar($"SELECT COUNT(*) FROM `money`.`session_locations` WHERE session_id = '{session}' AND matched = 0"));
     }
 
     [Fact]
@@ -216,7 +257,6 @@ public sealed class MoneySchemaTests(MoneyMariaDb maria) : IClassFixture<MoneyMa
     [InlineData("UPDATE `money`.`holds` SET amount = 1000")]
     [InlineData("UPDATE `money`.`holds` SET seller_id = 3")]
     [InlineData("DELETE FROM `money`.`holds`")]
-    [InlineData("DELETE FROM `money`.`requests`")]
     [InlineData("DROP TRIGGER `money`.`entries_never_edited`")]
     [InlineData("ALTER TABLE `money`.`entries` DROP COLUMN reason")]
     [InlineData("DROP TABLE `money`.`entries`")]
@@ -236,6 +276,8 @@ public sealed class MoneySchemaTests(MoneyMariaDb maria) : IClassFixture<MoneyMa
     [InlineData("UPDATE `money`.`holds` SET state = 'returned', settled = UTC_TIMESTAMP(6)")]
     [InlineData("UPDATE `money`.`state` SET value = '0' WHERE name = 'frozen'")]
     [InlineData("INSERT INTO `money`.`requests` (txn_id, op, fingerprint, response, at) VALUES (UUID(), 'x', 'f', 'r', UTC_TIMESTAMP(6))")]
+    // Stored answers older than the retry window are dropped by the ledger's own sweep.
+    [InlineData("DELETE FROM `money`.`requests` WHERE at < UTC_TIMESTAMP(6)")]
     [InlineData("SELECT COUNT(*) FROM `money`.`entries` WHERE hold_id IS NULL")]
     public async Task Moneyuser_may_still_do_what_the_ledger_does(string sql)
     {
@@ -244,6 +286,16 @@ public sealed class MoneySchemaTests(MoneyMariaDb maria) : IClassFixture<MoneyMa
         await Seed(db);
 
         await AsMoneyuser(db, sql);
+    }
+
+    [Fact]
+    public async Task Stored_answers_are_found_by_their_age()
+    {
+        var db = await maria.FreshAsync();
+        await db.EnsureSchemaAsync();
+
+        Assert.Equal(1, await db.Scalar(
+            "SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = 'money' AND TABLE_NAME = 'requests' AND INDEX_NAME = 'requests_at' AND COLUMN_NAME = 'at'"));
     }
 
     [Fact]

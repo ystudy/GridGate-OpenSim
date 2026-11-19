@@ -110,7 +110,7 @@ public sealed class MoneyServiceClientTests(MoneyMariaDb maria) : IClassFixture<
         var done = await client.CompleteAsync(Guid.NewGuid(), hold.HoldId!.Value, Ct);
 
         Assert.True(done.Ok, done.Code);
-        Assert.Equal(125, done.ToBalance);
+        Assert.Null(done.ToBalance); // B is in program two's region, which this key doesn't cover
         Assert.Null(done.Balance);
     }
 
@@ -139,7 +139,7 @@ public sealed class MoneyServiceClientTests(MoneyMariaDb maria) : IClassFixture<
 
         var join = await client.HoldAsync(Guid.NewGuid(), "group_join_fee", ClientA, ClientB, 5, Here, null, null, Ct);
         Assert.True(join.Ok, join.Code);
-        Assert.Equal(105, (await client.CompleteAsync(Guid.NewGuid(), join.HoldId!.Value, Ct)).ToBalance);
+        Assert.Null((await client.CompleteAsync(Guid.NewGuid(), join.HoldId!.Value, Ct)).ToBalance); // the founder is in program two's region
         // A purchase with no seller is turned away (a 400), which the client reads as a final unavailable.
         var purchase = await client.HoldAsync(Guid.NewGuid(), "object", ClientA, null, 3, Here, null, null, Ct);
         Assert.Equal("unavailable", purchase.Code);

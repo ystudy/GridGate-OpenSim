@@ -8,7 +8,22 @@ namespace GridGate.Launcher.Security;
 
 /// <summary>What a staff cookie carries, read back by <see cref="StaffSignIn.Read"/>.</summary>
 /// <param name="Checked">When the account's level was last read from Robust (at sign-in, then at most every 5 minutes).</param>
-public sealed record StaffClaims(Guid Principal, string SessionId, string Stamp, DateTimeOffset Checked, StaffRole Role);
+public sealed record StaffClaims(Guid Principal, string SessionId, string Stamp, DateTimeOffset Checked, StaffRole Role)
+{
+    // What this record holds is never printed, so a log line or an exception that shows it can't leak it.
+    private bool PrintMembers(System.Text.StringBuilder sb)
+    {
+        sb.Append($"Principal = {Principal}, SessionId = hidden, Stamp = hidden, Checked = {Checked:O}, Role = {Role}");
+        return true;
+    }
+
+    public override string ToString()
+    {
+        var sb = new System.Text.StringBuilder("StaffClaims { ");
+        PrintMembers(sb);
+        return sb.Append(" }").ToString();
+    }
+}
 
 /// <summary>
 /// The staff cookie's claims, the same for the setup checklist, the sign-in page and the tests: the name, the principal id,

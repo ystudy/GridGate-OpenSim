@@ -45,6 +45,10 @@
 </div>
 <p id="notice" class="notice alert alert-info mb-3 py-2" role="status">@Model.Notice</p>
 <partial name="_PlainHttpWarning" />
+@if (Model.GloebitAppChange is { } gloebitChange)
+{
+    <div id="gloebit-app-changed" class="alert alert-info" role="status">@gloebitChange</div>
+}
 @foreach (var n in Model.MoneyNotices)
 {
     <div id="@n.Id" class="@(n.Info ? "alert alert-info" : "error-box error alert alert-danger")" role="@(n.Info ? "status" : "alert")">@n.Text @if (n.MoneyLink) { <a href="/money">Money</a> }</div>

@@ -34,7 +34,7 @@ public sealed partial class MoneyLedger
 
     /// <summary>
     /// Reverses one entry: the same amount back from its payee to its payer, guarded (from a frozen payee too). An entry
-    /// already refunded, or a hold's own movement (settled through the hold), can't be refunded.
+    /// already refunded, a hold's own movement (settled through the hold) and the owner's refund of a fee can't be refunded.
     /// </summary>
     public Task<MoneyResult> RefundAsync(long entryId, StaffAction who, CancellationToken ct) =>
         StaffMoveAsync(who, 1, ct, async (conn, tx) =>
@@ -45,23 +45,84 @@ public sealed partial class MoneyLedger
             {
                 cmd.Parameters.AddWithValue("@id", entryId);
                 await using var r = await cmd.ExecuteReaderAsync(ct);
-                if (!await r.ReadAsync(ct)) return MoneyResult.Of(MoneyOutcome.UnknownHold);
+                if (!await r.ReadAsync(ct)) return MoneyResult.Of(MoneyOutcome.UnknownEntry);
                 (fromId, toId, amount, type) = (r.GetInt64(0), r.GetInt64(1), r.GetInt64(2), r.GetString(3));
             }
-            if (type is EntryType.Hold or EntryType.HoldCompleted or EntryType.HoldReturned)
+            if (type is EntryType.Hold or EntryType.HoldCompleted or EntryType.HoldReturned or EntryType.LateSale or EntryType.FeeRefund)
                 return MoneyResult.Of(MoneyOutcome.NotAllowed);
             if (await ScalarAsync(conn, tx, "SELECT COUNT(*) FROM entries WHERE reverses = @id", ct, ("@id", entryId)) > 0)
-                return MoneyResult.Of(MoneyOutcome.HoldClosed);
+                return MoneyResult.Of(MoneyOutcome.AlreadyRefunded);
             return await MoveBetweenAsync(conn, tx, toId, fromId, amount, StaffEntry(EntryType.Refund, who) with { Reverses = entryId }, guarded: true, ct, staffTakes: true);
         });
 
-    /// <summary>Moves a visitor's whole balance to their wallet under a new home address, and freezes the old one.</summary>
+    /// <summary>
+    /// The owner gives back an upload, classified or group join fee that was taken through a hold. <paramref name="entryId"/> is
+    /// the hold's opening entry (what the payer's history shows), its completing entry, or a late sale's. The coins go from
+    /// whoever was paid (Fees, or the group's founder) back to <paramref name="payer"/>, and only if that account has them:
+    /// otherwise <see cref="MoneyOutcome.NotEnough"/>, with <see cref="MoneyResult.PayeeKind"/> saying who lacks them. Nothing is
+    /// taken from the Grid bank, so no coins are made. A fee is refunded once. A fee still held, returned, or paid some other
+    /// way, a sale, or one that another person paid is <see cref="MoneyOutcome.NotAllowed"/>.
+    /// </summary>
+    public Task<MoneyResult> RefundHeldFeeAsync(AccountRef payer, long entryId, StaffAction who, CancellationToken ct) =>
+        StaffMoveAsync(who, 1, ct, async (conn, tx) =>
+        {
+            long? holdId;
+            string type;
+            await using (var cmd = new MySqlCommand("SELECT hold_id, type FROM entries WHERE id = @id", conn, tx))
+            {
+                cmd.Parameters.AddWithValue("@id", entryId);
+                await using var r = await cmd.ExecuteReaderAsync(ct);
+                if (!await r.ReadAsync(ct)) return MoneyResult.Of(MoneyOutcome.UnknownEntry);
+                (holdId, type) = (r.IsDBNull(0) ? null : r.GetInt64(0), r.GetString(1));
+            }
+            if (holdId is not { } hold || type is not (EntryType.Hold or EntryType.HoldCompleted or EntryType.LateSale))
+                return MoneyResult.Of(MoneyOutcome.NotAllowed);
+
+            // The hold's row is locked first: two refunds of one fee, by different entries of it, wait for each other.
+            long buyerId;
+            string kind;
+            await using (var cmd = new MySqlCommand("SELECT buyer_id, kind FROM holds WHERE id = @id FOR UPDATE", conn, tx))
+            {
+                cmd.Parameters.AddWithValue("@id", hold);
+                await using var r = await cmd.ExecuteReaderAsync(ct);
+                if (!await r.ReadAsync(ct)) return MoneyResult.Of(MoneyOutcome.NotAllowed);
+                (buyerId, kind) = (r.GetInt64(0), r.GetString(1));
+            }
+            if (!IsFeeKind(kind)) return MoneyResult.Of(MoneyOutcome.NotAllowed);
+
+            // Only the person whose page this is: the entry's payer.
+            if (await ScalarAsync(conn, tx, "SELECT COUNT(*) FROM accounts WHERE id = @id AND agent_id = @agent AND home = @home", ct,
+                    ("@id", buyerId), ("@agent", payer.AgentId.ToString()), ("@home", NormalHome(payer.Home))) != 1)
+                return MoneyResult.Of(MoneyOutcome.NotAllowed);
+
+            // What paid the fee out: the hold's completing entry, or the late sale that took the coins again.
+            long settledId, payeeId, amount;
+            await using (var cmd = new MySqlCommand("SELECT id, to_id, amount FROM entries WHERE hold_id = @hold AND type IN (@completed, @late) ORDER BY id LIMIT 1", conn, tx))
+            {
+                cmd.Parameters.AddWithValue("@hold", hold);
+                cmd.Parameters.AddWithValue("@completed", EntryType.HoldCompleted);
+                cmd.Parameters.AddWithValue("@late", EntryType.LateSale);
+                await using var r = await cmd.ExecuteReaderAsync(ct);
+                if (!await r.ReadAsync(ct)) return MoneyResult.Of(MoneyOutcome.NotAllowed);
+                (settledId, payeeId, amount) = (r.GetInt64(0), r.GetInt64(1), r.GetInt64(2));
+            }
+            if (await ScalarAsync(conn, tx, "SELECT COUNT(*) FROM entries WHERE reverses = @id", ct, ("@id", settledId)) > 0)
+                return MoneyResult.Of(MoneyOutcome.AlreadyRefunded);
+
+            var moved = await MoveBetweenAsync(conn, tx, payeeId, buyerId, amount, StaffEntry(EntryType.FeeRefund, who) with { Reverses = settledId },
+                guarded: true, ct, staffTakes: true);
+            return moved with { PayeeKind = payeeId == MoneySchema.FeesId ? "Fees" : "founder" };
+        });
+
+    /// <summary>Moves a visitor's whole balance to their wallet under a new home address, and freezes the old one (a visitor's wallet into a visitor wallet only).</summary>
     public Task<MoneyResult> MergeWalletsAsync(AccountRef from, AccountRef to, StaffAction who, CancellationToken ct) =>
         StaffMoveAsync(who, 1, ct, async (conn, tx) =>
         {
             if (Same(from, to)) return MoneyResult.Of(MoneyOutcome.NotAllowed);
             var old = await FindAsync(conn, tx, from.AgentId, NormalHome(from.Home), ct);
-            if (old is null || old.Kind is not (AccountKind.Person or AccountKind.Visitor)) return MoneyResult.Of(MoneyOutcome.NoWallet);
+            if (old is null) return MoneyResult.Of(MoneyOutcome.NoWallet);
+            // Only a visitor's coins move to a new home address: a resident has no home to move from or to.
+            if (old.Kind != AccountKind.Visitor || NormalHome(to.Home).Length == 0) return MoneyResult.Of(MoneyOutcome.NotAVisitor);
             var (target, refusal) = await ResolveAsync(conn, tx, to, ct, staff: true);
             if (target is null) return MoneyResult.Of(refusal);
 

@@ -60,15 +60,60 @@ public sealed class MoneyPairingTests
     }
 
     [Fact]
-    public void Five_wrong_proofs_cancel_the_code()
+    public void Five_wrong_proofs_from_one_address_block_that_address_but_not_the_code()
+    {
+        var pairing = new MoneyPairing(new FakeTimeProvider(DateTimeOffset.UtcNow));
+        var (code, _) = pairing.Issue();
+        var noisy = System.Net.IPAddress.Parse("192.168.1.50");
+
+        for (var i = 0; i < MoneyPairing.MaxWrongProofs; i++) Assert.Null(pairing.Redeem(_ => false, noisy));
+
+        // Even the right proof from that address is refused now, and isn't even tried.
+        var tried = false;
+        Assert.Null(pairing.Redeem(c => tried = c == code, noisy));
+        Assert.False(tried);
+        Assert.NotNull(pairing.PendingUntil);
+        // The code is still good for another address.
+        Assert.Equal(code, pairing.Redeem(c => c == code, System.Net.IPAddress.Parse("192.168.1.51")));
+    }
+
+    [Fact]
+    public void Wrong_proofs_from_any_number_of_addresses_never_cancel_the_code()
     {
         var pairing = new MoneyPairing(new FakeTimeProvider(DateTimeOffset.UtcNow));
         var (code, _) = pairing.Issue();
 
-        for (var i = 0; i < MoneyPairing.MaxWrongProofs; i++) Assert.Null(pairing.Redeem(_ => false));
+        // Four from each of many addresses: none is blocked, and however many there are, the code stays.
+        for (var i = 0; i < 400; i++)
+            Assert.Null(pairing.Redeem(_ => false, new System.Net.IPAddress([10, 0, (byte)(i / 4 / 250), (byte)(i / 4 % 250 + 1)])));
 
-        Assert.Null(pairing.Redeem(c => c == code));
-        Assert.Null(pairing.PendingUntil);
+        Assert.NotNull(pairing.PendingUntil);
+        Assert.Equal(code, pairing.Redeem(c => c == code, System.Net.IPAddress.Parse("10.9.9.9")));
+    }
+
+    [Fact]
+    public void A_flood_of_addresses_past_the_counted_limit_is_still_tried_and_never_blocks_the_real_one()
+    {
+        var pairing = new MoneyPairing(new FakeTimeProvider(DateTimeOffset.UtcNow));
+        var (code, _) = pairing.Issue();
+        for (var i = 0; i < MoneyPairing.MaxAddressesCounted + 50; i++)
+            Assert.Null(pairing.Redeem(_ => false, new System.Net.IPAddress([10, 1, (byte)(i / 256), (byte)(i % 256)])));
+
+        // An address the flood never used, and one it did, both still pair with the right proof.
+        Assert.Equal(code, pairing.Redeem(c => c == code, System.Net.IPAddress.Parse("192.168.1.77")));
+    }
+
+    [Fact]
+    public void A_new_code_starts_every_address_afresh()
+    {
+        var pairing = new MoneyPairing(new FakeTimeProvider(DateTimeOffset.UtcNow));
+        pairing.Issue();
+        var noisy = System.Net.IPAddress.Parse("192.168.1.50");
+        for (var i = 0; i < MoneyPairing.MaxWrongProofs; i++) pairing.Redeem(_ => false, noisy);
+
+        var (second, _) = pairing.Issue();
+
+        Assert.Equal(second, pairing.Redeem(c => c == second, noisy));
     }
 
     [Fact]

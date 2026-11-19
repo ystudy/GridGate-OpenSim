@@ -160,7 +160,22 @@ public sealed class GridConfigWriter(LauncherPaths paths, Func<MoneySettings, Mo
     /// gives every program its one <paramref name="SharedKey"/>; this computer's own programs each have their own key.
     /// Not <paramref name="Paired"/>: a Region Server that hasn't paired yet, whose regions refuse payments (money plan 3).
     /// </summary>
-    private sealed record MoneyIni(string? ServiceUri, string? Fingerprint, string HelperUri, string? SharedKey = null, bool Paired = true);
+    private sealed record MoneyIni(string? ServiceUri, string? Fingerprint, string HelperUri, string? SharedKey = null, bool Paired = true)
+    {
+        // What this record holds is never printed, so a log line or an exception that shows it can't leak it.
+        private bool PrintMembers(System.Text.StringBuilder sb)
+        {
+            sb.Append($"ServiceUri = {ServiceUri}, Fingerprint = {Fingerprint}, HelperUri = {HelperUri}, SharedKey = hidden, Paired = {Paired}");
+            return true;
+        }
+
+        public override string ToString()
+        {
+            var sb = new System.Text.StringBuilder("MoneyIni { ");
+            PrintMembers(sb);
+            return sb.Append(" }").ToString();
+        }
+    }
 
     private MoneyIni MoneyFor(LauncherSettings s)
     {

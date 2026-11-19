@@ -46,7 +46,7 @@ public sealed partial class MoneyLedger
     private static readonly string[] SpendTypes =
     [
         EntryType.PayAvatar, EntryType.PayObject, EntryType.ParcelPass, EntryType.Hold,
-        EntryType.UploadFee, EntryType.ClassifiedFee, EntryType.GroupJoinFee,
+        EntryType.UploadFee, EntryType.ClassifiedFee, EntryType.GroupJoinFee, EntryType.LateSale,
     ];
 
     private static readonly string SpendTypeList = string.Join(", ", SpendTypes.Select(t => "'" + t + "'"));
@@ -225,9 +225,23 @@ public sealed partial class MoneyLedger
         return MoneyOutcome.Ok;
     }
 
-    /// <summary>A key's script payouts must stay within its limit; checked with the key locked.</summary>
-    private async Task<MoneyOutcome> KeyPayoutAllowedAsync(MySqlConnection conn, MySqlTransaction tx, string? keyId, long amount, CancellationToken ct) =>
-        keyId is not null && await KeyPaidOutAsync(conn, tx, keyId, ct) + amount > await PayoutLimitAsync(conn, tx, LimitTarget.ForKey(keyId), ct)
+    /// <summary>
+    /// A key's script payouts must stay within its limit, and within <see cref="MoneyRules.KeyPayoutCapMultiple"/> times the
+    /// per-resident daily payout limit whatever limit the owner gave the key; checked with the key locked.
+    /// </summary>
+    private async Task<MoneyOutcome> KeyPayoutAllowedAsync(MySqlConnection conn, MySqlTransaction tx, string? keyId, long amount, CancellationToken ct)
+    {
+        if (keyId is null) return MoneyOutcome.Ok;
+        var paid = await KeyPaidOutAsync(conn, tx, keyId, ct);
+        return paid + amount > await PayoutLimitAsync(conn, tx, LimitTarget.ForKey(keyId), ct)
+            || paid + amount > MoneyRules.KeyPayoutCapMultiple * settings().DailyPayoutLimit
             ? MoneyOutcome.OverKeyLimit
             : MoneyOutcome.Ok;
+    }
+
+    /// <summary>How many different owners' script payouts <paramref name="keyId"/> made over the last 24 hours. A database failure is <see cref="MoneyUnavailableException"/>.</summary>
+    public Task<long> KeyPayoutOwnersAsync(string keyId, CancellationToken ct) =>
+        ReadAsync(conn => ScalarAsync(conn, null,
+            "SELECT COUNT(DISTINCT from_id) FROM entries WHERE type = @type AND key_id = @id AND at > @since",
+            ct, ("@type", EntryType.ScriptPayout), ("@id", keyId), ("@since", Now - LimitWindow)), ct);
 }

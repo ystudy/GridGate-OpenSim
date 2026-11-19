@@ -14,10 +14,10 @@ public enum AccountKind { Person, Visitor, Bank, Fees, Holding }
 public static class MoneySchema
 {
     /// <summary>
-    /// 5: a region pin can wait for the owner to confirm it. 4: each handoff keeps the address and port Robust listed its destination at. 3: key ids on entries and holds, and
+    /// 7: a pin's machine id that isn't the derived value is cleared. 6: a session's location says whether the key placed it by a match. 5: a region pin can wait for the owner to confirm it. 4: each handoff keeps the address and port Robust listed its destination at. 3: key ids on entries and holds, and
     /// the tables for locations, handoffs, pins, limits and alerts. 2: homes compared byte for byte.
     /// </summary>
-    public const int Version = 5;
+    public const int Version = 7;
 
     /// <summary>The system accounts' fixed ids.</summary>
     public const long BankId = 1, FeesId = 2, HoldingId = 3;
@@ -48,7 +48,7 @@ public static class MoneySchema
         CREATE TABLE IF NOT EXISTS state (name VARCHAR(64) PRIMARY KEY, value VARCHAR(500) NOT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
         CREATE TABLE IF NOT EXISTS session_locations (
           session_id CHAR(36) PRIMARY KEY, agent_id CHAR(36) NOT NULL, region_id CHAR(36) NULL, key_id VARCHAR(64) NULL,
-          state VARCHAR(16) NOT NULL, last_start_id BIGINT NOT NULL DEFAULT 0, updated DATETIME(6) NOT NULL, KEY updated (updated),
+          state VARCHAR(16) NOT NULL, last_start_id BIGINT NOT NULL DEFAULT 0, updated DATETIME(6) NOT NULL, matched TINYINT(1) NOT NULL DEFAULT 0, KEY updated (updated),
           KEY agent_updated (agent_id, updated))
           ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
         CREATE TABLE IF NOT EXISTS handoffs (
@@ -78,12 +78,16 @@ public static class MoneySchema
           KEY open_last (cleared, last_at), KEY kind_key_last (kind, key_id, last_at))
           ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
         CREATE TABLE IF NOT EXISTS key_locks (key_id VARCHAR(64) PRIMARY KEY) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+        CREATE TABLE IF NOT EXISTS key_carry (
+          old_key VARCHAR(64) PRIMARY KEY, new_key VARCHAR(64) NOT NULL, at DATETIME(6) NOT NULL)
+          ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
         INSERT IGNORE INTO accounts (id, agent_id, home, kind, created) VALUES
           (1, '00000000-0000-0000-0000-000000000000', 'system:bank', 'Bank', UTC_TIMESTAMP(6)),
           (2, '00000000-0000-0000-0000-000000000000', 'system:fees', 'Fees', UTC_TIMESTAMP(6)),
           (3, '00000000-0000-0000-0000-000000000000', 'system:holding', 'Holding', UTC_TIMESTAMP(6));
-        INSERT IGNORE INTO state (name, value) VALUES ('schema_version', '5'), ('frozen', '0'), ('frozen_reason', '');
+        INSERT IGNORE INTO state (name, value) VALUES ('schema_version', '7'), ('frozen', '0'), ('frozen_reason', '');
         CREATE INDEX IF NOT EXISTS hold_id ON entries (hold_id);
+        CREATE INDEX IF NOT EXISTS requests_at ON requests (at);
         CREATE TRIGGER IF NOT EXISTS entries_never_edited BEFORE UPDATE ON entries FOR EACH ROW
           SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Money entries are never edited.';
         CREATE TRIGGER IF NOT EXISTS entries_never_deleted BEFORE DELETE ON entries FOR EACH ROW
@@ -92,7 +96,7 @@ public static class MoneySchema
 
     /// <summary>
     /// What moneyuser may do, table by table (money review 2026-11-15, L-9): add entries and requests but never change or
-    /// remove them, and change only the account and hold columns the ledger changes. A hold's amount and parties, and an
+    /// remove an entry (a request may be removed, which the ledger does once it is old), and change only the account and hold columns the ledger changes. A hold's amount and parties, and an
     /// account's kind, are fixed once written. No DDL: moneyuser can't drop the triggers above. A later migration that must
     /// change an entry drops and recreates them, as root.
     /// </summary>
@@ -101,7 +105,7 @@ public static class MoneySchema
         "SELECT, INSERT, UPDATE (balance, frozen, payouts_allowed, last_allowance) ON accounts",
         "SELECT, INSERT ON entries",
         "SELECT, INSERT, UPDATE (state, settled) ON holds",
-        "SELECT, INSERT ON requests",
+        "SELECT, INSERT, DELETE ON requests",
         "SELECT, UPDATE (value) ON state",
         "SELECT, INSERT, UPDATE, DELETE ON session_locations",
         "SELECT, INSERT, UPDATE, DELETE ON handoffs",
@@ -111,6 +115,7 @@ public static class MoneySchema
         "SELECT, INSERT, UPDATE ON region_heard",
         "SELECT, INSERT, UPDATE ON alerts",
         "SELECT, INSERT, UPDATE ON key_locks",
+        "SELECT, INSERT, UPDATE ON key_carry",
     ];
 
     /// <summary>
@@ -152,6 +157,25 @@ public static class MoneySchema
         UPDATE state SET value = '5' WHERE name = 'schema_version';
         """;
 
+    /// <summary>
+    /// Version 5 to 6: <c>session_locations.matched</c>, whether the key placed the session by a handoff or a start, rather
+    /// than by a claim nothing vouched for. Every location that exists already keeps 0: until its next placement, the key
+    /// that placed it unverified can't read its balance.
+    /// </summary>
+    private const string To6 = """
+        ALTER TABLE session_locations ADD COLUMN IF NOT EXISTS matched TINYINT(1) NOT NULL DEFAULT 0;
+        UPDATE state SET value = '6' WHERE name = 'schema_version';
+        """;
+
+    /// <summary>
+    /// Version 6 to 7: a pin's <c>machine_id</c> that isn't 64 lowercase hex characters is a Region Server's own MachineId (its command
+    /// password), kept by an older version. Only the derived value is kept now, so the old one is cleared.
+    /// </summary>
+    private const string To7 = """
+        UPDATE region_pins SET machine_id = NULL WHERE machine_id IS NOT NULL AND CAST(machine_id AS BINARY) NOT REGEXP '^[0-9a-f]{64}$';
+        UPDATE state SET value = '7' WHERE name = 'schema_version';
+        """;
+
     /// <summary>Creates or updates the tables over <paramref name="root"/>, a root connection to the money database, and grants moneyuser its rights.</summary>
     public static async Task EnsureAsync(MySqlConnection root, CancellationToken ct)
     {
@@ -181,6 +205,18 @@ public static class MoneySchema
         if (current == "4")
         {
             await using var cmd = new MySqlCommand(To5, root);
+            await cmd.ExecuteNonQueryAsync(ct);
+            current = "5";
+        }
+        if (current == "5")
+        {
+            await using var cmd = new MySqlCommand(To6, root);
+            await cmd.ExecuteNonQueryAsync(ct);
+            current = "6";
+        }
+        if (current == "6")
+        {
+            await using var cmd = new MySqlCommand(To7, root);
             await cmd.ExecuteNonQueryAsync(ct);
         }
         foreach (var host in DatabaseProvisioner.Hosts)

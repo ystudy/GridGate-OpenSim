@@ -215,6 +215,9 @@ namespace OpenSim.Region.CoreModules.Agent.AssetTransaction
                     transactionID, item);
         }
 
+        // GridGate: temporary uploads started per avatar in this region
+        private readonly TemporaryUploadLimit m_temporaryUploads = new();
+
         /// <summary>
         /// GridGate: the UDP uploads the upload fee applies to. The funds check in HandleUDPUploadRequest and the charge in
         /// AssetXferUploader both ask this, so they can't disagree.
@@ -257,6 +260,13 @@ namespace OpenSim.Region.CoreModules.Agent.AssetTransaction
 //                "[ASSET TRANSACTION MODULE]: HandleUDPUploadRequest - assetID: {0}, transaction {1}, type {2}, storeLocal {3}, tempFile {4}, data.Length {5}",
 //                assetID, transactionID, type, storeLocal, tempFile, data.Length);
 
+            // GridGate: temporary uploads are free (viewer bakes use them) and are limited per avatar instead.
+            if (tempFile && !m_temporaryUploads.TryStart(remoteClient.AgentId, Environment.TickCount64))
+            {
+                remoteClient.SendAgentAlertMessage("Too many temporary uploads. Please wait a minute and try again.", false);
+                return;
+            }
+
             // GridGate: the same list decides the check here and the charge in AssetXferUploader.
             if (UploadFeeApplies(type, tempFile))
             {
@@ -275,6 +285,13 @@ namespace OpenSim.Region.CoreModules.Agent.AssetTransaction
 
                 // check funds
                 IMoneyModule mm = scene.RequestModuleInterface<IMoneyModule>();
+
+                // GridGate: while the money module doesn't know the fee (an unpaired Region Server never does), say so
+                if (mm is IUploadFeeKnown { UploadFeeKnown: false } feeNotKnown)
+                {
+                    remoteClient.SendAgentAlertMessage("Unable to upload asset. " + feeNotKnown.UploadFeeUnknownText, false);
+                    return;
+                }
 
                 if (mm != null)
                 {

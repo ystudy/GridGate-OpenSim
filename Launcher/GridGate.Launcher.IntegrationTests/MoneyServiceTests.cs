@@ -70,7 +70,7 @@ public sealed class MoneyServiceTests(MoneyMariaDb maria) : IClassFixture<MoneyM
             Programs = [new ProgramSettings("p1", 8004, 8011), new ProgramSettings("p2", 8005, 8012)],
             Regions = [new RegionSettings("p1", "Here", Here, UdpPort: 8004), new RegionSettings("p2", "There", There, UdpPort: 8005),
                 .. yonder ? [new RegionSettings("p1", "Yonder", Yonder, UdpPort: 8006)] : Array.Empty<RegionSettings>()],
-            Money = new MoneySettings(Mode: mode, UploadFee: 3, ProgramKeys: new() { ["p1"] = Key, ["p2"] = Key2 }),
+            Money = new MoneySettings(Mode: mode, UploadFee: 3, ClassifiedFee: 25, ProgramKeys: new() { ["p1"] = Key, ["p2"] = Key2 }),
         };
         var dbSettings = dbOverride?.Invoke(settings) ?? settings;
         var time = TimeProvider.System;
@@ -316,7 +316,8 @@ public sealed class MoneyServiceTests(MoneyMariaDb maria) : IClassFixture<MoneyM
 
         Assert.Equal("ok", (string?)body!["code"]);
         Assert.Equal(90, body["balance"]!.GetValue<long>());
-        Assert.Equal(110, body["toBalance"]!.GetValue<long>());
+        // B is in region There, which this key doesn't cover: A's region isn't told B's balance.
+        Assert.Null(body["toBalance"]);
     }
 
     [Fact]
@@ -414,7 +415,7 @@ public sealed class MoneyServiceTests(MoneyMariaDb maria) : IClassFixture<MoneyM
         var (_, done, _) = await Post("hold/complete", new { txnId = Guid.NewGuid(), holdId });
 
         Assert.Equal("ok", (string?)done!["code"]);
-        Assert.Equal(125, done["toBalance"]!.GetValue<long>());
+        Assert.False(done.AsObject().ContainsKey("toBalance")); // B is in program two's region
     }
 
     private async Task<long> HoldFortyAsync()
@@ -484,7 +485,7 @@ public sealed class MoneyServiceTests(MoneyMariaDb maria) : IClassFixture<MoneyM
     }
 
     [Fact]
-    public async Task Complete_answer_shows_only_the_seller()
+    public async Task Complete_answer_never_shows_the_buyer_and_hides_a_seller_in_another_programs_region()
     {
         await StartAsync();
         var holdId = await HoldFortyAsync();
@@ -492,7 +493,7 @@ public sealed class MoneyServiceTests(MoneyMariaDb maria) : IClassFixture<MoneyM
         var (_, done, _) = await Post("hold/complete", new { txnId = Guid.NewGuid(), holdId });
 
         Assert.False(done!.AsObject().ContainsKey("balance"));
-        Assert.Equal(140, done["toBalance"]!.GetValue<long>());
+        Assert.False(done.AsObject().ContainsKey("toBalance")); // B is in program two's region
     }
 
     [Fact]
@@ -577,7 +578,7 @@ public sealed class MoneyServiceTests(MoneyMariaDb maria) : IClassFixture<MoneyM
 
         Assert.Equal("C$", (string?)body!["currencySymbol"]);
         Assert.Equal(3, body["uploadFee"]!.GetValue<long>());
-        Assert.Equal(0, body["classifiedFee"]!.GetValue<long>());
+        Assert.Equal(25, body["classifiedFee"]!.GetValue<long>());
     }
 
     [Fact]

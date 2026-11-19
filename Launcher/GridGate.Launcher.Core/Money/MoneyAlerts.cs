@@ -6,7 +6,28 @@ using MySqlConnector;
 namespace GridGate.Launcher.Core.Money;
 
 /// <summary>What an owner's money alert is about.</summary>
-public enum AlertKind { UnhandedArrival, KeyLimitReached, RegionMoved, PersonLimitRepeated }
+public enum AlertKind
+{
+    UnhandedArrival,
+    KeyLimitReached,
+    RegionMoved,
+    PersonLimitRepeated,
+
+    /// <summary>A sale was completed after its hold ran out, and the buyer couldn't pay it again: the seller wasn't paid.</summary>
+    SaleNotPaid,
+
+    /// <summary>One key's script payouts in a day went to more than <see cref="MoneyRules.PayoutOwnersAlertAbove"/> different owners.</summary>
+    ManyPayoutOwners,
+
+    /// <summary>A pairing took over an older paired server's address and first port: the new server's key, with the old one in the other key.</summary>
+    ServerTookOver,
+
+    /// <summary>A key sent a handoff for a person it hadn't placed verified: normal for people who walked in from a stock region or came in through the Gatekeeper. A notice only, one row per key.</summary>
+    RefusedHandoff,
+
+    /// <summary>A key reported an arrival in a region it doesn't cover (one still waiting for the owner's Confirm, one that moved, or one it doesn't run). A notice only, one row per key.</summary>
+    ArrivalNotCovered,
+}
 
 /// <summary>A notice asks the owner to check something; a warning shows on the dashboard too.</summary>
 public enum AlertLevel { Notice, Warning }
@@ -39,8 +60,8 @@ public interface IMoneyAlerts
 
 /// <summary>
 /// The owner's money alerts, in the money database's <c>alerts</c> table. Each kind is grouped, per
-/// <see cref="Window"/> from a row's first time, into one row that counts up: an unhanded arrival per key and region (a
-/// disagreement with another key on a row apart from plain claims), a key's limit per key, a person's limit per person.
+/// <see cref="Window"/> from a row's first time, into one row that counts up: an unhanded arrival per key (a
+/// disagreement on a row apart from plain claims, one per other key), a refused handoff and an arrival in a region the key doesn't cover each per key, a key's limit per key, a person's limit per person, a sale left unpaid per key and region, a key's payouts to many owners per key.
 /// A moved region has one open row per region until it is cleared,
 /// counting moves seen (another server listing it), not requests. A row's level only rises, from notice to warning. The
 /// audit log gets a line when a row opens (for a person's limit, when it appears) and when it becomes a warning, not on
@@ -78,6 +99,9 @@ public sealed class MoneyAlerts(Func<CancellationToken, Task<MySqlConnection>> o
     // Moves raised lately, by region and the key listing it. A move is found on every request from that server, and a
     // repeat must cost no database work and never wait for _one.
     private readonly Dictionary<(Guid Region, string Key), DateTime> _movesSeen = [];
+
+    // Keys alerted lately for paying out for many owners, so the payouts after the first cost no database work.
+    private readonly Dictionary<string, DateTime> _ownersSeen = [];
 
     private DateTime Now => time.GetUtcNow().UtcDateTime;
 
@@ -136,6 +160,54 @@ public sealed class MoneyAlerts(Func<CancellationToken, Task<MySqlConnection>> o
     public Task PersonLimitHitAsync(Guid agentId, string keyId, CancellationToken ct) =>
         RaiseAsync(AlertKind.PersonLimitRepeated, keyId, null, agentId, (_, _) => Fixed(AlertLevel.Notice), ct);
 
+    /// <summary>
+    /// A sale in <paramref name="regionId"/>, made through <paramref name="keyId"/>, was completed after its hold ran out and
+    /// <paramref name="buyer"/> couldn't pay it again, so the seller wasn't paid: a warning, counted per key and region.
+    /// </summary>
+    public Task SaleNotPaidAsync(string keyId, Guid regionId, Guid? buyer, CancellationToken ct) =>
+        RaiseAsync(AlertKind.SaleNotPaid, keyId, regionId, buyer, (_, _) => Fixed(AlertLevel.Warning), ct);
+
+    /// <summary>
+    /// <paramref name="keyId"/>'s script payouts in the last day went to more than
+    /// <see cref="MoneyRules.PayoutOwnersAlertAbove"/> different owners: a warning, once per key per <see cref="Window"/>.
+    /// A repeat within it does nothing at all.
+    /// </summary>
+    public Task ManyPayoutOwnersAsync(string keyId, CancellationToken ct)
+    {
+        var now = Now;
+        lock (_ownersSeen)
+        {
+            if (_ownersSeen.TryGetValue(keyId, out var seen) && now - seen < Window) return Task.CompletedTask;
+            if (_ownersSeen.Count >= MaxMovesSeen)
+                foreach (var old in _ownersSeen.Where(m => now - m.Value >= Window).Select(m => m.Key).ToList())
+                    _ownersSeen.Remove(old);
+            _ownersSeen[keyId] = now;
+        }
+        return RaiseAsync(AlertKind.ManyPayoutOwners, keyId, null, null, (_, _) => Fixed(AlertLevel.Warning), ct, once: true,
+            failed: () => { lock (_ownersSeen) _ownersSeen.Remove(keyId); });
+    }
+
+    /// <summary>
+    /// <paramref name="newKeyId"/>'s pairing took over the address and first port of <paramref name="oldKeyId"/>'s server, which is no longer paired:
+    /// a notice, one row per new server, so the owner can check it was theirs.
+    /// </summary>
+    public Task ServerTookOverAsync(string newKeyId, string oldKeyId, CancellationToken ct) =>
+        RaiseAsync(AlertKind.ServerTookOver, newKeyId, null, null, (_, _) => Task.FromResult(new Level(AlertLevel.Notice, false, oldKeyId)), ct);
+
+    /// <summary>
+    /// <paramref name="keyId"/> sent a handoff from <paramref name="regionId"/> for <paramref name="agentId"/>, whom it hadn't placed verified there. A notice,
+    /// counted on one row per key: never one of the claims that make a warning.
+    /// </summary>
+    public Task RefusedHandoffAsync(string keyId, Guid regionId, Guid? agentId, CancellationToken ct) =>
+        RaiseAsync(AlertKind.RefusedHandoff, keyId, regionId, agentId, (_, _) => Fixed(AlertLevel.Notice), ct);
+
+    /// <summary>
+    /// <paramref name="keyId"/> reported <paramref name="agentId"/> arrived in <paramref name="regionId"/>, which it doesn't cover (it waits for the owner,
+    /// moved, or isn't the key's). A notice, counted on one row per key: never one of the claims that make a warning.
+    /// </summary>
+    public Task ArrivalNotCoveredAsync(string keyId, Guid regionId, Guid agentId, CancellationToken ct) =>
+        RaiseAsync(AlertKind.ArrivalNotCovered, keyId, regionId, agentId, (_, _) => Fixed(AlertLevel.Notice), ct);
+
     public Task<IReadOnlyList<MoneyAlert>> OpenAsync(CancellationToken ct) => ReadOpenAsync(null, ct);
 
     public Task<IReadOnlyList<MoneyAlert>> WarningsAsync(CancellationToken ct) => ReadOpenAsync(AlertLevel.Warning, ct);
@@ -185,7 +257,7 @@ public sealed class MoneyAlerts(Func<CancellationToken, Task<MySqlConnection>> o
     /// <paramref name="failed"/> runs.
     /// </summary>
     private async Task RaiseAsync(AlertKind kind, string keyId, Guid? regionId, Guid? agentId,
-        Func<MySqlConnection, MySqlTransaction, Task<Level>> levelOf, CancellationToken ct, Action? failed = null)
+        Func<MySqlConnection, MySqlTransaction, Task<Level>> levelOf, CancellationToken ct, Action? failed = null, bool once = false)
     {
         var held = false;
         try
@@ -197,6 +269,13 @@ public sealed class MoneyAlerts(Func<CancellationToken, Task<MySqlConnection>> o
             await using (var conn = await openMoney(ct))
             await using (var tx = await conn.BeginTransactionAsync(IsolationLevel.ReadCommitted, ct))
             {
+                // A once-a-day alert: any row for this key in the window, cleared or not, means it was raised already.
+                if (once && await ScalarAsync(conn, tx, "SELECT COUNT(*) FROM alerts WHERE kind = @kind AND key_id = @key AND first_at > @since", ct,
+                        ("@kind", kind.ToString()), ("@key", keyId), ("@since", now - Window)) > 0)
+                {
+                    await tx.RollbackAsync(ct);
+                    return;
+                }
                 var called = await levelOf(conn, tx);
                 var level = called.Value;
                 var args = new (string, object?)[]
@@ -261,11 +340,16 @@ public sealed class MoneyAlerts(Func<CancellationToken, Task<MySqlConnection>> o
     /// <summary>The columns one kind's rows are grouped by (besides the kind and the window).</summary>
     private static string GroupOf(AlertKind kind) => kind switch
     {
-        // Disagreements (another key named) and plain claims keep rows apart.
-        AlertKind.UnhandedArrival => "key_id = @key AND region_id = @region AND (other_key_id IS NULL) = (@other IS NULL)",
+        // One row per key for plain claims, and one per key and other key for disagreements: a key can't open a row per region it makes up.
+        AlertKind.UnhandedArrival => "key_id = @key AND (other_key_id IS NULL) = (@other IS NULL) AND (@other IS NULL OR other_key_id = @other)",
+        AlertKind.RefusedHandoff => "key_id = @key",
+        AlertKind.ArrivalNotCovered => "key_id = @key",
         AlertKind.KeyLimitReached => "key_id = @key",
         AlertKind.RegionMoved => "region_id = @region",
         AlertKind.PersonLimitRepeated => "agent_id = @agent",
+        AlertKind.SaleNotPaid => "key_id = @key AND region_id = @region",
+        AlertKind.ManyPayoutOwners => "key_id = @key",
+        AlertKind.ServerTookOver => "key_id = @key",
         _ => throw new ArgumentOutOfRangeException(nameof(kind)),
     };
 

@@ -69,6 +69,9 @@ public sealed partial class GridController(
     private readonly object _configGate = new();
     // Whether the config last written had Gloebit on; null before any config is written. Guarded by _configGate.
     private bool? _gloebitWritten;
+    // Whether the config each region program was started or adopted under had Gloebit on: what the running program really holds, which
+    // a later config write doesn't change. Guarded by _configGate.
+    private readonly Dictionary<string, bool> _gloebitAtStart = new();
 
     private volatile LauncherSettings? _settings;
     private volatile string _host = "127.0.0.1";
@@ -1806,6 +1809,9 @@ public sealed partial class GridController(
     {
         var instance = program.Instance!;
         var running = program.Process.State == ProcessState.Running;
+        // What a program starts with is the config as last written; one already running (adopted) is taken to hold that too.
+        if (!running || !_gloebitAtStart.ContainsKey(instance))
+            lock (_configGate) _gloebitAtStart[instance] = _gloebitWritten ?? MoneyPlace.GloebitHere(s, _money);
         // An OAR job may have switched this program's console to one region, and then "show regions" and "login status"
         // answer for that region only: what is known about the running program stays as it is.
         if (running && _jobs.ContainsKey(instance)) return;

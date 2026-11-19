@@ -82,6 +82,10 @@ internal sealed class FakeBooks : IMoneyBooks
     public Task<MoneyResult> TakeAsync(AccountRef from, long amount, StaffAction who, CancellationToken ct) => Moved($"take {from.AgentId} {amount}", who);
     public Task<MoneyResult> MoveFeesAsync(AccountRef to, long amount, StaffAction who, CancellationToken ct) => Moved($"move-fees {to.AgentId} {amount}", who);
     public Task<MoneyResult> RefundAsync(long entryId, StaffAction who, CancellationToken ct) => Moved($"refund {entryId}", who);
+    /// <summary>What <see cref="RefundHeldFeeAsync"/> answers with, and who it says was paid.</summary>
+    public string? FeePayeeKind { get; set; } = "Fees";
+    public Task<MoneyResult> RefundHeldFeeAsync(AccountRef payer, long entryId, StaffAction who, CancellationToken ct) =>
+        Moved($"refund-fee {payer.AgentId} {entryId}", who).ContinueWith(t => t.Result with { PayeeKind = FeePayeeKind }, TaskScheduler.Default);
     public Task<MoneyResult> SetPayoutsAllowedAsync(Guid residentId, bool allowed, CancellationToken ct) => Moved($"payouts {residentId} {allowed}");
     public Task<SelfCheckResult> SelfCheckAsync(CancellationToken ct)
     {
@@ -363,6 +367,28 @@ public sealed class MoneyPageTests
 
         Assert.Equal("C$", f.Store.LoadOrCreate().Money.CurrencySymbol);
         Assert.NotNull((await ParseAsync(r)).QuerySelector(".alert-danger"));
+    }
+
+    [Fact]
+    public void The_symbol_error_lists_every_character_the_rule_refuses()
+    {
+        var text = MoneyPageRules.Problem(new MoneySettings(CurrencySymbol: "{C}"), [MoneyMode.Off]);
+
+        Assert.NotNull(text);
+        foreach (var c in MoneySymbolRule.ForbiddenCharacters) Assert.Contains(c.ToString(), text);
+        Assert.Contains("#", MoneySymbolRule.ForbiddenCharacters.Select(c => c.ToString()));
+        Assert.Contains("{", MoneySymbolRule.ForbiddenCharacters.Select(c => c.ToString()));
+        Assert.Contains("}", MoneySymbolRule.ForbiddenCharacters.Select(c => c.ToString()));
+    }
+
+    [Fact]
+    public async Task The_gloebit_help_says_only_the_masked_key_appears()
+    {
+        await using var f = Make(new FakeBooks());
+
+        var doc = await PageAsync(await SignedInAsync(f), "/money");
+
+        Assert.Contains("last four characters of the app key", doc.QuerySelector("#money-gloebit-title")!.TextContent);
     }
 
     [Theory]
@@ -685,6 +711,91 @@ public sealed class MoneyPageTests
         var doc = await PageAsync(await SignedInAsync(f), $"/money/person?id={Ann}");
 
         Assert.Empty(doc.QuerySelectorAll("form[action*='handler=Merge']"));
+    }
+
+    [Fact]
+    public async Task A_merge_the_ledger_refuses_is_told_in_plain_words()
+    {
+        var books = new FakeBooks { Outcome = MoneyOutcome.NotAVisitor };
+        var visitors = new FakeVisitors();
+        visitors.Known.Add(new VisitorInfo(Hope, HopeHome, "Hope Visitor"));
+        await using var f = Make(books, visitors: visitors);
+
+        using var r = await PostAsync(await SignedInAsync(f), $"/money/person?id={Hope}&home=" + Uri.EscapeDataString(HopeHome), "Merge",
+            new() { ["NewHome"] = "http://new.example:8002/", ["Reason"] = "grid moved" });
+
+        Assert.Contains("Only a visitor's wallet can move to a new home address.", (await ParseAsync(r)).QuerySelector(".alert-danger")!.TextContent);
+    }
+
+    [Fact]
+    public async Task A_resident_cant_be_merged_from_the_page()
+    {
+        var books = new FakeBooks();
+        await using var f = Make(books);
+
+        using var r = await PostAsync(await SignedInAsync(f), $"/money/person?id={Ann}", "Merge", new() { ["NewHome"] = "http://new.example:8002/", ["Reason"] = "x" });
+
+        Assert.Contains("Only a visitor's wallet can move", (await ParseAsync(r)).QuerySelector(".alert-danger")!.TextContent);
+        Assert.DoesNotContain(books.Calls, x => x.StartsWith("merge"));
+    }
+
+    [Fact]
+    public async Task The_owner_refunds_a_fee_taken_through_a_hold_and_it_is_audited()
+    {
+        var books = new FakeBooks { FeePayeeKind = "Fees" };
+        await using var f = Make(books);
+
+        using var r = await PostAsync(await SignedInAsync(f), $"/money/person?id={Ann}", "RefundFee", new() { ["EntryId"] = "77", ["Reason"] = "charged twice" });
+
+        Assert.Contains($"refund-fee {Ann} 77", books.Calls);
+        Assert.Contains("Refunded. The coins came back from Fees.", MainText(await ParseAsync(r)));
+        Assert.Contains(Audit(f), a => a.GetProperty("action").GetString() == "money-fee-refund" && a.GetProperty("result").GetString()!.Contains("ok"));
+    }
+
+    [Fact]
+    public async Task A_fee_refund_the_founder_cant_cover_says_so()
+    {
+        var books = new FakeBooks { Outcome = MoneyOutcome.NotEnough, FeePayeeKind = "founder" };
+        await using var f = Make(books);
+
+        using var r = await PostAsync(await SignedInAsync(f), $"/money/person?id={Ann}", "RefundFee", new() { ["EntryId"] = "77", ["Reason"] = "charged twice" });
+
+        Assert.Contains("The founder doesn't have the coins to refund this.", (await ParseAsync(r)).QuerySelector(".alert-danger")!.TextContent);
+        Assert.Contains(Audit(f), a => a.GetProperty("action").GetString() == "money-fee-refund" && a.GetProperty("result").GetString()!.Contains("not_enough"));
+    }
+
+    [Theory]
+    [InlineData("admin")]
+    [InlineData("supervisor")]
+    public async Task Admins_and_supervisors_cant_refund_a_fee(string role)
+    {
+        var books = new FakeBooks();
+        await using var f = Make(books);
+        var client = await SignedInAsync(f, role);
+        var token = (await PageAsync(client, $"/money/person?id={Ann}")).QuerySelector("input[name=__RequestVerificationToken]")?.GetAttribute("value") ?? "";
+
+        using var r = await client.PostAsync($"/money/person?id={Ann}&handler=RefundFee",
+            new FormUrlEncodedContent(new Dictionary<string, string> { ["EntryId"] = "77", ["Reason"] = "x", ["__RequestVerificationToken"] = token }), Ct);
+
+        Assert.Equal(HttpStatusCode.Forbidden, r.StatusCode);
+        Assert.DoesNotContain(books.Calls, x => x.StartsWith("refund-fee"));
+    }
+
+    [Fact]
+    public async Task Only_the_owner_sees_a_refund_button_on_a_held_fee()
+    {
+        var books = new FakeBooks();
+        books.History.Add(new HistoryLine(9, DateTimeOffset.UtcNow, EntryType.Hold, null, -10, 90, null, EntryType.UploadFee));
+        books.History.Add(new HistoryLine(8, DateTimeOffset.UtcNow, EntryType.Hold, null, -20, 70, "dress", null));
+        await using var f = Make(books);
+
+        var owner = await PageAsync(await SignedInAsync(f), $"/money/person?id={Ann}");
+        var admin = await PageAsync(await SignedInAsync(f, "admin"), $"/money/person?id={Ann}");
+
+        var forms = owner.QuerySelectorAll("form[action*='handler=RefundFee']");
+        Assert.Single(forms);
+        Assert.Equal("9", forms[0].QuerySelector("input[name=EntryId]")!.GetAttribute("value"));
+        Assert.Empty(admin.QuerySelectorAll("form[action*='handler=RefundFee']"));
     }
 
     [Fact]
@@ -1459,7 +1570,7 @@ public sealed class MoneyPageTests
         var f = MakeGrid();
         f.MoneyRegions.States.AddRange(
         [
-            new RegionState(Cove, "Cove", "10.0.0.5", 9002, KeyOf(Sam), RegionStatus.Waiting),
+            new RegionState(Cove, "Cove", "10.0.0.5", 9002, KeyOf(Sam), RegionStatus.Waiting, FirstSeen: new DateTime(2026, 11, 17, 9, 30, 0, DateTimeKind.Utc)),
             new RegionState(Reef, "Reef", "10.0.0.5", 9003, KeyOf(Sam), RegionStatus.Waiting),
             new RegionState(Lagoon, "Lagoon", "10.0.0.6", 9002, KeyOf(Jo), RegionStatus.Waiting),
         ]);
@@ -1482,8 +1593,12 @@ public sealed class MoneyPageTests
         Assert.Null((await PageAsync(await SignedInAsync(clear), "/money")).QuerySelector("form[action*='handler=ConfirmRegions']"));
         // The region rows say what they wait for, and offer no keep-off.
         var row = doc.QuerySelector($"#money-region-{Cove}")!;
-        Assert.Contains("Waiting for you to confirm: listed at Region Server at 10.0.0.5 when it paired", row.TextContent);
+        Assert.Contains("Cove", row.TextContent);
+        Assert.Contains("Waiting for you to confirm: first seen at Region Server at 10.0.0.5 on 2026-11-17 09:30 UTC", row.TextContent);
         Assert.Empty(row.QuerySelectorAll("form"));
+        // A region whose first sight isn't known still says where it waits.
+        Assert.Contains("Waiting for you to confirm: first seen at Region Server at 10.0.0.5", doc.QuerySelector($"#money-region-{Reef}")!.TextContent);
+        Assert.DoesNotContain(" on 20", doc.QuerySelector($"#money-region-{Reef}")!.TextContent);
 
         foreach (var role in new[] { "admin", "supervisor" })
             Assert.Empty((await PageAsync(await SignedInAsync(f, role), "/money")).QuerySelectorAll("form[action*='handler=ConfirmRegions']"));
@@ -1834,6 +1949,29 @@ public sealed class MoneyPageTests
     }
 
     [Fact]
+    public async Task Refused_handoffs_and_uncovered_arrivals_show_as_notices_without_a_remove_button()
+    {
+        var alerts = new FakeAlerts();
+        var at = new DateTime(2026, 11, 15, 1, 2, 0, DateTimeKind.Utc);
+        alerts.Open.Add(new MoneyAlert(21, AlertKind.RefusedHandoff, AlertLevel.Notice, KeyOf(Sam), NeonPier, Ann, 9, at, at));
+        alerts.Open.Add(new MoneyAlert(22, AlertKind.ArrivalNotCovered, AlertLevel.Notice, KeyOf(Sam), Cove, Ann, 4, at, at));
+        await using var f = MakeGrid(alerts: alerts);
+
+        var doc = await PageAsync(await SignedInAsync(f), "/money");
+
+        var refused = doc.QuerySelector("#money-alert-21")!;
+        Assert.Contains("Notice", refused.TextContent);
+        Assert.Contains("9 times in a day", refused.TextContent);
+        Assert.DoesNotContain("claimed", refused.TextContent);
+        Assert.Null(refused.QuerySelector("form[action*='handler=RemoveServer']"));
+        var uncovered = doc.QuerySelector("#money-alert-22")!;
+        Assert.Contains("doesn't cover", uncovered.TextContent);
+        Assert.Contains("4 times in a day", uncovered.TextContent);
+        Assert.NotNull(uncovered.QuerySelector("a[href='#money-regions']"));
+        Assert.Null(uncovered.QuerySelector("form[action*='handler=RemoveServer']"));
+    }
+
+    [Fact]
     public async Task Robust_outage_still_shows_the_money_page_with_freeze()
     {
         var alerts = new FakeAlerts();
@@ -1912,6 +2050,13 @@ public sealed class MoneyPageTests
     [InlineData(MoneyOutcome.OutcomeUnknown)]
     public void Limit_outcomes_have_their_own_words(MoneyOutcome o) =>
         Assert.DoesNotContain("(", MoneyPageRules.Words(o));
+
+    [Fact]
+    public void A_refund_that_cant_be_done_says_which_way()
+    {
+        Assert.Equal("There is no entry with that number.", MoneyPageRules.Words(MoneyOutcome.UnknownEntry));
+        Assert.Equal("That entry was already refunded.", MoneyPageRules.Words(MoneyOutcome.AlreadyRefunded));
+    }
 
     [Fact]
     public void An_answer_that_may_have_gone_through_tells_staff_to_check_the_history()

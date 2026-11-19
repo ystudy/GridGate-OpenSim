@@ -26,8 +26,10 @@
  */
 
 using System;
+using System.Collections.Generic;
 using System.Reflection;
 using log4net;
+using OpenMetaverse;
 using OpenSim.Framework;
 
 namespace OpenSim.Region.ScriptEngine.Shared.Api.Plugins
@@ -48,9 +50,60 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api.Plugins
             m_WorkPool = new ObjectJobEngine(ProcessAction, "ScriptPayouts", 1000, 2);
         }
 
-        public void Enqueue(Action<string> action)
+        // GridGate: the most payouts one owner can have waiting (queued or running) at once.
+        public const int MaxWaitingPerOwner = 60;
+
+        private readonly Dictionary<UUID, int> m_Waiting = new();
+
+        /// <summary>
+        /// Queues a payout for <paramref name="owner"/>, or returns false when that owner already has
+        /// <see cref="MaxWaitingPerOwner"/> waiting. The place is given back when the payout has run, or been dropped.
+        /// </summary>
+        public bool TryEnqueue(UUID owner, Action<string> action)
         {
-            m_WorkPool.Enqueue(action);
+            lock (m_Waiting)
+            {
+                m_Waiting.TryGetValue(owner, out int n);
+                if (n >= MaxWaitingPerOwner)
+                    return false;
+                m_Waiting[owner] = n + 1;
+            }
+
+            void run(string s)
+            {
+                try
+                {
+                    action(s);
+                }
+                finally
+                {
+                    Release(owner);
+                }
+            }
+
+            try
+            {
+                m_WorkPool.Enqueue((Action<string>)run);
+            }
+            catch
+            {
+                Release(owner);
+                throw;
+            }
+            return true;
+        }
+
+        private void Release(UUID owner)
+        {
+            lock (m_Waiting)
+            {
+                if (!m_Waiting.TryGetValue(owner, out int n))
+                    return;
+                if (n <= 1)
+                    m_Waiting.Remove(owner);
+                else
+                    m_Waiting[owner] = n - 1;
+            }
         }
 
         private static void ProcessAction(object o)

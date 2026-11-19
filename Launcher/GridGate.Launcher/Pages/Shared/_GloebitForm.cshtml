@@ -18,5 +18,11 @@
     <input class="form-control mb-2" id="gloebit-owner" name="OwnerName" maxlength="64" value="@app?.OwnerName" required>
     <label class="form-label" for="gloebit-email">Contact email (optional)</label>
     <input class="form-control mb-2" id="gloebit-email" name="OwnerEmail" type="email" maxlength="128" value="@app?.OwnerEmail">
+    @if (ViewData["AskCode"] is true)
+    {
+        <label class="form-label" for="gloebit-code">Your two-factor code</label>
+        <input class="form-control mb-2" id="gloebit-code" name="TwoFactorCode" maxlength="32" autocomplete="one-time-code" inputmode="numeric" spellcheck="false" required>
+        <span class="hint form-text d-block mb-2">The current code from your authenticator app. It is checked on this computer, so wait for a new one if you just used it.</span>
+    }
     <button type="submit" class="btn btn-outline-primary">Save Gloebit app</button>
 </form>

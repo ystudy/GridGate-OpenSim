@@ -27,7 +27,7 @@ public sealed class MoneyLedgerTransferTests(MoneyMariaDb maria) : IClassFixture
         // V has visited from OtherGrid: the Gatekeeper wrote its GridUser row.
         await db.AddVisitor(V, OtherGrid + "/");
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 11, 13, 12, 0, 0, TimeSpan.Zero));
-        var s = settings ?? new MoneySettings(Mode: mode, Visitors: VisitorMoney.All);
+        var s = settings ?? new MoneySettings(Mode: mode, Visitors: VisitorMoney.All, UploadFee: 1, ClassifiedFee: 25);
         var ledger = new MoneyLedger(db.OpenMoney, () => s, () => mode, LocalUsers(db), KnownVisitors(db), time);
         return (ledger, db, time);
     }

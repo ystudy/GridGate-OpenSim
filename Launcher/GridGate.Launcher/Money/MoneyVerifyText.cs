@@ -41,13 +41,18 @@ public static class MoneyVerifyText
         _ => NotHeardAnchor,
     };
 
-    /// <summary>A region's status in words; a moved one names the server it belongs to, and a waiting one the server it was listed at, when that is known.</summary>
-    public static string Words(RegionStatus status, string? movedFrom = null) => status switch
+    /// <summary>A region's status in words; a moved one names the server it belongs to, and a waiting one the server it was first seen at and when, when that is known.</summary>
+    public static string Words(RegionStatus status, string? movedFrom = null, DateTime? firstSeen = null) => status switch
     {
         RegionStatus.Verified => "Verified",
         RegionStatus.NotPaired => "Not paired",
         RegionStatus.Moved => movedFrom is null ? "Moved here, waiting for you" : $"Moved here from {movedFrom}, waiting for you",
-        RegionStatus.Waiting => movedFrom is null ? "Waiting for you to confirm" : $"Waiting for you to confirm: listed at {movedFrom} when it paired",
+        RegionStatus.Waiting => (movedFrom, firstSeen) switch
+        {
+            (null, _) => "Waiting for you to confirm",
+            (_, null) => $"Waiting for you to confirm: first seen at {movedFrom}",
+            _ => $"Waiting for you to confirm: first seen at {movedFrom} on {firstSeen.Value.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture)} UTC",
+        },
         RegionStatus.NoGridGateMoney => "No GridGate money",
         RegionStatus.NeedsUpdate => "Needs an update",
         _ => "Not heard from",
@@ -63,7 +68,7 @@ public static class MoneyVerifyText
         RegionStatus.Moved =>
             "This region belongs to another Region Server but now registers from this one, so money is off there. Approve the move, or keep it off: then money comes back if its own server registers it again.",
         RegionStatus.Waiting =>
-            "This region was already listed at this Region Server when it paired, so money is off there until you confirm it. Use Confirm on the server under Region Servers once you know the regions are really its own.",
+            "This region appeared at this Region Server, when it paired or later, so money is off there until you confirm it. Use Confirm on the server under Region Servers once you know the regions are really its own.",
         RegionStatus.NoGridGateMoney =>
             "Nothing has checked in with the money service for this region: it may run stock OpenSim, or money isn't set up there. Install GridGate on that server, or leave it without money.",
         RegionStatus.NeedsUpdate =>
@@ -145,8 +150,15 @@ public static class MoneyVerifyText
                 $"{region}, on {key}, claimed people arrived that it wasn't handed. {when}",
             AlertKind.UnhandedArrival =>
                 $"{region}, on {key}, claimed someone arrived that it wasn't handed, {times} in a day. A handoff lost on the network looks the same. {when}",
+            AlertKind.RefusedHandoff =>
+                $"{key} sent handoffs for people it hadn't placed verified, {times} in a day, the last from {region}. That is normal for people who came in from a stock region or through the Gatekeeper. {when}",
+            AlertKind.ArrivalNotCovered =>
+                $"{key} reported arrivals in regions it doesn't cover yet, {times} in a day, the last in {region}. A region that is new, or moved, covers nothing until you confirm or approve it. {when}",
             AlertKind.KeyLimitReached => $"{key} reached its daily money limit, so its payments were refused {times} in a day. {when}",
             AlertKind.RegionMoved => $"{region} now registers from {key}, but it belongs to another server, so money is off there. {when}",
+            AlertKind.SaleNotPaid => $"A sale was completed after its hold ran out; the seller wasn't paid. It was in {region}, on {key}, {times} in a day. {when}",
+            AlertKind.ManyPayoutOwners => $"{key} paid out for more than {MoneyRules.PayoutOwnersAlertAbove} different object owners in a day. {when}",
+            AlertKind.ServerTookOver => $"{key} took over the earlier server's address and ports, and that server is no longer paired. {when}",
             _ => $"Someone hit their daily spending limit {times} in a day. {when}",
         };
     }

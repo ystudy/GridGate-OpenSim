@@ -261,8 +261,45 @@ public sealed partial class MoneyLedger(
     }
 
     /// <summary>One operation and all its values, as <see cref="Idempotent"/> stores them.</summary>
-    private static string Fingerprint(string op, object request) =>
-        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(op + "\n" + JsonSerializer.Serialize(request))));
+    private static string Fingerprint(string op, object request)
+    {
+        // Not by which key asked: a computer's transaction ids are the same under each key it has had, so a retry that spans a
+        // re-pairing is the same request. (Ids of two keys that aren't one computer never meet: the service scopes them apart.)
+        object unkeyed = request switch
+        {
+            TransferRequest t => t with { KeyId = null },
+            PayoutRequest p => p with { KeyId = null },
+            ChargeRequest c => c with { KeyId = null },
+            HoldRequest h => h with { KeyId = null },
+            _ => request,
+        };
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(op + "\n" + JsonSerializer.Serialize(unkeyed))));
+    }
+
+    /// <summary>
+    /// Drops the stored answers older than <see cref="MoneyRules.RequestKeep"/>; how many. A retry of a payment older than that
+    /// is not a retry. Done in slices so a long backlog never holds the table. A database failure is <see cref="MoneyUnavailableException"/>.
+    /// </summary>
+    public async Task<int> PruneRequestsAsync(CancellationToken ct)
+    {
+        var dropped = 0;
+        try
+        {
+            await using var conn = await open(ct);
+            while (true)
+            {
+                await using var cmd = new MySqlCommand("DELETE FROM requests WHERE at < @cutoff LIMIT 2000", conn);
+                cmd.Parameters.AddWithValue("@cutoff", Now - MoneyRules.RequestKeep);
+                var n = await cmd.ExecuteNonQueryAsync(ct);
+                dropped += n;
+                if (n < 2000) return dropped;
+            }
+        }
+        catch (Exception e) when (e is MySqlException or TimeoutException or InvalidOperationException)
+        {
+            throw new MoneyUnavailableException(e);
+        }
+    }
 
     /// <summary>
     /// The stored Ok answer for this transfer's id when the operation and every value match; null otherwise or when the
@@ -277,6 +314,13 @@ public sealed partial class MoneyLedger(
     /// <inheritdoc cref="EarlierAsync(TransferRequest, CancellationToken)"/>
     public Task<MoneyResult?> EarlierAsync(ChargeRequest r, CancellationToken ct) => EarlierAsync(r.TxnId, "charge", r, ct);
 
+    /// <inheritdoc cref="EarlierAsync(TransferRequest, CancellationToken)"/>
+    public Task<MoneyResult?> EarlierAsync(HoldRequest r, CancellationToken ct) => EarlierAsync(r.TxnId, "hold", r, ct);
+
+    /// <inheritdoc cref="EarlierAsync(TransferRequest, CancellationToken)"/>
+    public Task<MoneyResult?> EarlierAsync(Guid txnId, long holdId, bool complete, CancellationToken ct) =>
+        EarlierAsync(txnId, complete ? "hold_complete" : "hold_return", holdId, ct);
+
     private async Task<MoneyResult?> EarlierAsync(Guid txnId, string op, object request, CancellationToken ct)
     {
         try
@@ -284,7 +328,7 @@ public sealed partial class MoneyLedger(
             await using var conn = await open(ct);
             return await StoredAsync(conn, null, txnId, ct) is { } stored && stored.Fingerprint == Fingerprint(op, request) ? stored.Result : null;
         }
-        catch (Exception e) when (e is MySqlException or TimeoutException or InvalidOperationException { Source: "MySqlConnector" })
+        catch (Exception e) when (e is MySqlException or TimeoutException or InvalidOperationException)
         {
             return null;
         }
@@ -323,18 +367,18 @@ public sealed partial class MoneyLedger(
                 {
                     await CommitForTests(tx, ct);
                 }
-                catch (Exception e) when (e is MySqlException or TimeoutException or InvalidOperationException { Source: "MySqlConnector" })
+                catch (Exception e) when (e is MySqlException or TimeoutException or InvalidOperationException)
                 {
                     // The commit may have landed before the connection failed: look the transaction up again. The failed
                     // transaction and connection close first. While the session is still up, that puts a commit the server is still
                     // finishing ahead of the lookup; after a timeout or a broken connection the server may still be finishing it, so
-                    // a lookup that finds nothing can, rarely, be wrong.
+                    // a lookup that finds nothing proves nothing: that answers outcome unknown, never "nothing moved".
                     try
                     {
                         await tx.DisposeAsync();
                         await conn.DisposeAsync();
                     }
-                    catch (Exception closing) when (closing is MySqlException or TimeoutException or InvalidOperationException { Source: "MySqlConnector" })
+                    catch (Exception closing) when (closing is MySqlException or TimeoutException or InvalidOperationException)
                     {
                         // Closing a broken connection may fail; the lookup below uses a new one.
                     }
@@ -352,7 +396,7 @@ public sealed partial class MoneyLedger(
                     ? stored.Fingerprint == t.Fingerprint ? stored.Result : MoneyResult.Of(MoneyOutcome.DuplicateTxn)
                     : MoneyResult.Unavailable;
             }
-            catch (Exception e) when (e is MySqlException or TimeoutException or InvalidOperationException { Source: "MySqlConnector" })
+            catch (Exception e) when (e is MySqlException or TimeoutException or InvalidOperationException)
             {
                 return MoneyResult.Unavailable;
             }
@@ -364,8 +408,8 @@ public sealed partial class MoneyLedger(
 
     /// <summary>
     /// What a failed commit answers. The commit may have landed, so the stored answer for the transaction id is read on a
-    /// fresh connection: found, that answer; not found, nothing landed (<see cref="MoneyOutcome.Unavailable"/>); and when
-    /// that read fails too, or there is no transaction id to look up, <see cref="MoneyOutcome.OutcomeUnknown"/>.
+    /// fresh connection: found, that answer. Not found, a failed read, or no transaction id to look up are all
+    /// <see cref="MoneyOutcome.OutcomeUnknown"/>: the server may still be finishing the commit, so "nothing found" doesn't mean nothing moved.
     /// </summary>
     private async Task<MoneyResult> AfterFailedCommitAsync((Guid Id, string Fingerprint)? txn, CancellationToken ct)
     {
@@ -375,9 +419,9 @@ public sealed partial class MoneyLedger(
             await using var conn = await open(ct);
             return await StoredAsync(conn, null, t.Id, ct) is { } stored
                 ? stored.Fingerprint == t.Fingerprint ? stored.Result : MoneyResult.Of(MoneyOutcome.DuplicateTxn)
-                : MoneyResult.Unavailable;
+                : MoneyResult.Of(MoneyOutcome.OutcomeUnknown);
         }
-        catch (Exception e) when (e is MySqlException or TimeoutException or InvalidOperationException { Source: "MySqlConnector" })
+        catch (Exception e) when (e is MySqlException or TimeoutException or InvalidOperationException)
         {
             return MoneyResult.Of(MoneyOutcome.OutcomeUnknown);
         }

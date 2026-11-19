@@ -74,13 +74,20 @@ public sealed class MoneyServiceFuzzTests(MoneyMariaDb maria) : IClassFixture<Mo
             ["txnId"] = Guid.NewGuid().ToString(), ["ownerId"] = A.ToString(), ["to"] = new JsonObject { ["agentId"] = B.ToString(), ["home"] = "" },
             ["amount"] = 1, ["regionId"] = Here.ToString(), ["objectId"] = Guid.NewGuid().ToString(), ["objectName"] = "slot",
         },
-        ["charge"] = _ => new JsonObject { ["txnId"] = Guid.NewGuid().ToString(), ["type"] = "upload_fee", ["payer"] = Who(), ["amount"] = 1, ["regionId"] = Here.ToString() },
+        ["charge"] = _ => new JsonObject { ["txnId"] = Guid.NewGuid().ToString(), ["type"] = "upload_fee", ["payer"] = Who(), ["amount"] = 3, ["regionId"] = Here.ToString() },
         ["hold"] = _ => new JsonObject
         {
             ["txnId"] = Guid.NewGuid().ToString(), ["kind"] = "object", ["buyer"] = Who(), ["seller"] = new JsonObject { ["agentId"] = B.ToString(), ["home"] = "" },
             ["amount"] = 1, ["regionId"] = Here.ToString(), ["objectId"] = Guid.NewGuid().ToString(), ["objectName"] = "dress",
         },
+        // A fee held before its action: no seller.
+        ["hold#fee"] = _ => new JsonObject
+        {
+            ["txnId"] = Guid.NewGuid().ToString(), ["kind"] = "upload_fee", ["buyer"] = Who(), ["amount"] = 3, ["regionId"] = Here.ToString(),
+        },
         ["hold/complete"] = hold => new JsonObject { ["txnId"] = Guid.NewGuid().ToString(), ["holdId"] = hold },
+        // A complete for a hold the expiry sweep already returned: the sale is taken again (the id it is given is a swept hold's).
+        ["hold/complete#late"] = hold => new JsonObject { ["txnId"] = Guid.NewGuid().ToString(), ["holdId"] = hold },
         ["hold/return"] = hold => new JsonObject { ["txnId"] = Guid.NewGuid().ToString(), ["holdId"] = hold },
         ["economy"] = _ => new JsonObject(),
         ["health"] = _ => new JsonObject(),
@@ -96,6 +103,22 @@ public sealed class MoneyServiceFuzzTests(MoneyMariaDb maria) : IClassFixture<Mo
             ["id"] = Guid.NewGuid().ToString(), ["sessionId"] = SessionA.ToString(), ["agentId"] = A.ToString(), ["regionId"] = Here.ToString(),
         },
     };
+
+    /// <summary>The endpoint a template is for: a template key may carry a <c>#</c> and a variant name after it.</summary>
+    private static string PathOf(string template) => template.Split('#')[0];
+
+    /// <summary>A purchase of one coin that the expiry sweep returned, for a late complete to take again.</summary>
+    private static async Task<long> SweptHold(MoneyServiceRig rig)
+    {
+        var hold = (await rig.Ledger.HoldAsync(new HoldRequest(Guid.NewGuid(), "object", AccountRef.Resident(A), AccountRef.Resident(B), 1, Here, null, "dress", "p1"), Ct)).HoldId!.Value;
+        await rig.Db.Sql($"UPDATE `money`.`holds` SET created = created - INTERVAL 10 MINUTE WHERE id = {hold}");
+        Assert.True(await rig.Ledger.ReturnExpiredHoldsAsync(Ct) >= 1);
+        return hold;
+    }
+
+    private static async Task<bool> StillSwept(MoneyServiceRig rig, long hold) =>
+        await rig.Db.Text($"SELECT state FROM `money`.`holds` WHERE id = {hold}") == "returned"
+        && await rig.Db.Scalar($"SELECT COUNT(*) FROM `money`.`entries` WHERE hold_id = {hold} AND type = '{EntryType.LateSale}'") == 0;
 
     private static JsonObject Who() => new()
     {
@@ -175,18 +198,27 @@ public sealed class MoneyServiceFuzzTests(MoneyMariaDb maria) : IClassFixture<Mo
         var templates = Templates();
         // Settling needs a hold to point at; each settle uses up one, so a fresh one is made when it's gone.
         async Task<long> OpenHold() =>
-            (await rig.Ledger.HoldAsync(new HoldRequest(Guid.NewGuid(), "object", AccountRef.Resident(A), AccountRef.Resident(B), 1, Here, null, "dress"), Ct)).HoldId!.Value;
+            (await rig.Ledger.HoldAsync(new HoldRequest(Guid.NewGuid(), "object", AccountRef.Resident(A), AccountRef.Resident(B), 1, Here, null, "dress", "p1"), Ct)).HoldId!.Value;
         var hold = await OpenHold();
+        var late = await SweptHold(rig);
+        // An upload fee paid through a hold and given back by the owner, so the books the fuzz ends on hold a fee refund.
+        var fee = await rig.Ledger.HoldAsync(new HoldRequest(Guid.NewGuid(), "upload_fee", AccountRef.Resident(A), null, 3, Here, null, null, "p1"), Ct);
+        Assert.Equal(MoneyOutcome.Ok, (await rig.Ledger.CompleteHoldAsync(Guid.NewGuid(), fee.HoldId!.Value, Ct)).Outcome);
+        Assert.Equal(MoneyOutcome.Ok, (await rig.Ledger.RefundHeldFeeAsync(AccountRef.Resident(A), fee.EntryId!.Value, new StaffAction("Owner Person", "fuzz fee refund"), Ct)).Outcome);
 
         var cases = Cases();
-        foreach (var (path, template) in templates)
+        foreach (var (name, template) in templates)
+        {
+            var path = PathOf(name);
             for (var i = 0; i < cases; i++)
             {
                 if (await rig.Db.Text($"SELECT state FROM `money`.`holds` WHERE id = {hold}") != "open") hold = await OpenHold();
-                var (text, what) = Mutate(template(hold), rng);
-                var context = $"seed {seed}, {path} case {i} ({what})";
+                if (!await StillSwept(rig, late)) late = await SweptHold(rig);
+                var (text, what) = Mutate(template(name.EndsWith("#late", StringComparison.Ordinal) ? late : hold), rng);
+                var context = $"seed {seed}, {name} case {i} ({what})";
                 AssertWellFormed(rig, path, await rig.Post(path, text), context);
             }
+        }
 
         await rig.AssertBooksSoundAsync($"seed {seed}:");
         Assert.Equal("ok", CodeOf(await rig.Post("balance", WhoA())));
@@ -199,12 +231,14 @@ public sealed class MoneyServiceFuzzTests(MoneyMariaDb maria) : IClassFixture<Mo
         // The fuzz test's starting bodies are valid: otherwise every case would stop at the first check.
         var rig = _rig = await MoneyServiceRig.StartAsync(maria);
         await rig.Ledger.SetPayoutsAllowedAsync(A, true, Ct);
-        var hold = (await rig.Ledger.HoldAsync(new HoldRequest(Guid.NewGuid(), "object", AccountRef.Resident(A), AccountRef.Resident(B), 1, Here, null, "dress"), Ct)).HoldId!.Value;
+        var hold = (await rig.Ledger.HoldAsync(new HoldRequest(Guid.NewGuid(), "object", AccountRef.Resident(A), AccountRef.Resident(B), 1, Here, null, "dress", "p1"), Ct)).HoldId!.Value;
 
-        foreach (var (path, template) in Templates().Where(t => t.Key != "hold/return"))
+        var late = await SweptHold(rig);
+        foreach (var (name, template) in Templates().Where(t => t.Key != "hold/return"))
         {
-            var answer = await rig.Post(path, template(hold).ToJsonString());
-            Assert.True(answer.Status == HttpStatusCode.OK && (path == "health" || CodeOf(answer) == "ok"), $"{path}: {answer.Raw}");
+            var path = PathOf(name);
+            var answer = await rig.Post(path, template(name.EndsWith("#late", StringComparison.Ordinal) ? late : hold).ToJsonString());
+            Assert.True(answer.Status == HttpStatusCode.OK && (path == "health" || CodeOf(answer) == "ok"), $"{name}: {answer.Raw}");
         }
         await rig.AssertBooksSoundAsync();
     }
@@ -238,7 +272,7 @@ public sealed class MoneyServiceFuzzTests(MoneyMariaDb maria) : IClassFixture<Mo
 
         // economy and health use nothing from their body, and still read it: an answer sent with most of a big body unread
         // left the connection to close under the next request.
-        foreach (var path in Templates().Keys.Append("pair"))
+        foreach (var path in Templates().Keys.Select(PathOf).Distinct().Append("pair"))
             Assert.Equal(HttpStatusCode.RequestEntityTooLarge, (await rig.Post(path, big, key: path == "pair" ? null : Key)).Status);
         Assert.Equal("ok", CodeOf(await rig.Post("balance", WhoA())));
         Assert.DoesNotContain(rig.Logs, l => l.Contains("failed with"));
@@ -254,7 +288,7 @@ public sealed class MoneyServiceFuzzTests(MoneyMariaDb maria) : IClassFixture<Mo
     {
         var rig = _rig = await MoneyServiceRig.StartAsync(maria);
 
-        foreach (var path in Templates().Keys)
+        foreach (var path in Templates().Keys.Select(PathOf).Distinct())
         {
             var answer = await rig.Post(path, WhoA(), authorization: header);
             Assert.True(answer.Status == HttpStatusCode.Unauthorized, $"{path} with [{header[..Math.Min(header.Length, 20)]}…{header[Math.Max(0, header.Length - 12)..]}] ({header.Length} chars): {(int)answer.Status} {answer.Raw}");

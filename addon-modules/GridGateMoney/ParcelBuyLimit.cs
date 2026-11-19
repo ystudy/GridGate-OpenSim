@@ -29,6 +29,21 @@ internal sealed class ParcelBuyLimit(TimeProvider time)
         }
     }
 
-    /// <summary>The agent's client closed: nothing to remember.</summary>
-    public void Forget(Guid agent) => _taken.TryRemove(agent, out _);
+    /// <summary>How many avatars are remembered.</summary>
+    public int Count => _taken.Count;
+
+    /// <summary>
+    /// The agent's client closed. Its count stays until it expires (closing the client and coming back, as a teleport out
+    /// and back does, doesn't start it over); an entry with nothing left in the window is dropped.
+    /// </summary>
+    public void Forget(Guid agent)
+    {
+        if (!_taken.TryGetValue(agent, out var mine)) return;
+        var now = time.GetUtcNow();
+        lock (mine)
+        {
+            while (mine.Count > 0 && now - mine.Peek() >= Window) mine.Dequeue();
+            if (mine.Count == 0) _taken.TryRemove(KeyValuePair.Create(agent, mine));
+        }
+    }
 }

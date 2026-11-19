@@ -5,9 +5,39 @@ using GridGate.Launcher.Core.Money;
 namespace GridGate.Launcher.Core.Settings;
 
 /// <summary><paramref name="MoneyPassword"/> is empty until money is first turned on (money design §7.1).</summary>
-public sealed record DatabaseSecrets(string RootPassword, string RobustPassword, string OpensimPassword, string MoneyPassword = "");
+public sealed record DatabaseSecrets(string RootPassword, string RobustPassword, string OpensimPassword, string MoneyPassword = "")
+{
+    // What this record holds is never printed, so a log line or an exception that shows it can't leak it.
+    private bool PrintMembers(System.Text.StringBuilder sb)
+    {
+        sb.Append($"passwords hidden");
+        return true;
+    }
 
-public sealed record ConsoleSecrets(string User, string Password);
+    public override string ToString()
+    {
+        var sb = new System.Text.StringBuilder("DatabaseSecrets { ");
+        PrintMembers(sb);
+        return sb.Append(" }").ToString();
+    }
+}
+
+public sealed record ConsoleSecrets(string User, string Password)
+{
+    // What this record holds is never printed, so a log line or an exception that shows it can't leak it.
+    private bool PrintMembers(System.Text.StringBuilder sb)
+    {
+        sb.Append($"User = {User}, Password = hidden");
+        return true;
+    }
+
+    public override string ToString()
+    {
+        var sb = new System.Text.StringBuilder("ConsoleSecrets { ");
+        PrintMembers(sb);
+        return sb.Append(" }").ToString();
+    }
+}
 
 /// <summary>The owner's password is never stored.</summary>
 public sealed record OwnerInfo(string FirstName, string LastName, Guid PrincipalId);
@@ -96,7 +126,22 @@ public sealed record LegacyRegionV1(string Instance, string Name, Guid Uuid, int
     string Content = "starter");
 
 /// <summary><see cref="Target"/> is "robust" or "region".</summary>
-public sealed record IniOverride(string Target, string Section, string Key, string Value);
+public sealed record IniOverride(string Target, string Section, string Key, string Value)
+{
+    // What this record holds is never printed, so a log line or an exception that shows it can't leak it.
+    private bool PrintMembers(System.Text.StringBuilder sb)
+    {
+        sb.Append($"Target = {Target}, Section = {Section}, Key = {Key}, Value = hidden");
+        return true;
+    }
+
+    public override string ToString()
+    {
+        var sb = new System.Text.StringBuilder("IniOverride { ");
+        PrintMembers(sb);
+        return sb.Append(" }").ToString();
+    }
+}
 
 /// <summary>
 /// The Grid Asset Server a Region Server has joined: its address, the grid service's ports, the grid's name and
@@ -221,6 +266,20 @@ public sealed record LanguageSettings
 public sealed record LauncherSettings
 {
     public const int CurrentSchema = 7;
+
+    // The database and console passwords, the setup token and the money keys are secrets: they are never printed.
+    private bool PrintMembers(System.Text.StringBuilder sb)
+    {
+        sb.Append($"SchemaVersion = {SchemaVersion}, GridName = {GridName}, Db = {Db}, Console = {Console}, SetupToken = {(SetupToken is null ? "none" : "hidden")}, Money = {Money}");
+        return true;
+    }
+
+    public override string ToString()
+    {
+        var sb = new System.Text.StringBuilder("LauncherSettings { ");
+        PrintMembers(sb);
+        return sb.Append(" }").ToString();
+    }
 
     public int SchemaVersion { get; init; } = CurrentSchema;
     public string GridName { get; init; } = "My World";

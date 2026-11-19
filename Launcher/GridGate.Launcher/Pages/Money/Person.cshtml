@@ -116,7 +116,7 @@
         {
             <div class="table-responsive">
                 <table id="person-history" class="table align-middle mb-0">
-                    <thead><tr><th>Entry</th><th>When</th><th>What</th><th>Amount</th><th>Balance</th><th>Note</th></tr></thead>
+                    <thead><tr><th>Entry</th><th>When</th><th>What</th><th>Amount</th><th>Balance</th><th>Note</th>@if (Model.CanRefundFees) {<th>Fee</th>}</tr></thead>
                     <tbody>
                     @foreach (var line in Model.History)
                     {
@@ -127,6 +127,20 @@
                             <td class="cell">@(line.Amount > 0 ? "+" : "")@PersonModel.N(line.Amount)</td>
                             <td class="cell">@PersonModel.N(line.BalanceAfter)</td>
                             <td>@(line.Reason ?? line.ObjectName)</td>
+                            @if (Model.CanRefundFees)
+                            {
+                                <td>
+                                    @if (PersonModel.IsHeldFee(line))
+                                    {
+                                        <form method="post" action="/money/person?handler=RefundFee&@query" asp-antiforgery="true" class="d-flex gap-1">
+                                            <input type="hidden" name="EntryId" value="@line.EntryId">
+                                            <input class="form-control form-control-sm" name="Reason" maxlength="@MoneyPageRules.MaxReason" placeholder="Reason" aria-label="Reason for refunding entry @line.EntryId" required>
+                                            <button type="submit" class="btn btn-sm btn-outline-danger">Refund</button>
+                                        </form>
+                                        <help-tip>Gives this fee back, once. The coins come from whoever was paid: Fees, or the group's founder. If that account hasn't got them, nothing moves. Only a fee that was held and then paid can be refunded.</help-tip>
+                                    }
+                                </td>
+                            }
                         </tr>
                     }
                     </tbody>

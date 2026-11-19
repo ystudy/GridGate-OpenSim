@@ -785,6 +785,83 @@ public sealed class MoneyActionsTests
         Assert.Empty(_service.Calls);
     }
 
+    // --- a fee the ledger refuses right after it changed: the settings are read again, and the fee is tried once more ---------
+
+    private MoneyActions ActionsThatRefresh(EconomyInfo fresh, out List<string> refreshed)
+    {
+        var log = refreshed = [];
+        return new MoneyActions(_service, Region, () => _economy, _view, () =>
+        {
+            log.Add("refreshed");
+            _economy = fresh;
+            return fresh;
+        });
+    }
+
+    [Fact]
+    public void An_upload_fee_refused_after_it_went_up_is_held_again_at_the_new_fee()
+    {
+        _economy = _economy with { FeeHolds = true, UploadFee = 10 };
+        var actions = ActionsThatRefresh(_economy with { UploadFee = 20 }, out var refreshed);
+        _service.Queue("hold", new MoneyAnswer("bad_amount"), new MoneyAnswer("ok", 80, 0, 1, 7));
+
+        var hold = actions.HoldFee(P, "upload_fee", 10, null);
+
+        Assert.NotNull(hold);
+        Assert.Equal([10L, 20L], _service.Of("hold").Select(c => c.Args[3]));
+        Assert.Single(refreshed);
+    }
+
+    [Fact]
+    public void A_classified_fee_refused_after_it_changed_is_charged_again_at_the_new_fee()
+    {
+        _economy = _economy with { ClassifiedFee = 3 };
+        var actions = ActionsThatRefresh(_economy with { ClassifiedFee = 5 }, out _);
+        _service.Queue("charge", new MoneyAnswer("bad_amount"), new MoneyAnswer("ok", 95));
+
+        actions.ChargeClassified(P, 1);
+
+        Assert.Equal([3L, 5L], _service.Of("charge").Select(c => c.Args[2]));
+        Assert.Empty(_view.Warnings);
+    }
+
+    [Fact]
+    public void A_fee_refused_that_is_the_current_fee_is_not_tried_again()
+    {
+        _economy = _economy with { FeeHolds = true, UploadFee = 10 };
+        var actions = ActionsThatRefresh(_economy, out var refreshed);
+        _service.Queue("hold", new MoneyAnswer("bad_amount"));
+
+        Assert.Null(actions.HoldFee(P, "upload_fee", 10, null));
+
+        Assert.Single(_service.Of("hold"));
+        Assert.Single(refreshed);
+    }
+
+    [Fact]
+    public void A_fee_refused_twice_is_tried_only_twice()
+    {
+        _economy = _economy with { FeeHolds = true, UploadFee = 10 };
+        var actions = ActionsThatRefresh(_economy with { UploadFee = 20 }, out _);
+        _service.Answer = m => m == "hold" ? new MoneyAnswer("bad_amount") : new MoneyAnswer("ok", 0, 0, 1, 7);
+
+        Assert.Null(actions.HoldFee(P, "upload_fee", 10, null));
+
+        Assert.Equal(2, _service.Of("hold").Count());
+    }
+
+    [Fact]
+    public void A_mesh_priced_above_the_fee_is_not_raised_to_a_new_fee_below_its_price()
+    {
+        _economy = _economy with { FeeHolds = true, UploadFee = 10 };
+        var actions = ActionsThatRefresh(_economy with { UploadFee = 12 }, out _);
+        _service.Queue("hold", new MoneyAnswer("bad_amount"));
+
+        Assert.Null(actions.HoldFee(P, "upload_fee", 50, null));
+
+        Assert.Single(_service.Of("hold"));
+    }
+
     [Fact]
     public void Before_the_first_economy_answer_no_fee_is_held()
     {

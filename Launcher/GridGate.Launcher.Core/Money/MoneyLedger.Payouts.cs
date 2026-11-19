@@ -65,7 +65,7 @@ public sealed partial class MoneyLedger
     {
         if (r.Type is not (EntryType.UploadFee or EntryType.ClassifiedFee or EntryType.GroupJoinFee))
             return Task.FromResult(MoneyResult.Of(MoneyOutcome.NotAllowed));
-        if (!AmountOk(r.Amount)) return Task.FromResult(MoneyResult.Of(MoneyOutcome.BadAmount));
+        if (!AmountOk(r.Amount) || !MoneyRules.FeeAmountOk(r.Type, r.Amount, settings())) return Task.FromResult(MoneyResult.Of(MoneyOutcome.BadAmount));
         return Idempotent(r.TxnId, "charge", r, async (conn, tx) =>
         {
             if (r.KeyId is { } key) await LockKeyAsync(conn, tx, key, ct);

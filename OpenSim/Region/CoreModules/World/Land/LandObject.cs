@@ -489,6 +489,10 @@ namespace OpenSim.Region.CoreModules.World.Land
 
         #region Packet Request Handling
 
+        // GridGate: the pass price each person was last sent with a parcel's properties (the price the viewer's pass dialog
+        // shows). Shared by the regions of this process: its keys are an avatar and a parcel's global id.
+        internal static readonly ShownPrices ShownPassPrices = new ShownPrices();
+
         public void SendLandProperties(int sequence_id, bool snap_selection, int request_result, IClientAPI remote_client)
         {
             if(m_regionSettings.AllowDamage)
@@ -520,6 +524,8 @@ namespace OpenSim.Region.CoreModules.World.Land
                 m_lastSeqId = seq_id;
             }
 
+            // GridGate: note the pass price sent to this viewer; a later, higher price sent doesn't raise what a click may charge.
+            ShownPassPrices.Remember(remote_client.AgentId, m_landData.GlobalID, m_landData.PassPrice);
             remote_client.SendLandProperties(seq_id,
                     snap_selection, request_result, this,
                     (float)m_regionSettings.ObjectBonus,

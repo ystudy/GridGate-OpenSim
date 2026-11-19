@@ -50,13 +50,24 @@ public enum MoneyOutcome
     /// The region treats it as lost.
     /// </summary>
     OutcomeUnknown,
+
+    /// <summary>A refund named an entry that doesn't exist.</summary>
+    UnknownEntry,
+
+    /// <summary>A refund named an entry that was refunded already.</summary>
+    AlreadyRefunded,
+
+    /// <summary>A wallet merge whose source or target isn't a visitor wallet: only a visitor's coins move to a new home address.</summary>
+    NotAVisitor,
 }
 
 /// <summary>
 /// A ledger answer. <see cref="FromBalance"/> is the payer's balance after (or the balance asked for), <see cref="ToBalance"/>
-/// the payee's.
+/// the payee's. <see cref="SaleUnpaid"/> is set only on a <see cref="MoneyOutcome.HoldClosed"/> answer to a complete that came after
+/// the expiry sweep had returned the hold and whose coins could not be taken again: the seller wasn't paid.
 /// </summary>
-public sealed record MoneyResult(MoneyOutcome Outcome, long? FromBalance = null, long? ToBalance = null, long? EntryId = null, long? HoldId = null)
+public sealed record MoneyResult(MoneyOutcome Outcome, long? FromBalance = null, long? ToBalance = null, long? EntryId = null, long? HoldId = null,
+    bool SaleUnpaid = false, string? PayeeKind = null)
 {
     public static readonly MoneyResult Unavailable = new(MoneyOutcome.Unavailable);
 
@@ -83,9 +94,21 @@ public static class EntryType
     public const string Hold = "hold";
     public const string HoldCompleted = "hold_completed";
     public const string HoldReturned = "hold_returned";
+
+    /// <summary>
+    /// A sale completed after the expiry sweep had returned its hold: the payer's coins taken again, straight to the seller
+    /// (or Fees), under the hold's id.
+    /// </summary>
+    public const string LateSale = "late_sale";
     public const string Refund = "refund";
     public const string WalletMerge = "wallet_merge";
     public const string FeeMoved = "fee_moved";
+
+    /// <summary>
+    /// The owner gave a fee back that was taken through a hold: the coins from whoever was paid (Fees, or a group's founder) to the
+    /// payer, reversing the hold's completing entry.
+    /// </summary>
+    public const string FeeRefund = "fee_refund";
 }
 
 /// <summary>One avatar paying another avatar or an object's owner. The region checks the avatar's session before asking.</summary>

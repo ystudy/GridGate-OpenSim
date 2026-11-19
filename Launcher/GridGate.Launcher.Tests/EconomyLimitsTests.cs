@@ -15,6 +15,19 @@ public sealed class EconomyLimitsTests
     private static IPAddress Ip(int n) => IPAddress.Parse($"203.0.113.{n}");
 
     [Fact]
+    public void An_unknown_caller_counts_toward_the_grid_wide_second()
+    {
+        var l = new EconomyLimits(Clock, perSecond: 3);
+
+        for (var i = 0; i < 3; i++) Assert.True(l.Allow(null));
+
+        Assert.False(l.Allow(null));
+        Assert.False(l.TryTakeLookupSecond());
+        Clock.Advance(TimeSpan.FromSeconds(1));
+        Assert.True(l.Allow(null));
+    }
+
+    [Fact]
     public void A_ninth_lookup_at_once_is_refused()
     {
         var l = new EconomyLimits(Clock);
@@ -72,6 +85,64 @@ public sealed class EconomyLimitsTests
         Clock.Advance(TimeSpan.FromMinutes(10));
 
         Assert.False(l.IsChecked(Agent, Secure));
+    }
+
+    [Fact]
+    public void A_checked_session_that_is_used_stays_remembered()
+    {
+        var l = new EconomyLimits(Clock);
+        var (a, s) = (Guid.NewGuid(), Guid.NewGuid());
+        l.RememberChecked(a, s);
+
+        for (var i = 0; i < 4; i++)
+        {
+            Clock.Advance(TimeSpan.FromMinutes(6));
+            Assert.True(l.IsChecked(a, s));
+        }
+
+        Clock.Advance(EconomyLimits.CheckedFor);
+        Assert.False(l.IsChecked(a, s));
+    }
+
+    [Fact]
+    public void An_address_gets_three_lookups_a_minute_that_find_no_session()
+    {
+        var l = new EconomyLimits(Clock);
+        for (var i = 0; i < EconomyLimits.MissesPerMinute; i++)
+        {
+            Assert.True(l.MayLookUp(Ip(1)));
+            l.RememberMiss(Ip(1), Guid.NewGuid(), Guid.NewGuid());
+        }
+
+        Assert.False(l.MayLookUp(Ip(1)));
+        Assert.True(l.MayLookUp(Ip(2)));
+        Clock.Advance(EconomyLimits.Window);
+        Assert.True(l.MayLookUp(Ip(1)));
+    }
+
+    [Fact]
+    public void A_full_table_of_missed_addresses_makes_room_once_its_entries_are_old()
+    {
+        var l = new EconomyLimits(Clock, maxAddresses: 3);
+        for (var i = 1; i <= 3; i++) l.RememberMiss(Ip(i), Guid.NewGuid(), Guid.NewGuid());
+        Assert.False(l.MayLookUp(Ip(9)));
+
+        Clock.Advance(EconomyLimits.Window);
+
+        Assert.True(l.MayLookUp(Ip(9)));
+    }
+
+    [Fact]
+    public void A_pair_that_found_no_session_is_unknown_for_a_short_time()
+    {
+        var l = new EconomyLimits(Clock);
+        var (a, s) = (Guid.NewGuid(), Guid.NewGuid());
+        l.RememberMiss(Ip(1), a, s);
+
+        Assert.True(l.IsUnknown(a, s));
+        Assert.False(l.IsUnknown(a, Guid.NewGuid()));
+        Clock.Advance(EconomyLimits.UnknownFor);
+        Assert.False(l.IsUnknown(a, s));
     }
 
     [Fact]

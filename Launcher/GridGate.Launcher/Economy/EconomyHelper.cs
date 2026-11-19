@@ -30,26 +30,31 @@ public sealed class EconomyHelper(
 
     public async Task<string> AnswerAsync(string path, Stream body, IPAddress? caller, CancellationToken ct)
     {
-        // Counted before anything is read, so garbage counts too.
-        var allowed = limits.Allow(caller);
+        // Counted before anything is read, so garbage counts too. A caller the limit refuses is answered in the owner's default
+        // language without its body being read or parsed, so a flood of refused calls costs no parsing.
+        var s = settings();
+        if (!limits.Allow(caller))
+        {
+            SetCulture(offered.Default());
+            return Refuse(s, t["Economy.TooMany"]);
+        }
         var call = XmlRpc.Read(await Buffer(body, ct));
         if (call is null) return XmlRpc.Fault(1, "bad request");
         if (!(path == LandPath ? LandMethods : CurrencyMethods).Contains(call.Method, StringComparer.Ordinal)) return XmlRpc.Fault(2, "unknown method");
 
-        var s = settings();
         // Set here, in this method: a culture set inside an awaited method is dropped when it returns.
-        var culture = Languages.Culture(Languages.Match(Text(call, "language"), offered.Current(s)) ?? Languages.English);
-        CultureInfo.CurrentCulture = culture;
-        CultureInfo.CurrentUICulture = culture;
+        SetCulture(Languages.Match(Text(call, "language"), offered.Current(s)) ?? Languages.English);
 
-        if (!allowed) return Refuse(s, t["Economy.TooMany"]);
         if (!Guid.TryParse(Text(call, "agentId"), out var agent) || !Guid.TryParse(Text(call, "secureSessionId"), out var secure)
             || agent == Guid.Empty || secure == Guid.Empty)
             return Refuse(s, t["Economy.LogInAgain"]);
         var known = limits.IsChecked(agent, secure);
-        // The lookup cap is asked first, so a refusal there doesn't use up the grid-wide second.
         if (!known)
         {
+            // A pair that just found no session, or an address that keeps finding none, gets no lookup. So a few addresses
+            // sending fresh well-formed ids can't use up the lookups a new viewer needs.
+            if (limits.IsUnknown(agent, secure) || !limits.MayLookUp(caller)) return Refuse(s, t["Economy.LogInAgain"]);
+            // The lookup cap is asked first, so a refusal there doesn't use up the grid-wide second.
             if (!limits.TryStartLookup()) return Refuse(s, t["Economy.TooMany"]);
             if (!limits.TryTakeLookupSecond())
             {
@@ -67,6 +72,7 @@ public sealed class EconomyHelper(
                 case PresenceOutcome.Unavailable:
                     return Refuse(s, t["Economy.Unavailable"]);
                 default:
+                    limits.RememberMiss(caller, agent, secure);
                     return Refuse(s, t["Economy.LogInAgain"]);
             }
         }
@@ -75,6 +81,10 @@ public sealed class EconomyHelper(
             if (!known) limits.EndLookup();
         }
 
+        // The session check above only shows that some presence row matches these two ids; a visitor's ids are chosen by its home
+        // grid and a crashed session's row can outlive it. So an answer carries nothing about a person: the mode, the symbol and
+        // the caller's own shortfall. A balance or any other per-person data needs the session id and the region, as the money
+        // service's own check does, never this one.
         var mode = gate.Effective();
         var symbol = s.Money.CurrencySymbol;
         var shortfall = call.Params.GetValueOrDefault("currencyBuy") is int n ? n : 0;
@@ -113,6 +123,13 @@ public sealed class EconomyHelper(
 
     private string LandShortfall(MoneyMode mode, int shortfall, string symbol) =>
         mode == MoneyMode.Off ? t["Economy.NoMoneyLand"] : t["Economy.Shortfall", shortfall.ToString("N0", CultureInfo.CurrentCulture), symbol];
+
+    private static void SetCulture(string language)
+    {
+        var culture = Languages.Culture(language);
+        CultureInfo.CurrentCulture = culture;
+        CultureInfo.CurrentUICulture = culture;
+    }
 
     private static string? Text(XmlRpc.Call call, string name) => call.Params.GetValueOrDefault(name) as string;
 

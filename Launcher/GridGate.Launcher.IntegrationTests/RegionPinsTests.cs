@@ -33,13 +33,25 @@ public sealed class RegionPinsTests(MoneyMariaDb maria) : IClassFixture<MoneyMar
 
     private static Task<IReadOnlySet<Guid>> Covered(RegionPins pins, PairedServer s) => pins.CoveredAsync(s, s.FirstPort, 65536, NoOwn, Ct);
 
+    /// <summary>A region seen first by the request path, then confirmed by the owner: what covers it from then on.</summary>
+    private static async Task<IReadOnlySet<Guid>> Confirmed(RegionPins pins, PairedServer s)
+    {
+        await pins.CoveredAsync(s, s.FirstPort, 65536, NoOwn, Ct);
+        await pins.ConfirmAllAsync(s, Ct);
+        return await Covered(pins, s);
+    }
+
     [Fact]
-    public async Task First_sight_pins_to_the_server()
+    public async Task First_sight_pins_to_the_server_as_waiting_and_covers_nothing_until_confirmed()
     {
         var (db, pins) = await StartAsync(maria);
         var (a, region) = (Server(HostA, "m-a"), Guid.NewGuid());
         await db.AddRegion(region, HostA);
 
+        Assert.Empty(await Covered(pins, a));
+        Assert.Equal(1, await db.Scalar($"SELECT COUNT(*) FROM `money`.`region_pins` WHERE region_id = '{region}' AND waiting = 1"));
+        Assert.Equal([region], await pins.WaitingAsync(a.Id, Ct));
+        Assert.Equal(1, await pins.ConfirmAllAsync(a, Ct));
         Assert.Equal(new HashSet<Guid> { region }, (await Covered(pins, a)).ToHashSet());
 
         Assert.Equal(a.Id.ToString("N"), await db.Text($"SELECT server_id FROM `money`.`region_pins` WHERE region_id = '{region}'"));
@@ -65,7 +77,7 @@ public sealed class RegionPinsTests(MoneyMariaDb maria) : IClassFixture<MoneyMar
         var (db, pins) = await StartAsync(maria);
         var (a, b, region) = (Server(HostA), Server(HostB), Guid.NewGuid());
         await db.AddRegion(region, HostB);
-        Assert.Contains(region, await Covered(pins, b));
+        Assert.Contains(region, await Confirmed(pins, b));
 
         await db.Sql($"UPDATE `robust`.`regions` SET serverIP = '{HostA}' WHERE uuid = '{region}'");
 
@@ -81,7 +93,7 @@ public sealed class RegionPinsTests(MoneyMariaDb maria) : IClassFixture<MoneyMar
         var (db, pins) = await StartAsync(maria);
         var (a, b, region) = (Server(HostA), Server(HostB), Guid.NewGuid());
         await db.AddRegion(region, HostB);
-        await Covered(pins, b);
+        await Confirmed(pins, b);
         await db.Sql($"UPDATE `robust`.`regions` SET serverIP = '{HostA}' WHERE uuid = '{region}'");
 
         await pins.ApproveMoveAsync(region, a.Id, Ct);
@@ -98,7 +110,7 @@ public sealed class RegionPinsTests(MoneyMariaDb maria) : IClassFixture<MoneyMar
         var (db, pins) = await StartAsync(maria);
         var (a, b, region, other) = (Server(HostA), Server(HostB), Guid.NewGuid(), Guid.NewGuid());
         await db.AddRegion(region, HostB);
-        await Covered(pins, b);
+        await Confirmed(pins, b);
         var (here, handed, elsewhere) = (Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid());
         await db.Sql($"""
             INSERT INTO `money`.`session_locations` (session_id, agent_id, region_id, key_id, state, last_start_id, updated) VALUES
@@ -121,7 +133,7 @@ public sealed class RegionPinsTests(MoneyMariaDb maria) : IClassFixture<MoneyMar
         var (db, pins) = await StartAsync(maria);
         var (a, b, region) = (Server(HostA), Server(HostB), Guid.NewGuid());
         await db.AddRegion(region, HostB);
-        await Covered(pins, b);
+        await Confirmed(pins, b);
         await db.Sql($"UPDATE `robust`.`regions` SET serverIP = '{HostA}' WHERE uuid = '{region}'");
         Assert.Empty(await Covered(pins, a));
 
@@ -138,7 +150,7 @@ public sealed class RegionPinsTests(MoneyMariaDb maria) : IClassFixture<MoneyMar
         var (db, pins) = await StartAsync(maria);
         var (b, region) = (Server(HostB), Guid.NewGuid());
         await db.AddRegion(region, HostB);
-        await Covered(pins, b);
+        await Confirmed(pins, b);
 
         await db.Sql($"DELETE FROM `robust`.`regions` WHERE uuid = '{region}'");
 
@@ -153,7 +165,7 @@ public sealed class RegionPinsTests(MoneyMariaDb maria) : IClassFixture<MoneyMar
         var (db, pins) = await StartAsync(maria);
         var (jo, sam, region) = (Server(HostB), Server(HostA), Guid.NewGuid());
         await db.AddRegion(region, HostB);
-        await Covered(pins, jo);
+        await Confirmed(pins, jo);
         await db.Sql($"UPDATE `robust`.`regions` SET serverIP = '{HostA}' WHERE uuid = '{region}'");
 
         Assert.Empty(await Covered(pins, sam));
@@ -233,7 +245,7 @@ public sealed class RegionPinsTests(MoneyMariaDb maria) : IClassFixture<MoneyMar
         var (a, region) = (Server(HostA), Guid.NewGuid());
         await db.AddRegion(region, HostA);
 
-        Assert.Equal(new HashSet<Guid> { region }, (await pins.CoveredAsync(a, a.FirstPort, 65536, NoOwn, Ct, pinNew: false)).ToHashSet());
+        Assert.Empty(await pins.CoveredAsync(a, a.FirstPort, 65536, NoOwn, Ct, pinNew: false));
         Assert.Equal(0, await db.Scalar("SELECT COUNT(*) FROM `money`.`region_pins`"));
 
         await pins.CoveredAsync(a, a.FirstPort, 65536, NoOwn, Ct);
@@ -241,7 +253,7 @@ public sealed class RegionPinsTests(MoneyMariaDb maria) : IClassFixture<MoneyMar
     }
 
     [Fact]
-    public async Task A_region_that_appears_after_pairing_is_pinned_and_covered_at_first_sight()
+    public async Task A_region_that_appears_after_pairing_is_pinned_waiting_at_first_sight_with_its_time()
     {
         var (db, pins) = await StartAsync(maria);
         var (a, early, late) = (Server(HostA), Guid.NewGuid(), Guid.NewGuid());
@@ -249,8 +261,11 @@ public sealed class RegionPinsTests(MoneyMariaDb maria) : IClassFixture<MoneyMar
         await pins.PinWaitingAsync(a, a.FirstPort, 65536, Ct);
         await db.AddRegion(late, HostA);
 
-        Assert.Equal(new HashSet<Guid> { late }, (await Covered(pins, a)).ToHashSet());
-        Assert.Equal([early], await pins.WaitingAsync(a.Id, Ct));
+        Assert.Empty(await Covered(pins, a));
+        Assert.Equal(new[] { early, late }.Order(), (await pins.WaitingAsync(a.Id, Ct)).Order());
+        var since = await pins.WaitingSinceAsync(a.Id, Ct);
+        Assert.Equal(2, since.Count);
+        Assert.InRange(DateTime.UtcNow - since[late], TimeSpan.Zero, TimeSpan.FromMinutes(5));
     }
 
     [Fact]
@@ -268,12 +283,26 @@ public sealed class RegionPinsTests(MoneyMariaDb maria) : IClassFixture<MoneyMar
     }
 
     [Fact]
+    public async Task A_waiting_region_that_moves_to_a_later_pairing_keeps_its_first_seen_time()
+    {
+        var (db, pins) = await StartAsync(maria);
+        var (low, high, region) = (Server(HostA, firstPort: 9000), Server(HostA, firstPort: 9100), Guid.NewGuid());
+        await db.AddRegion(region, HostA, port: 9100);
+        await pins.PinWaitingAsync(low, 9000, 65536, Ct);
+        await db.Sql($"UPDATE `money`.`region_pins` SET pinned = '2026-01-01 00:00:00' WHERE region_id = '{region}'");
+
+        await pins.PinWaitingAsync(high, 9100, 65536, Ct);
+
+        Assert.Equal(new DateTime(2026, 1, 1, 0, 0, 0), (await pins.WaitingSinceAsync(high.Id, Ct))[region]);
+    }
+
+    [Fact]
     public async Task A_region_already_pinned_to_another_server_is_not_made_waiting()
     {
         var (db, pins) = await StartAsync(maria);
         var (a, b, region) = (Server(HostA), Server(HostB), Guid.NewGuid());
         await db.AddRegion(region, HostB);
-        await Covered(pins, b);
+        await Confirmed(pins, b);
         await db.Sql($"UPDATE `robust`.`regions` SET serverIP = '{HostA}' WHERE uuid = '{region}'");
 
         Assert.Equal(0, await pins.PinWaitingAsync(a, a.FirstPort, 65536, Ct));
@@ -301,7 +330,7 @@ public sealed class RegionPinsTests(MoneyMariaDb maria) : IClassFixture<MoneyMar
         var (db, pins) = await StartAsync(maria);
         var (gone, a, region) = (Server(HostB), Server(HostA), Guid.NewGuid());
         await db.AddRegion(region, HostB);
-        await Covered(pins, gone);
+        await Confirmed(pins, gone);
         await db.Sql($"UPDATE `robust`.`regions` SET serverIP = '{HostA}' WHERE uuid = '{region}'");
 
         Assert.Equal([new RegionMove(region, gone.Id, a.Id)], await pins.MovesAsync([a], Ct));
@@ -315,7 +344,7 @@ public sealed class RegionPinsTests(MoneyMariaDb maria) : IClassFixture<MoneyMar
         var (old, region) = (Server(HostA, "machine-1"), Guid.NewGuid());
         var replacement = Server(HostA, "machine-1");
         await db.AddRegion(region, HostA);
-        await Covered(pins, old);
+        await Confirmed(pins, old);
         await db.Sql($"INSERT INTO `money`.`limit_overrides` (kind, target, daily_spend, reason, staff, at) VALUES ('key', 'server:{old.Id:N}', 500, 'bigger', 'Owner', UTC_TIMESTAMP(6))");
 
         await pins.CarryOverAsync(old, replacement, Ct);
@@ -334,7 +363,7 @@ public sealed class RegionPinsTests(MoneyMariaDb maria) : IClassFixture<MoneyMar
         var (old, region, session) = (Server(HostA, "machine-1"), Guid.NewGuid(), Guid.NewGuid());
         var replacement = Server(HostA, "machine-1");
         await db.AddRegion(region, HostA);
-        await Covered(pins, old);
+        await Confirmed(pins, old);
         await db.Sql($"""
             INSERT INTO `money`.`session_locations` (session_id, agent_id, region_id, key_id, state, last_start_id, updated) VALUES
               ('{session}', '{Guid.NewGuid()}', '{region}', 'server:{old.Id:N}', 'Verified', 1, UTC_TIMESTAMP(6));
@@ -355,7 +384,7 @@ public sealed class RegionPinsTests(MoneyMariaDb maria) : IClassFixture<MoneyMar
         var (old, region) = (Server(HostA, "machine-1"), Guid.NewGuid());
         var other = Server(HostA, "machine-2");
         await db.AddRegion(region, HostA);
-        await Covered(pins, old);
+        await Confirmed(pins, old);
 
         await pins.CarryOverAsync(old, other, Ct);
 
@@ -370,7 +399,7 @@ public sealed class RegionPinsTests(MoneyMariaDb maria) : IClassFixture<MoneyMar
         var (old, region) = (Server(HostA), Guid.NewGuid());
         var replacement = Server(HostA);
         await db.AddRegion(region, HostA);
-        await Covered(pins, old);
+        await Confirmed(pins, old);
 
         await pins.CarryOverAsync(old, replacement, Ct);
 
@@ -384,7 +413,7 @@ public sealed class RegionPinsTests(MoneyMariaDb maria) : IClassFixture<MoneyMar
         var (old, region) = (Server(HostA, "machine-1"), Guid.NewGuid());
         var replacement = Server(HostA, "machine-1");
         await db.AddRegion(region, HostA);
-        await Covered(pins, old);
+        await Confirmed(pins, old);
 
         await pins.CarryOverAsync(old, replacement, Ct);
         Assert.Equal(0, await pins.PinWaitingAsync(replacement, replacement.FirstPort, 65536, Ct));

@@ -54,6 +54,8 @@ namespace OpenSim.Groups
 
         // GridGate: the join fee each invitation showed (see JoinFeeOffers), one per module.
         private readonly JoinFeeOffers m_joinFeeOffers = new JoinFeeOffers();
+        // GridGate: the fee each person was last shown in a group's profile: a direct join charges no more than that.
+        private readonly ShownPrices m_shownJoinFees = new ShownPrices();
         // GridGate: the paid joins under way, one per person and group (see JoinsInProgress).
         private readonly JoinsInProgress m_joinsInProgress = new JoinsInProgress();
 
@@ -393,6 +395,16 @@ namespace OpenSim.Groups
                         IFeeHold fee = null;
                         GroupRecord group = GetGroupRecord(inviteInfo.GroupID);
                         IMoneyModule money = scene.RequestModuleInterface<IMoneyModule>();
+                        // GridGate: a money module that never charges leaves joins as OpenSim has them
+                        if (!FeeHolds.Charges(money))
+                            money = null;
+                        // GridGate: with a money module that charges, a group whose record can't be read has no known fee: nobody joins it free
+                        if (group == null && money != null)
+                        {
+                            if (remoteClient.AgentId == invitee)
+                                remoteClient.SendAgentAlertMessage("You can't join the group right now: its details couldn't be read. Please try again in a moment.", false);
+                            return;
+                        }
                         int current = group == null || money == null ? 0 : JoinFeeOnAccept(group);
                         // GridGate: and one paid join at a time per person and group, so two accepts can't both charge.
                         bool joinBegun = false;
@@ -421,9 +433,11 @@ namespace OpenSim.Groups
                                     return;
                                 }
 
-                                // The fee this invitation showed: a fee offered again by this module replaces the stored one
-                                // (the stored one is the fee before it went up), otherwise the stored fee, otherwise unknown.
-                                int? offered = m_joinFeeOffers.Find(inviteID) ?? inviteInfo.Fee;
+                                // The fee this invitation showed: only what this module offered. The fee stored with an invitation
+                                // isn't tied to the message the invitee saw (another program can write either), so an invitation
+                                // this module didn't send offers its fee first, at the cost of a second click.
+                                // GridGate: the stored fee (inviteInfo.Fee) is no longer charged on its own.
+                                int? offered = m_joinFeeOffers.Find(inviteID);
                                 if (offered == null || current > offered.Value)
                                 {
                                     // The fee is not the one shown: add nobody, hold nothing, and ask again at today's fee.
@@ -432,7 +446,8 @@ namespace OpenSim.Groups
                                     return;
                                 }
 
-                                fee = FeeHolds.Take(money, remoteClient.AgentId, current, MoneyTransactionType.GroupJoin, group.GroupName);
+                                // GridGate: the group is named by its id, which finds its founder
+                                fee = FeeHolds.Take(money, remoteClient.AgentId, current, MoneyTransactionType.GroupJoin, inviteInfo.GroupID.ToString());
                                 if (fee == null)
                                 {
                                     remoteClient.SendAgentAlertMessage("Insufficient funds to join the group.", false);
@@ -902,6 +917,8 @@ namespace OpenSim.Groups
                 profile.InsigniaID = groupInfo.GroupPicture;
                 profile.MaturePublish = groupInfo.MaturePublish;
                 profile.MembershipFee = groupInfo.MembershipFee;
+                // GridGate: this is the fee the viewer's join dialog will show.
+                m_shownJoinFees.Remember(remoteClient.AgentId, groupID, groupInfo.MembershipFee);
                 profile.Money = 0;
                 profile.Name = groupInfo.GroupName;
                 profile.OpenEnrollment = groupInfo.OpenEnrollment;
@@ -1201,6 +1218,9 @@ namespace OpenSim.Groups
 
             GroupRecord groupRecord = GetGroupRecord(groupID);
             IMoneyModule money = remoteClient.Scene.RequestModuleInterface<IMoneyModule>();
+            // GridGate: a money module that never charges leaves joins as OpenSim has them
+            if (!FeeHolds.Charges(money))
+                money = null;
 
             // Should check to see if there's an outstanding invitation
 
@@ -1209,6 +1229,13 @@ namespace OpenSim.Groups
             // Someone who is a member already pays nothing again: the reply says the join worked. Only one paid join of
             // theirs to a group goes on at a time, so two at once can't both charge.
             IFeeHold fee = null;
+            // GridGate: with money on, a group whose record can't be read has no known fee: nobody joins it free
+            if (groupRecord == null && money != null)
+            {
+                remoteClient.SendAlertMessage("You can't join the group right now: its details couldn't be read. Please try again in a moment.");
+                remoteClient.SendJoinGroupReply(groupID, false);
+                return;
+            }
             bool paid = money != null && groupRecord.MembershipFee > 0;
             if (paid && !m_joinsInProgress.TryBegin(remoteClient.AgentId, groupID))
                 return; // the join already going on answers for both
@@ -1226,7 +1253,17 @@ namespace OpenSim.Groups
                         return;
                     }
 
-                    fee = FeeHolds.Take(money, remoteClient.AgentId, groupRecord.MembershipFee, MoneyTransactionType.GroupJoin, groupRecord.GroupName);
+                    // GridGate: a join charges no more than the fee the viewer was shown; a higher fee, or none shown, is
+                    // refused with the current fee, and the next click pays it.
+                    if (!m_shownJoinFees.MayCharge(remoteClient.AgentId, groupID, groupRecord.MembershipFee))
+                    {
+                        remoteClient.SendAlertMessage(string.Format("The fee to join this group is now {0}, not the one shown. Click Join again to pay it.", groupRecord.MembershipFee));
+                        remoteClient.SendJoinGroupReply(groupID, false);
+                        return;
+                    }
+
+                    // GridGate: the group is named by its id, which finds its founder
+                    fee = FeeHolds.Take(money, remoteClient.AgentId, groupRecord.MembershipFee, MoneyTransactionType.GroupJoin, groupID.ToString());
                     if (fee == null)
                     {
                         remoteClient.SendAlertMessage("Insufficient funds to join the group.");
@@ -1489,7 +1526,7 @@ namespace OpenSim.Groups
         /// </summary>
         private int JoinFeeOnAccept(GroupRecord group)
         {
-            if (group.MembershipFee <= 0 || m_sceneList[0].RequestModuleInterface<IMoneyModule>() == null)
+            if (group.MembershipFee <= 0 || !FeeHolds.Charges(m_sceneList[0].RequestModuleInterface<IMoneyModule>()))
                 return 0;
             return group.MembershipFee;
         }

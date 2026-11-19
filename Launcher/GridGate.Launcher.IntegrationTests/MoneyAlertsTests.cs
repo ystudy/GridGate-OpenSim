@@ -102,9 +102,8 @@ public sealed class MoneyAlertsTests(MoneyMariaDb maria) : IClassFixture<MoneyMa
         await alerts.UnhandedArrivalAsync("p1", R1, Bob, null, Ct);
         await alerts.UnhandedArrivalAsync("p1", R2, Ann, null, Ct);
 
-        var open = await alerts.OpenAsync(Ct);
-        Assert.Equal(2, open.Count); // one row per key and region
-        Assert.Equal((AlertLevel.Warning, 1), open.Where(a => a.RegionId == R2).Select(a => (a.Level, a.Count)).Single());
+        var row = await Single(alerts); // one row per key, whatever the regions
+        Assert.Equal((AlertLevel.Warning, 3, R2), (row.Level, row.Count, row.RegionId));
     }
 
     [Fact]
@@ -186,12 +185,66 @@ public sealed class MoneyAlertsTests(MoneyMariaDb maria) : IClassFixture<MoneyMa
         await alerts.UnhandedArrivalAsync("p1", R2, Ann, null, Ct);
         await alerts.UnhandedArrivalAsync("p1", R2, Bob, null, Ct);
         _clock.Advance(TimeSpan.FromHours(1));
-        await alerts.UnhandedArrivalAsync("p1", R1, Bob, null, Ct); // the key's third in a day: R1's row is a warning
-        _clock.Advance(TimeSpan.FromHours(23.5));
-        await alerts.UnhandedArrivalAsync("p1", R1, Ann, null, Ct); // R2's two are past the day: this one alone calls for a notice
+        await alerts.UnhandedArrivalAsync("p1", R1, Bob, null, Ct); // the key's third in a day: its row is a warning
+        _clock.Advance(TimeSpan.FromHours(22));
+        await alerts.UnhandedArrivalAsync("p1", R1, Ann, null, Ct); // still within the row's day: the same row, still a warning
 
-        var a = (await alerts.OpenAsync(Ct)).Single(r => r.RegionId == R1);
-        Assert.Equal((AlertLevel.Warning, 2, Ann), (a.Level, a.Count, a.AgentId));
+        var a = await Single(alerts);
+        Assert.Equal((AlertLevel.Warning, 4, Ann), (a.Level, a.Count, a.AgentId));
+    }
+
+    [Fact]
+    public async Task One_key_making_up_regions_opens_one_row_not_one_per_region()
+    {
+        var (_, alerts) = await StartAsync();
+
+        for (var i = 0; i < 20; i++)
+            await alerts.UnhandedArrivalAsync("p1", Guid.NewGuid(), Ann, null, Ct);
+        for (var i = 0; i < 20; i++)
+            await alerts.ArrivalNotCoveredAsync("p1", Guid.NewGuid(), Ann, Ct);
+        for (var i = 0; i < 20; i++)
+            await alerts.RefusedHandoffAsync("p1", Guid.NewGuid(), Ann, Ct);
+
+        var open = await alerts.OpenAsync(Ct);
+        Assert.Equal(3, open.Count);
+        Assert.All(open, a => Assert.Equal(20, a.Count));
+        Assert.Equal(AlertLevel.Warning, open.Single(a => a.Kind == AlertKind.UnhandedArrival).Level);
+        Assert.Equal(AlertLevel.Notice, open.Single(a => a.Kind == AlertKind.ArrivalNotCovered).Level);
+        Assert.Equal(AlertLevel.Notice, open.Single(a => a.Kind == AlertKind.RefusedHandoff).Level);
+    }
+
+    [Fact]
+    public async Task Refused_handoffs_and_arrivals_in_uncovered_regions_never_count_as_claims_or_make_a_warning()
+    {
+        var (_, alerts) = await StartAsync();
+
+        for (var i = 0; i < 5; i++)
+        {
+            await alerts.RefusedHandoffAsync("p1", R1, Ann, Ct);
+            await alerts.ArrivalNotCoveredAsync("p1", R2, Bob, Ct);
+        }
+        // The first real claim is still a notice: nothing above counted towards the three that make a warning.
+        await alerts.UnhandedArrivalAsync("p1", R1, Ann, null, Ct);
+
+        Assert.Empty(await alerts.WarningsAsync(Ct));
+        var claim = (await alerts.OpenAsync(Ct)).Single(a => a.Kind == AlertKind.UnhandedArrival);
+        Assert.Equal(AlertLevel.Notice, claim.Level);
+        Assert.False(claim.Repeated);
+    }
+
+    [Fact]
+    public async Task Disagreements_with_each_other_key_keep_a_row_of_their_own()
+    {
+        var (_, alerts) = await StartAsync();
+
+        await alerts.UnhandedArrivalAsync("p2", R1, Ann, "p1", Ct);
+        await alerts.UnhandedArrivalAsync("p2", R2, Bob, "p1", Ct);
+        await alerts.UnhandedArrivalAsync("p2", R2, Bob, "p3", Ct);
+
+        var open = await alerts.OpenAsync(Ct);
+        Assert.Equal(2, open.Count);
+        Assert.Equal(2, open.Single(a => a.OtherKeyId == "p1").Count);
+        Assert.Equal(1, open.Single(a => a.OtherKeyId == "p3").Count);
     }
 
     [Fact]
@@ -286,6 +339,8 @@ public sealed class MoneyAlertsTests(MoneyMariaDb maria) : IClassFixture<MoneyMa
     private static async Task MoveR1(MoneyTestDatabase db, RegionPins pins, PairedServer a, PairedServer b)
     {
         await db.AddRegion(R1, a.Host);
+        await pins.CoveredAsync(a, 9000, 65536, new HashSet<Guid>(), Ct, raiseMoves: true);
+        await pins.ConfirmWaitingAsync(a, 9000, 65536, new HashSet<Guid>(), Ct);
         Assert.Contains(R1, await pins.CoveredAsync(a, 9000, 65536, new HashSet<Guid>(), Ct, raiseMoves: true));
         await db.Sql($"UPDATE `robust`.`regions` SET serverIP = '{b.Host}' WHERE uuid = '{R1}'");
     }

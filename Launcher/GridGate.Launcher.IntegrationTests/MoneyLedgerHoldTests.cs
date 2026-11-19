@@ -324,7 +324,7 @@ public sealed class MoneyLedgerHoldTests(MoneyMariaDb maria) : IClassFixture<Mon
         // Upload and classified fees are the grid's: a region can't name a seller to pay them to.
         var (ledger, db, _) = await MoneyLedgerTransferTests.Setup(maria);
 
-        Assert.Equal(MoneyOutcome.NotAllowed, (await ledger.HoldAsync(Fee(kind, 10, AccountRef.Resident(B)), Ct)).Outcome);
+        Assert.Equal(MoneyOutcome.NotAllowed, (await ledger.HoldAsync(Fee(kind, 25, AccountRef.Resident(B)), Ct)).Outcome);
 
         Assert.Equal(0, await db.Scalar("SELECT COUNT(*) FROM `money`.`holds`"));
         await AssertSound(ledger);

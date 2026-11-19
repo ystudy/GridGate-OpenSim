@@ -1,3 +1,5 @@
+| **A server sent handoffs for people it hadn't placed verified.** Normal for people who walked in from a stock region, came in through the Gatekeeper, or were placed without a verified start. Counted on one row per server. | Notice | Nothing, usually. If it keeps rising, check the region is running and its GridGate is up to date. |
+| **A server reported arrivals in regions it doesn't cover.** A region that is new, or moved, covers nothing until you confirm it or approve the move. Counted on one row per server. | Notice | Confirm the region, or approve its move, under Regions. |
 # Money verification: a guide for owners
 
 GridGate's money works only where it can check two things: **which Region Server or region program runs a region**, and
@@ -44,6 +46,13 @@ The region runs on a computer that isn't paired with this grid's money, so money
 **What to do:** pair it. On this Money page, under **Region Servers**, make a pairing code, and type it into that Region
 Server's Money page. Its regions are verified once their programs check in, within a few minutes.
 
+Until a Region Server is paired, uploads that cost a fee (textures, sounds, animations and meshes) are refused there, and
+the uploader is told that the server isn't paired with the money service yet. Nothing is charged.
+
+A pairing code works once, for 15 minutes. Five wrong tries from one address block that address until the code ends, and the
+code still works from other addresses; only you can cancel it, with **Cancel the code** below. Only computers on this
+computer's own network (or this computer itself) can reach the money port at all.
+
 If that computer runs stock OpenSim rather than GridGate, it can't be paired; its regions stay open to visitors, without
 money.
 
@@ -63,8 +72,8 @@ approve it.
 
 A few things that work the same way:
 
-- **A brand-new region** on a paired server is pinned to it automatically. Nobody can be charged there until they arrive
-  in the usual way.
+- **A brand-new region** on a paired server is pinned to it as waiting, like the regions listed when it paired: money is off
+  there until you confirm it (see [Waiting for you to confirm](#waiting-for-you-to-confirm)).
 - **Pairing a server again:** if it is the same computer, its regions stay with it. If a different computer takes over the
   same address and ports, its regions show as moved until you approve them.
 - **Removing a paired server** ends its key at once, and its regions show as not paired. Its pins stay, so a region of it
@@ -73,7 +82,8 @@ A few things that work the same way:
 ### Waiting for you to confirm
 
 When a Region Server pairs, the regions the grid already lists at its address and ports are pinned to it, but they wait.
-Pairing never hands a region over by itself, so money is off in them until you confirm them.
+A region that first appears at its address and ports later waits the same way. Neither pairing nor a new region is handed
+over by itself, so money is off in them until you confirm them. The Regions list shows when each one first appeared.
 
 **What to do (owner only):** under **Region Servers**, press **Confirm its regions** on that server. Every waiting region of
 that server then belongs to it. This is written to the audit log. There is no keep-off for these: if the regions aren't
@@ -205,8 +215,10 @@ Clear an alert once you've dealt with it.
 | **Two servers disagree about where someone is.** One server's region says the person arrived there, while the grid had them in another server's region. The alert names both: "Server X and server Y disagree about where Ann is." | Warning | When both regions are verified, money is paused for that person until their next login, so neither server can charge them. Either server may be the one that is wrong: check both regions are running and up to date, and look at what each charged them. Refund or freeze if needed. |
 | **A server or program reached its daily limit.** | Warning | If that's expected, give it a higher limit of its own (see [Own limits](#own-limits)). If not, **freeze all payments** while you find out why. |
 | **A region moved between servers.** | Notice | Approve the move or keep it off, under Regions (see [Moved, waiting for you](#moved-waiting-for-you)). |
+| **A new pairing took over another server's address and ports.** A different computer paired at the same address and first port as a server that was paired before. The alert says the new server took over the earlier server's address and ports. | Notice | If you paired the new computer yourself, clear the alert. If not, remove the server: its regions take no payments until it is paired again. |
 | **One person hit their daily spending limit three times in a day.** | Notice | If they asked for more, give them a limit of their own. If not, check what charged them; refund the entries or freeze their account. |
 
+An alert row counts what one server does within a day: one row for its claims, however many regions they name, and one for each of the notices above.
 A warning about a Region Server that reached its daily limit, or that claimed people it wasn't handed three or more times
 in a day, offers **Remove this server**: its key ends at once, and its regions take no payments until it is paired again.
 A disagreement between two servers doesn't offer it, since either may be the honest one. Refused claims never slow down or

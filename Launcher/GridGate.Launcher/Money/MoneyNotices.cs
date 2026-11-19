@@ -81,10 +81,20 @@ public sealed class MoneyNotices(MoneyGate gate, IMoneyBooks books, MoneyStatus 
                 $"{level}: {KeyName(a.KeyId, s)} claimed avatars arrived in {RegionName(a.RegionId, s)} that it wasn't handed. Open Money to check it.",
             AlertKind.UnhandedArrival =>
                 $"{level}: {KeyName(a.KeyId, s)} claimed avatars arrived in {RegionName(a.RegionId, s)} that it wasn't handed, {times} in a day. Open Money to check it.",
+            AlertKind.RefusedHandoff =>
+                $"{level}: {KeyName(a.KeyId, s)} sent handoffs for people it hadn't placed verified, {times} in a day. That is normal for people who came in from a stock region or through the Gatekeeper. Open Money to look.",
+            AlertKind.ArrivalNotCovered =>
+                $"{level}: {KeyName(a.KeyId, s)} reported arrivals in regions it doesn't cover yet, {times} in a day. Open Money: a new region waits there for you to confirm it.",
             AlertKind.KeyLimitReached =>
                 $"{level}: {KeyName(a.KeyId, s)} reached its daily money limit, so its payments were refused {times} in a day. Open Money to check it.",
             AlertKind.RegionMoved =>
                 $"{level}: {RegionName(a.RegionId, s)} moved to {KeyName(a.KeyId, s)}; money stays off there until you approve the move. Open Money to check it.",
+            AlertKind.SaleNotPaid =>
+                $"{level}: a sale in {RegionName(a.RegionId, s)} was completed after its hold ran out, and the buyer couldn't pay it again; the seller wasn't paid. Open Money to check it.",
+            AlertKind.ManyPayoutOwners =>
+                $"{level}: {KeyName(a.KeyId, s)} paid out for more than {MoneyRules.PayoutOwnersAlertAbove} different object owners in a day. Open Money to check it.",
+            AlertKind.ServerTookOver =>
+                $"{level}: {KeyName(a.KeyId, s)} took over the earlier server's address and ports. Open Money to check it was you.",
             _ => $"{level}: someone hit their daily spending limit {times} in a day. Open Money to check it.",
         };
     }

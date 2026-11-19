@@ -61,6 +61,20 @@ public sealed class MoneyActionsVisitorTests
     }
 
     [Fact]
+    public void An_unpaired_server_tells_an_uploader_it_isnt_paired_not_to_try_again_in_a_minute()
+    {
+        var actions = new MoneyActions(new UnpairedMoneyService(), Region, () => null, _view);
+        var resident = new Payer(Me, "", Guid.NewGuid(), Guid.NewGuid());
+
+        Assert.False(actions.UploadCovered(resident, 10));
+
+        var told = Assert.Single(_view.Told);
+        Assert.Equal(MoneyRules.NotPairedUploadText, told.Text);
+        Assert.Contains("isn't paired with the money service yet", told.Text);
+        Assert.DoesNotContain("minute", told.Text);
+    }
+
+    [Fact]
     public async Task Unpaired_service_refuses_every_action()
     {
         var service = new UnpairedMoneyService();

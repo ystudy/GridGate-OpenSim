@@ -13,6 +13,9 @@ public static class MoneySymbolRule
     // H-3: "${x}" stops Robust starting), and '#' starts a comment.
     private static readonly char[] Forbidden = [';', '#', '"', '=', '[', ']', '{', '}', '<', '>', '&', '\\'];
 
+    /// <summary>The characters a symbol may not hold, for a page to name.</summary>
+    public static IReadOnlyList<char> ForbiddenCharacters => Forbidden;
+
     public static bool Valid(string? symbol) =>
         symbol is { Length: >= 1 and <= 4 } && !symbol.Any(c => char.IsWhiteSpace(c) || char.IsControl(c) || Forbidden.Contains(c));
 }

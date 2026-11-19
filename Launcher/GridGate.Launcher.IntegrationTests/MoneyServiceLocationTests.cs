@@ -221,7 +221,7 @@ public sealed class MoneyServiceLocationTests(MoneyMariaDb maria) : IClassFixtur
 
     private static Task<long> EntriesOf(MoneyServiceRig rig, string type) => rig.Db.Scalar($"SELECT COUNT(*) FROM `money`.`entries` WHERE type = '{type}'");
 
-    private static object Charge(Guid txn) => new { txnId = txn, type = "upload_fee", payer = WhoA(), amount = 10, regionId = Here };
+    private static object Charge(Guid txn) => new { txnId = txn, type = "upload_fee", payer = WhoA(), amount = 9, regionId = Here };
 
     // A region's module sends a payment again, with the same transaction id, when it got no answer. By then the payer may
     // have teleported or the region lost its verification: the repeat still gets the answer the payment had.
@@ -254,7 +254,7 @@ public sealed class MoneyServiceLocationTests(MoneyMariaDb maria) : IClassFixtur
 
         Assert.Equal("ok", CodeOf(first));
         Assert.Equal(first.Raw, again.Raw);
-        Assert.Equal(90, await BalanceOfA(rig));
+        Assert.Equal(91, await BalanceOfA(rig));
         Assert.Equal(1, await EntriesOf(rig, EntryType.UploadFee));
     }
 

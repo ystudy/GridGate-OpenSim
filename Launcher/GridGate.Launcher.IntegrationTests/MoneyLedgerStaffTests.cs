@@ -1,4 +1,5 @@
 using GridGate.Launcher.Core.Money;
+using GridGate.Launcher.Core.Settings;
 using Xunit;
 
 namespace GridGate.Launcher.IntegrationTests;
@@ -69,8 +70,30 @@ public sealed class MoneyLedgerStaffTests(MoneyMariaDb maria) : IClassFixture<Mo
         Assert.Equal(100, await Of(db, B));
         Assert.Equal(1, await db.Scalar($"SELECT COUNT(*) FROM `money`.`entries` WHERE type = 'refund' AND reverses = {paid.EntryId}"));
 
-        Assert.Equal(MoneyOutcome.HoldClosed, (await ledger.RefundAsync(paid.EntryId!.Value, Staff, Ct)).Outcome);
+        Assert.Equal(MoneyOutcome.AlreadyRefunded, (await ledger.RefundAsync(paid.EntryId!.Value, Staff, Ct)).Outcome);
         Assert.Equal(100, await Of(db, A));
+    }
+
+    [Fact]
+    public async Task Refunding_an_entry_that_doesnt_exist_says_so()
+    {
+        var (ledger, db, _) = await MoneyLedgerTransferTests.Setup(maria);
+
+        Assert.Equal(MoneyOutcome.UnknownEntry, (await ledger.RefundAsync(987654, Staff, Ct)).Outcome);
+        Assert.Equal(0, await db.Scalar("SELECT COUNT(*) FROM `money`.`entries` WHERE type = 'refund'"));
+    }
+
+    [Fact]
+    public async Task An_error_the_ledger_raises_itself_is_unavailable_not_a_crash()
+    {
+        var db = await maria.FreshAsync();
+        await db.EnsureSchemaAsync();
+        var s = new MoneySettings(Mode: MoneyMode.Play, Visitors: VisitorMoney.All);
+        var ledger = new MoneyLedger(db.OpenMoney, () => s, () => MoneyMode.Play,
+            (_, _) => throw new InvalidOperationException("the ledger's own mistake"), MoneyLedgerTransferTests.KnownVisitors(db), TimeProvider.System);
+
+        Assert.Equal(MoneyOutcome.Unavailable, (await ledger.BalanceAsync(AccountRef.Resident(A), Ct)).Outcome);
+        Assert.Equal(MoneyOutcome.Unavailable, (await ledger.TransferAsync(Pay(A, B, 5), Ct)).Outcome);
     }
 
     [Fact]
