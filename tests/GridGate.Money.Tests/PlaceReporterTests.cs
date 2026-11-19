@@ -352,7 +352,7 @@ public sealed class PlaceReporterTests
     }
 
     /// <summary>
-    /// Review M2: a failure inside the loop (here, waiting to retry) is logged by its type and the loop goes on, so the
+    /// A failure inside the loop (here, waiting to retry) is logged by its type and the loop goes on, so the
     /// program never silently stops reporting.
     /// </summary>
     [Fact]
@@ -381,7 +381,7 @@ public sealed class PlaceReporterTests
         Assert.DoesNotContain("no timers here", warning);
     }
 
-    /// <summary>Review M1: once disposed, events and health queue nothing and throw nothing, and disposing again is harmless.</summary>
+    /// <summary>Once disposed, events and health queue nothing and throw nothing, and disposing again is harmless.</summary>
     [Fact]
     public void Reports_after_dispose_are_ignored()
     {
