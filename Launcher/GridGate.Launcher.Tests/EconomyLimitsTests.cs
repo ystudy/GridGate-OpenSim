@@ -121,6 +121,18 @@ public sealed class EconomyLimitsTests
     }
 
     [Fact]
+    public void A_full_table_of_missed_addresses_makes_room_once_its_entries_are_old()
+    {
+        var l = new EconomyLimits(Clock, maxAddresses: 3);
+        for (var i = 1; i <= 3; i++) l.RememberMiss(Ip(i), Guid.NewGuid(), Guid.NewGuid());
+        Assert.False(l.MayLookUp(Ip(9)));
+
+        Clock.Advance(EconomyLimits.Window);
+
+        Assert.True(l.MayLookUp(Ip(9)));
+    }
+
+    [Fact]
     public void A_pair_that_found_no_session_is_unknown_for_a_short_time()
     {
         var l = new EconomyLimits(Clock);
