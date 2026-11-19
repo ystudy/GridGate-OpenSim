@@ -47,8 +47,8 @@ public sealed class MoneyPlaceTests
         foreach (var plan in Enum.GetValues<OwnerPlan>())
         {
             var s = On(plan, grid: MoneyMode.Play);
-            Assert.Equal(MoneyMode.Off, MoneyPlace.GridMode(s, MoneyRelease.Effective));
-            Assert.False(MoneyPlace.ServiceHere(s, MoneyRelease.Effective));
+            Assert.Equal(MoneyMode.Off, MoneyPlace.GridMode(s, MoneyGate.Closed));
+            Assert.False(MoneyPlace.ServiceHere(s, MoneyGate.Closed));
         }
     }
 
@@ -138,14 +138,21 @@ public sealed class MoneyPlaceTests
         public override void Abort(Microsoft.AspNetCore.Connections.ConnectionAbortedException abortReason) => Aborted = true;
     }
 
+    // This computer, for the tests: one network card on 192.168.1.0/24 and one on 10.4.0.0/16.
+    private static readonly IReadOnlyList<OwnSubnet> Own = [new(IPAddress.Parse("192.168.1.5"), 24), new(IPAddress.Parse("10.4.0.7"), 16), new(IPAddress.Parse("fe80::5"), 64)];
+
+    private static MoneyAuthFailures Failures() =>
+        new(TimeProvider.System, Microsoft.Extensions.Logging.Abstractions.NullLogger<MoneyAuthFailures>.Instance);
+
     [Theory]
     [InlineData("203.0.113.5", false)]
     [InlineData("192.168.1.9", true)]
+    [InlineData("192.168.2.9", false)] // private, but another network than this computer's
     public async Task Middleware_drops_outsiders_before_anything_else(string address, bool passes)
     {
-        var failures = new MoneyAuthFailures(TimeProvider.System, Microsoft.Extensions.Logging.Abstractions.NullLogger<MoneyAuthFailures>.Instance);
+        var failures = Failures();
         var reached = false;
-        var app = MoneyNetworkFilter.Middleware(failures, Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance)(_ =>
+        var app = MoneyNetworkFilter.Middleware(failures, Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance, () => Own)(_ =>
         {
             reached = true;
             return Task.CompletedTask;
@@ -163,17 +170,77 @@ public sealed class MoneyPlaceTests
     [InlineData("127.0.0.1", true)]
     [InlineData("::1", true)]
     [InlineData("192.168.1.9", true)]
-    [InlineData("10.0.0.4", true)]
-    [InlineData("172.20.1.1", true)]
-    [InlineData("169.254.3.3", true)]
-    [InlineData("fe80::1", true)]
-    [InlineData("fd00::5", true)]
+    [InlineData("192.168.1.255", true)]
     [InlineData("::ffff:192.168.1.9", true)]
+    [InlineData("10.4.200.1", true)]
+    [InlineData("fe80::1234", true)]
+    [InlineData("192.168.2.9", false)]  // private, not this computer's network
+    [InlineData("10.5.0.1", false)]
+    [InlineData("10.0.0.4", false)]
+    [InlineData("172.20.1.1", false)]
+    [InlineData("169.254.3.3", false)]
+    [InlineData("fd00::5", false)]
+    [InlineData("fe80:0:0:1::1", false)]
     [InlineData("100.64.1.1", false)] // shared ISP space: other customers, not this network
     [InlineData("203.0.113.5", false)]
     [InlineData("8.8.8.8", false)]
     [InlineData("2001:db8::1", false)]
     [InlineData("::ffff:203.0.113.5", false)]
-    public void Public_address_is_dropped(string address, bool allowed) =>
-        Assert.Equal(allowed, MoneyNetworkFilter.Allowed(IPAddress.Parse(address)));
+    public void Only_loopback_and_this_computers_own_networks_pass(string address, bool allowed) =>
+        Assert.Equal(allowed, MoneyNetworkFilter.Allowed(IPAddress.Parse(address), Own));
+
+    [Fact]
+    public void A_public_address_on_an_own_network_is_still_refused()
+    {
+        var own = new[] { new OwnSubnet(IPAddress.Parse("203.0.113.5"), 24) };
+
+        Assert.False(MoneyNetworkFilter.Allowed(IPAddress.Parse("203.0.113.9"), own));
+    }
+
+    [Fact]
+    public void Loopback_passes_with_no_interfaces_at_all()
+    {
+        Assert.True(MoneyNetworkFilter.Allowed(IPAddress.Loopback, []));
+        Assert.True(MoneyNetworkFilter.Allowed(IPAddress.IPv6Loopback, []));
+        Assert.False(MoneyNetworkFilter.Allowed(IPAddress.Parse("192.168.1.9"), []));
+    }
+
+    [Theory]
+    [InlineData("192.168.1.5", 24, "192.168.1.200", true)]
+    [InlineData("192.168.1.5", 25, "192.168.1.200", false)]
+    [InlineData("10.4.0.7", 12, "10.15.255.1", true)]
+    [InlineData("10.4.0.7", 12, "10.16.0.1", false)]
+    [InlineData("192.168.1.5", 0, "192.168.1.5", false)]
+    [InlineData("192.168.1.5", 24, "fe80::1", false)]
+    public void A_subnet_holds_the_addresses_sharing_its_leading_bits(string own, int prefix, string other, bool inside) =>
+        Assert.Equal(inside, new OwnSubnet(IPAddress.Parse(own), prefix).Contains(IPAddress.Parse(other)));
+
+    // A logger that keeps its lines.
+    private sealed class Lines : Microsoft.Extensions.Logging.ILogger
+    {
+        public List<(Microsoft.Extensions.Logging.LogLevel Level, string Text)> Written { get; } = [];
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+        public void Log<TState>(Microsoft.Extensions.Logging.LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter) => Written.Add((logLevel, formatter(state, exception)));
+    }
+
+    [Fact]
+    public async Task A_refused_caller_is_logged_as_a_warning_with_its_address_once_a_minute()
+    {
+        var time = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(DateTimeOffset.UtcNow);
+        var lines = new Lines();
+        var app = MoneyNetworkFilter.Middleware(Failures(), lines, () => Own, time)(_ => Task.CompletedTask);
+
+        for (var i = 0; i < 5; i++) await app(new FakeConnection(IPAddress.Parse("203.0.113.5")));
+        await app(new FakeConnection(IPAddress.Parse("203.0.113.6")));
+        time.Advance(TimeSpan.FromSeconds(61));
+        await app(new FakeConnection(IPAddress.Parse("203.0.113.5")));
+
+        Assert.All(lines.Written, l => Assert.Equal(Microsoft.Extensions.Logging.LogLevel.Warning, l.Level));
+        Assert.Equal(3, lines.Written.Count);
+        Assert.Contains("203.0.113.5", lines.Written[0].Text);
+        Assert.Contains("203.0.113.6", lines.Written[1].Text);
+        Assert.Contains("203.0.113.5", lines.Written[2].Text);
+    }
 }

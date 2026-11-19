@@ -20,8 +20,27 @@
         {
             <p id="rs-gloebit-app">This computer's Gloebit app: @Model.App.Environment, key @GridGate.Launcher.Core.Money.GloebitRules.Masked(Model.App.Key).</p>
         }
-        <p>Gloebit runs inside each region, so this computer needs its own app from Gloebit's merchant tools. There is nothing to pair.</p>
-        @await Html.PartialAsync("_GloebitForm", new GridGate.Launcher.Money.GloebitFormModel(Model.App, "/advanced/money?handler=Gloebit"))
+        <p>Gloebit runs inside each region, so this computer needs its own app from Gloebit's merchant tools. There is nothing to pair. Saving the app takes the owner's current two-factor code, which this computer checks itself, so nobody on the grid can reset it. Turn on two-factor here as soon as this computer is set up: it guards the app only once it is on.</p>
+        @if (Model.IsOwner && Model.TwoFactorOn)
+        {
+            @await Html.PartialAsync("_GloebitForm", new GridGate.Launcher.Money.GloebitFormModel(Model.App, "/advanced/money?handler=Gloebit"),
+                new ViewDataDictionary(ViewData) { ["AskCode"] = true })
+        }
+        else if (Model.IsOwner)
+        {
+            @if (Model.TwoFactorStatus == GridGate.Launcher.Security.OwnerCodeResult.Unreadable)
+            {
+                <p id="rs-gloebit-two-factor">Saving the Gloebit app needs your two-factor code, which can't be checked right now: this computer's two-factor file can't be read.</p>
+            }
+            else
+            {
+                <p id="rs-gloebit-two-factor">Saving the Gloebit app needs two-factor sign-in, which isn't on for your account on this computer. <a href="@GridGate.Launcher.Security.OwnerCodeStep.TurnOnPath">Turn on two-factor</a>, then come back here.</p>
+            }
+        }
+        else
+        {
+            <p id="rs-gloebit-owner">Only this computer's owner can save its Gloebit app.</p>
+        }
     }
     @if (Model.CanPair)
     {
@@ -40,7 +59,7 @@
             }
         </p>
         <form method="post" action="/advanced/money?handler=Pair" asp-antiforgery="true" class="mb-3">
-            <label class="form-label" for="rs-money-code">Pairing code<help-tip>Make one on the Grid Asset Server's Money page, under Region Servers. It works once, for 15 minutes.</help-tip></label>
+            <label class="form-label" for="rs-money-code">Pairing code<help-tip>Make one on the Grid Asset Server's Money page, under Region Servers. It works once, for 15 minutes. Pairing restarts this server's running regions, so anyone in them is disconnected.</help-tip></label>
             <input class="form-control mb-2" id="rs-money-code" name="Code" maxlength="32" autocomplete="off" spellcheck="false" placeholder="7K2M-9QXD-4HTB-ZW3R" required>
             <button type="submit" class="btn btn-primary">Pair</button>
         </form>

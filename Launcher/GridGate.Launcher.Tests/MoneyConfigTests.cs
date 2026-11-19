@@ -54,7 +54,7 @@ public sealed class MoneyConfigTests : IDisposable
     };
 
     private void Write(LauncherSettings s, bool open = true) =>
-        new GridConfigWriter(_paths, open ? MoneyGate.Open : null).Write(s, []);
+        new GridConfigWriter(_paths, open ? MoneyGate.Open : MoneyGate.Closed).Write(s, []);
 
     private IniDocument Region(string instance) => IniDocument.Load(Path.Combine(_paths.RegionDir(instance), "OpenSim.ini"));
     private IniDocument Robust() => IniDocument.Load(Path.Combine(_paths.RuntimeOpenSim, "Robust.HG.ini"));

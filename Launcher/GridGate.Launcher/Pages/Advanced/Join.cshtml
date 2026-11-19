@@ -17,7 +17,7 @@
 }
 @if (Model.Found is { } found)
 {
-    <partial name="_JoinFound" model="new JoinFoundModel(found, Model.Address!, Repoint: true)" />
+    <partial name="_JoinFound" model="new JoinFoundModel(found, Model.Address!, Repoint: true, AskPassword: Model.AsksPassword, AskCode: Model.TwoFactorOn, NeedsTwoFactor: !Model.TwoFactorOn, TwoFactorUnreadable: Model.TwoFactorStatus == GridGate.Launcher.Security.OwnerCodeResult.Unreadable)" />
     return;
 }
 <p>This computer adds regions to the grid at <strong>@Model.Current</strong>. To use another grid's Grid Asset Server, type that computer's address: GridGate reads what it needs from it and shows you what it found before anything is saved.</p>

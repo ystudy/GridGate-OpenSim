@@ -596,6 +596,8 @@
   <data name="MyCoins.PayoutsTurnOn" xml:space="preserve"><value>Meinen Skripten das Auszahlen erlauben</value></data>
   <data name="MyCoins.PayoutsTurnOff" xml:space="preserve"><value>Meinen Skripten das Auszahlen verbieten</value></data>
   <data name="MyCoins.PayoutsOffGrid" xml:space="preserve"><value>In diesem Grid können Skripte nicht auszahlen.</value></data>
+  <data name="MyCoins.MoneyPaused" xml:space="preserve"><value>Geld ist für Sie bis zu Ihrer nächsten Anmeldung pausiert, weil Sie aus einer Region kamen, die nicht prüfen kann, wo Sie sind.</value></data>
+  <data name="MyCoins.MoneyPausedMoved" xml:space="preserve"><value>Geld ist für Sie bis zu Ihrer nächsten Anmeldung pausiert, weil Sie in eine Region gewechselt sind, die nicht prüfen kann, wo Sie sind.</value></data>
   <data name="MyCoins.History" xml:space="preserve"><value>Verlauf</value></data>
   <data name="MyCoins.NoHistory" xml:space="preserve"><value>Noch nichts.</value></data>
   <data name="MyCoins.When" xml:space="preserve"><value>Wann</value></data>
@@ -620,7 +622,9 @@
   <data name="MyCoins.Type.hold" xml:space="preserve"><value>Kauf</value></data>
   <data name="MyCoins.Type.hold_completed" xml:space="preserve"><value>Verkauf</value></data>
   <data name="MyCoins.Type.hold_returned" xml:space="preserve"><value>Kauf zurückgegeben</value></data>
+  <data name="MyCoins.Type.late_sale" xml:space="preserve"><value>Objektverkauf</value></data>
   <data name="MyCoins.Type.refund" xml:space="preserve"><value>Erstattung</value></data>
+  <data name="MyCoins.Type.fee_refund" xml:space="preserve"><value>Erstattung</value></data>
   <data name="MyCoins.Type.wallet_merge" xml:space="preserve"><value>Geldbörsen zusammengelegt</value></data>
   <data name="MyCoins.Type.fee_moved" xml:space="preserve"><value>Aus den Gebühren des Grids</value></data>
   <data name="MyCoins.WhatWithObject" xml:space="preserve"><value>{0}: {1}</value></data>

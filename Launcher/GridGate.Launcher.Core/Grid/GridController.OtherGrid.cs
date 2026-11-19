@@ -188,7 +188,15 @@ public sealed partial class GridController
         catch (Exception e) when (e is GridJoinException or HttpRequestException && !ct.IsCancellationRequested) { return; }
         if (read.Money == joined.Money) return;
 
-        var gloebitBefore = MoneyPlace.GloebitHere(s, _money);
+        // What the running region programs hold, not what is saved or last written: a change that was only saved never ran Gloebit, and
+        // a config written since doesn't change a program that is already running. With none running, the last written config decides.
+        bool gloebitBefore;
+        lock (_configGate)
+        {
+            var active = _programs.Where(p => RegionPowerPlan.IsActive(p.Value.Process.State)).Select(p => p.Key).ToList();
+            var written = _gloebitWritten ?? MoneyPlace.GloebitHere(s, _money);
+            gloebitBefore = active.Count == 0 ? written : active.Any(i => _gloebitAtStart.TryGetValue(i, out var held) ? held : written);
+        }
         // Saved only while the join still names the server this check read, as at start.
         var latest = UpdateSettings(l => l.Join is not { } current || current.Host != joined.Host || current.PublicPort != joined.PublicPort
             ? l

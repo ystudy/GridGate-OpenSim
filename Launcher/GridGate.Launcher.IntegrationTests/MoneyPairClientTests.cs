@@ -24,6 +24,7 @@ public sealed class MoneyPairClientTests(MoneyMariaDb maria) : IClassFixture<Mon
     private MoneyPairing _pairing = null!;
     private string _fingerprint = "";
     private int _port;
+    private RegionPins _pins = null!;
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
@@ -49,9 +50,10 @@ public sealed class MoneyPairClientTests(MoneyMariaDb maria) : IClassFixture<Mon
         var cert = MoneyCertificate.LoadOrCreate(Path.Combine(_dir, MoneyCertificate.FileName), TimeProvider.System);
         _fingerprint = MoneyCertificate.Fingerprint(cert);
         _pairing = new MoneyPairing(TimeProvider.System);
+        _pins = new RegionPins(MoneyConnections.Money(() => dbSettings), new RegionHosts(MoneyConnections.Robust(() => dbSettings)), TimeProvider.System);
         _host = new MoneyServiceHost(ledger, presence, () => _grid, () => MoneyMode.Play, () => cert,
             new MoneyAuthFailures(TimeProvider.System, NullLogger<MoneyAuthFailures>.Instance), NullLoggerFactory.Instance, new MoneyStatus(), _pairing,
-            change => _grid = change(_grid), new RegionHosts(MoneyConnections.Robust(() => dbSettings)));
+            change => _grid = change(_grid), _pins);
         await _host.StartAsync(Ct);
         return db;
     }
@@ -75,6 +77,12 @@ public sealed class MoneyPairClientTests(MoneyMariaDb maria) : IClassFixture<Mon
         public Task<JoinedGrid> ReadAsync(string host, int port, CancellationToken ct) => Task.FromResult(answer);
     }
 
+    /// <summary>The owner pressing Confirm on every paired server: regions listed when it paired wait until then.</summary>
+    private async Task ConfirmAllAsync()
+    {
+        foreach (var server in _grid.Money.PairedServers ?? []) await _pins.ConfirmAllAsync(server, Ct);
+    }
+
     [Fact]
     public async Task Pairs_with_the_real_service()
     {
@@ -93,6 +101,7 @@ public sealed class MoneyPairClientTests(MoneyMariaDb maria) : IClassFixture<Mon
         Assert.Equal("192.168.1.20", Assert.Single(_grid.Money.PairedServers!).Host);
         Assert.Equal(PairedServer.HashOf(pairing.Key), _grid.Money.PairedServers![0].KeyHash);
 
+        await ConfirmAllAsync();
         var paired = rs with { Money = rs.Money with { Pairing = pairing } };
         Assert.Equal(PairingHealth.Ok, await client.CheckAsync(paired, Ct));
         Assert.Equal(8004, _grid.Money.PairedServers![0].FirstPort);
@@ -119,7 +128,7 @@ public sealed class MoneyPairClientTests(MoneyMariaDb maria) : IClassFixture<Mon
         await new MoneyPairClient(new FakeJoin(rs.Join!), TimeProvider.System).PairAsync(rs, code, Ct);
 
         Assert.Equal(8500, Assert.Single(_grid.Money.PairedServers!).FirstPort);
-        Assert.Equal("rs", _grid.Money.PairedServers![0].MachineId);
+        Assert.Equal(PairedServer.MachineKeyOf("rs"), _grid.Money.PairedServers![0].MachineId);
     }
 
     [Fact]
@@ -134,6 +143,7 @@ public sealed class MoneyPairClientTests(MoneyMariaDb maria) : IClassFixture<Mon
         };
         var client = new MoneyPairClient(new FakeJoin(rs.Join!), TimeProvider.System);
         var pairing = (await client.PairAsync(rs, code, Ct)).Pairing!;
+        await ConfirmAllAsync();
 
         Assert.Equal(PairingHealth.SomeRegions, await client.CheckAsync(rs with { Money = rs.Money with { Pairing = pairing } }, Ct));
     }

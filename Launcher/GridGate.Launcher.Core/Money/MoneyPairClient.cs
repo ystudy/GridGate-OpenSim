@@ -36,7 +36,22 @@ public sealed class MoneyPairClient(IGridJoinClient join, TimeProvider time) : I
 
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
-    private sealed record PairAnswer(string? Code, string? Key, string? Proof);
+    private sealed record PairAnswer(string? Code, string? Key, string? Proof)
+    {
+        // What this record holds is never printed, so a log line or an exception that shows it can't leak it.
+        private bool PrintMembers(System.Text.StringBuilder sb)
+        {
+            sb.Append($"Code = hidden, Key = hidden, Proof = hidden");
+            return true;
+        }
+
+        public override string ToString()
+        {
+            var sb = new System.Text.StringBuilder("PairAnswer { ");
+            PrintMembers(sb);
+            return sb.Append(" }").ToString();
+        }
+    }
     private sealed record HealthAnswer(string? Code, bool? Ok, int? Regions);
 
     public async Task<PairOutcome> PairAsync(LauncherSettings s, string typedCode, CancellationToken ct)
@@ -72,7 +87,7 @@ public sealed class MoneyPairClient(IGridJoinClient join, TimeProvider time) : I
         {
             using var http = Pinned(fingerprint, out _);
             using var response = await http.PostAsJsonAsync($"https://{joined.Host}:{port}/money/v1/pair",
-                new { host, firstPort = FirstPort(s), machineId = s.MachineId, nonce, proof = PairingProof.Client(code, fingerprint, nonce, host) }, Json, ct);
+                new { host, firstPort = FirstPort(s), machineId = PairedServer.MachineKeyOf(s.MachineId), nonce, proof = PairingProof.Client(code, fingerprint, nonce, host) }, Json, ct);
             answer = response.IsSuccessStatusCode ? await response.Content.ReadFromJsonAsync<PairAnswer>(Json, ct) : null;
         }
         catch (Exception e) when (e is HttpRequestException or TaskCanceledException or JsonException or NotSupportedException && !ct.IsCancellationRequested)

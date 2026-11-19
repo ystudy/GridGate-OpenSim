@@ -32,6 +32,7 @@ using log4net;
 using OpenSim.Framework;
 using OpenSim.Region.Framework.Interfaces;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Xml;
 using PermissionMask = OpenSim.Framework.PermissionMask;
 
@@ -564,6 +565,10 @@ namespace OpenSim.Region.Framework.Scenes
                 return;
             }
 
+            // GridGate: the engine stores these states as they are given; see StateFromOutside.
+            if (m_stateFromOutside)
+                DropDebit(doc);
+
             XmlNodeList rootL = doc.GetElementsByTagName("ScriptData");
             if (rootL.Count != 1)
                 return;
@@ -581,7 +586,82 @@ namespace OpenSim.Region.Framework.Scenes
                 XmlElement stateE = (XmlElement)n;
                 UUID itemID = new(stateE.GetAttribute("UUID"));
 
-                scriptModule.SetXMLState(itemID, n.OuterXml);
+                // GridGate: only a state this program captured from its own running scripts (a crossing or a teleport
+                // between its regions) is stored as one; a state from outside has no such claim.
+                scriptModule.SetXMLState(itemID, n.OuterXml, !m_stateFromOutside);
+            }
+        }
+
+        /// <summary>GridGate: PERMISSION_DEBIT, as LSL defines it (<c>ScriptBaseClass.PERMISSION_DEBIT</c>).</summary>
+        private const int PermissionDebit = 0x02;
+
+        /// <summary>
+        /// GridGate: removes PERMISSION_DEBIT from the mask of every <c>Permissions</c> element in saved script state, which
+        /// is where YEngine keeps a script's granter and mask in its own format and in XEngine's. A mask that doesn't
+        /// read as a number becomes 0.
+        /// </summary>
+        private static void DropDebit(XmlDocument doc)
+        {
+            foreach (XmlNode node in doc.GetElementsByTagName("Permissions"))
+            {
+                if (node is not XmlElement permissions || !permissions.HasAttribute("mask"))
+                    continue;
+                int mask = int.TryParse(permissions.GetAttribute("mask"), NumberStyles.Integer, CultureInfo.InvariantCulture,
+                    out int saved) ? saved & ~PermissionDebit : 0;
+                permissions.SetAttribute("mask", mask.ToString(CultureInfo.InvariantCulture));
+            }
+        }
+
+        /// <summary>
+        /// GridGate: drops PERMISSION_DEBIT from the saved script states this object carries (an archive's or an XML
+        /// file's), which a script engine stores when the scripts start. A state that isn't XML is dropped whole.
+        /// </summary>
+        private void DropDebitFromSavedScriptStates()
+        {
+            if (m_savedScriptState is null)
+                return;
+
+            foreach (UUID itemID in new List<UUID>(m_savedScriptState.Keys))
+            {
+                try
+                {
+                    XmlDocument doc = new();
+                    doc.LoadXml(m_savedScriptState[itemID]);
+                    DropDebit(doc);
+                    m_savedScriptState[itemID] = doc.OuterXml;
+                }
+                catch (Exception)
+                {
+                    m_savedScriptState.Remove(itemID);
+                }
+            }
+        }
+
+        /// <summary>
+        /// GridGate: drops PERMISSION_DEBIT from everything this object stores from a state that came from outside: its
+        /// saved script states and its script items' masks (the region database keeps those).
+        /// </summary>
+        private void DropDebitFromStoredStates()
+        {
+            DropDebitFromSavedScriptStates();
+
+            SceneObjectPart[] parts = m_parts.GetArray();
+            for (int i = 0; i < parts.Length; i++)
+            {
+                TaskInventoryDictionary items = parts[i].TaskInventory;
+                if (items is null)
+                    continue;
+
+                items.LockItemsForWrite(true);
+                try
+                {
+                    foreach (TaskInventoryItem item in items.Values)
+                        item.PermsMask &= ~PermissionDebit;
+                }
+                finally
+                {
+                    items.LockItemsForWrite(false);
+                }
             }
         }
 

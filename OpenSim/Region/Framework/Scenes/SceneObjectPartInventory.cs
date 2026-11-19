@@ -587,7 +587,8 @@ namespace OpenSim.Region.Framework.Scenes
                 {
                     if (e != null)
                     {
-                        if (e.SetXMLState(newID, m_part.ParentGroup.m_savedScriptState[stateID]))
+                        // GridGate: this state comes from the object's asset, not from a running script of this program.
+                        if (e.SetXMLState(newID, m_part.ParentGroup.m_savedScriptState[stateID], false))
                             break;
                     }
                 }

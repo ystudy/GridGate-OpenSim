@@ -59,6 +59,11 @@ namespace OpenSim.Region.Framework.Interfaces
         string GetXMLState(UUID itemID);
         bool SetXMLState(UUID itemID, string xml);
 
+        // GridGate: stores a state like SetXMLState; fromRunningScript says the state was captured from one of this program's
+        // own running scripts (a crossing or a teleport between its regions). Anything else, such as the state saved in an
+        // object's asset, is stored as from outside: an engine that keeps a grant or a mark apart for its own states drops them.
+        bool SetXMLState(UUID itemID, string xml, bool fromRunningScript) => SetXMLState(itemID, xml);
+
         /// <summary>
         /// Post a script event to a single script.
         /// </summary>

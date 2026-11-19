@@ -197,11 +197,14 @@ builder.Services.AddRazorPages(o =>
     o.Conventions.AuthorizeFolder("/Staff", AuthSchemes.OwnerPolicy);
     // The owner's password-recovery rules (the admin policy applies too; the owner passes both). Only with a guest side.
     o.Conventions.AuthorizePage("/Advanced/PasswordReset", AuthSchemes.OwnerPolicy);
+    // Pointing a Region Server at another grid moves its regions, owner and money: the owner's call.
+    o.Conventions.AuthorizePage("/Advanced/Join", AuthSchemes.OwnerPolicy);
     o.Conventions.AddPageApplicationModelConvention("/Advanced/PasswordReset", m => m.Filters.Add(new GuestSideOnly()));
     o.Conventions.AuthorizeFolder("/People", AuthSchemes.StaffPolicy);
     o.Conventions.AddFolderApplicationModelConvention("/Staff", m => m.Filters.Add(new StaffPagesOnly()));
     o.Conventions.AddFolderApplicationModelConvention("/People", m => m.Filters.Add(new StaffPagesOnly()));
-    // The Money pages (money plan 2): every staff member may look, the handlers let only admins change anything.
+    // The Money pages (money plan 2): every staff member may look; the handlers let only admins change anything, and keep
+    // some changes for the owner (turning Gloebit on, its app, own limits, moved regions).
     o.Conventions.AuthorizeFolder("/Money", AuthSchemes.StaffPolicy);
     o.Conventions.AddFolderApplicationModelConvention("/Money", m => m.Filters.Add(new StaffPagesOnly()));
     o.Conventions.AuthorizeFolder("/Guest", AuthSchemes.GuestPolicy);
@@ -424,7 +427,22 @@ builder.Services.AddSingleton<MoneyStatus>();
 builder.Services.AddSingleton(sp => new MoneyPairing(sp.GetRequiredService<TimeProvider>()));
 builder.Services.AddSingleton<IMoneyPairClient>(sp => new MoneyPairClient(sp.GetRequiredService<IGridJoinClient>(), sp.GetRequiredService<TimeProvider>()));
 builder.Services.AddSingleton(sp => new RegionHosts(MoneyConnections.Robust(sp.GetRequiredService<Func<LauncherSettings>>())));
-builder.Services.AddSingleton<ISecureSessionCheck>(sp => sp.GetRequiredService<PresenceCheck>());
+// The owner's money alerts: raised by the money service, read on the dashboard and the Money page.
+builder.Services.AddSingleton(sp => new MoneyAlerts(MoneyConnections.Money(sp.GetRequiredService<Func<LauncherSettings>>()),
+    sp.GetRequiredService<TimeProvider>(), sp.GetRequiredService<ILogger<MoneyAlerts>>(), sp.GetRequiredService<AuditLog>()));
+builder.Services.AddSingleton<IMoneyAlerts>(sp => sp.GetRequiredService<MoneyAlerts>());
+builder.Services.AddSingleton(sp => new RegionPins(MoneyConnections.Money(sp.GetRequiredService<Func<LauncherSettings>>()),
+    sp.GetRequiredService<RegionHosts>(), sp.GetRequiredService<TimeProvider>(), sp.GetRequiredService<MoneyAlerts>()));
+builder.Services.AddSingleton(sp => new RegionVerification(MoneyConnections.Money(sp.GetRequiredService<Func<LauncherSettings>>()),
+    MoneyConnections.Robust(sp.GetRequiredService<Func<LauncherSettings>>()), sp.GetRequiredService<RegionPins>(), sp.GetRequiredService<TimeProvider>()));
+builder.Services.AddSingleton(sp => new MoneyLocations(MoneyConnections.Money(sp.GetRequiredService<Func<LauncherSettings>>()),
+    MoneyConnections.Robust(sp.GetRequiredService<Func<LauncherSettings>>()), sp.GetRequiredService<RegionVerification>(),
+    sp.GetRequiredService<PresenceCheck>(), sp.GetRequiredService<TimeProvider>()));
+// The money pages' view of regions and where people are; tests swap it.
+builder.Services.AddSingleton<IMoneyRegions>(sp => new MoneyRegions(sp.GetRequiredService<RegionVerification>(), sp.GetRequiredService<RegionPins>(),
+    sp.GetRequiredService<MoneyLocations>()));
+// The economy helper has its own pooled, capped Robust connections, so many callers can't flood the shared database.
+builder.Services.AddSingleton<ISecureSessionCheck>(sp => new PresenceCheck(MoneyConnections.RobustLookups(sp.GetRequiredService<Func<LauncherSettings>>())));
 builder.Services.AddSingleton(sp => new EconomyLimits(sp.GetRequiredService<TimeProvider>()));
 builder.Services.AddSingleton<EconomyHelper>();
 builder.Services.AddSingleton(sp => new PresenceCheck(MoneyConnections.Robust(sp.GetRequiredService<Func<LauncherSettings>>())));
@@ -448,11 +466,13 @@ builder.Services.AddSingleton(sp =>
         () => MoneyCertificate.LoadOrCreate(Path.Combine(paths.Security, MoneyCertificate.FileName), time),
         sp.GetRequiredService<MoneyAuthFailures>(), sp.GetRequiredService<ILoggerFactory>(), sp.GetRequiredService<MoneyStatus>(),
         sp.GetRequiredService<MoneyPairing>(), change => sp.GetRequiredService<IGridController>().UpdateSettings(change, writeConfig: false),
-        sp.GetRequiredService<RegionHosts>());
+        sp.GetRequiredService<RegionPins>(), sp.GetRequiredService<RegionVerification>(), sp.GetRequiredService<MoneyLocations>(),
+        sp.GetRequiredService<MoneyAlerts>());
 });
 builder.Services.AddHostedService(sp => sp.GetRequiredService<MoneyServiceHost>());
 builder.Services.AddHostedService(sp => new MoneyMaintenance(sp.GetRequiredService<MoneyLedger>(), sp.GetRequiredService<MoneyGate>().ServiceMode,
-    sp.GetRequiredService<TimeProvider>(), sp.GetRequiredService<ILogger<MoneyMaintenance>>(), sp.GetRequiredService<MoneyStatus>()));
+    sp.GetRequiredService<TimeProvider>(), sp.GetRequiredService<ILogger<MoneyMaintenance>>(), sp.GetRequiredService<MoneyStatus>(),
+    sp.GetRequiredService<MoneyLocations>()));
 builder.Services.AddHostedService<GridHostedService>();
 // Moves regions into their owner's estate and back while they run; registered after GridHostedService, so it stops first.
 builder.Services.AddHostedService<RegionEstateSync>();

@@ -70,42 +70,86 @@ internal sealed class MoneyScene
         beforeMoney?.Invoke(scene);
 
         var service = new FakeMoneyService { Economy = economy ?? new EconomyInfo("C$", 0, 0, true, true, 1_000_000) };
-        var module = new GridGateMoneyModule();
-        module.Initialise(config);
-        Assert.True(module.Enabled);
-        var field = typeof(GridGateMoneyModule).GetField("_client", BindingFlags.NonPublic | BindingFlags.Instance)
-                    ?? throw new InvalidOperationException("GridGateMoneyModule no longer keeps its client in _client.");
-        (field.GetValue(module) as IDisposable)?.Dispose();
-        field.SetValue(module, service);
-
-        module.PostInitialise();
-        module.AddRegion(scene);
-        scene.AddRegionModule(module.Name, module);
-        module.RegionLoaded(scene);
-        scene.SetModuleInterfaces();
+        var module = NewModule(service, config);
+        AddTo(module, scene);
 
         var region = new MoneyScene { Scene = scene, Module = module, Service = service };
         region.WaitForEconomy(service.Economy!);
         return region;
     }
 
+    /// <summary>The module, initialised from <paramref name="config"/> (default <see cref="Config"/>), talking to <paramref name="service"/>.</summary>
+    public static GridGateMoneyModule NewModule(FakeMoneyService service, IConfigSource? config = null)
+    {
+        var module = new GridGateMoneyModule();
+        module.Initialise(config ?? Config());
+        Assert.True(module.Enabled);
+        var field = typeof(GridGateMoneyModule).GetField("_client", BindingFlags.NonPublic | BindingFlags.Instance)
+                    ?? throw new InvalidOperationException("GridGateMoneyModule no longer keeps its client in _client.");
+        (field.GetValue(module) as IDisposable)?.Dispose();
+        field.SetValue(module, service);
+        module.PostInitialise();
+        return module;
+    }
+
+    /// <summary>Loads <paramref name="module"/> into <paramref name="scene"/> as OpenSim loads a shared module.</summary>
+    public static void AddTo(GridGateMoneyModule module, Scene scene)
+    {
+        module.AddRegion(scene);
+        scene.AddRegionModule(module.Name, module);
+        module.RegionLoaded(scene);
+        scene.SetModuleInterfaces();
+    }
+
+    /// <summary>Waits until the module has sent every place report queued so far.</summary>
+    public void FlushPlaces() => Flush(Module);
+
+    public static void Flush(GridGateMoneyModule module) =>
+        Assert.True(module.Places!.FlushAsync().Wait(TimeSpan.FromSeconds(15)), "The module's place reports never went out.");
+
     /// <summary>The module asks the service for its settings in the background; waits until it has them.</summary>
     private void WaitForEconomy(EconomyInfo economy)
     {
         var deadline = DateTime.UtcNow.AddSeconds(15);
-        while (Module.UploadCharge != economy.UploadFee || ((IClassifiedFeeModule)Module).ClassifiedFee != economy.ClassifiedFee)
+        var known = typeof(GridGateMoneyModule).GetField("_economy", BindingFlags.NonPublic | BindingFlags.Instance)
+                    ?? throw new InvalidOperationException("GridGateMoneyModule no longer keeps the economy in _economy.");
+        while (!Equals(known.GetValue(Module), economy))
         {
             Assert.True(DateTime.UtcNow < deadline, "The module never read the economy settings.");
             Thread.Sleep(10);
         }
     }
 
-    /// <summary>A resident with an account and inventory, in the region as a root agent, on a client that records alerts.</summary>
-    public RecordingClient Arrive(UUID id)
+    /// <summary>Puts the module back to before its service ever answered: no settings known, and none asked for in the next minute.</summary>
+    public void ForgetEconomy()
+    {
+        var flags = BindingFlags.NonPublic | BindingFlags.Instance;
+        typeof(GridGateMoneyModule).GetField("_economy", flags)!.SetValue(Module, null);
+        typeof(GridGateMoneyModule).GetField("_economyAt", flags)!.SetValue(Module, DateTime.UtcNow);
+    }
+
+    /// <summary>Gives the module these settings as if the service had just answered them.</summary>
+    public void SetEconomy(EconomyInfo economy)
+    {
+        var flags = BindingFlags.NonPublic | BindingFlags.Instance;
+        typeof(GridGateMoneyModule).GetField("_economy", flags)!.SetValue(Module, economy);
+        typeof(GridGateMoneyModule).GetField("_economyAt", flags)!.SetValue(Module, DateTime.UtcNow);
+    }
+
+    /// <summary>The recording client of an avatar that has arrived here.</summary>
+    public RecordingClient ClientOf(UUID id) =>
+        Scene.TryGetScenePresence(id, out ScenePresence sp) ? (RecordingClient)sp.ControllingClient : throw new InvalidOperationException("Not here.");
+
+    /// <summary>
+    /// A resident with an account and inventory, in the region as a root agent, on a client that records alerts. With a
+    /// <paramref name="home"/> the login names that home grid, as a visitor's does.
+    /// </summary>
+    public RecordingClient Arrive(UUID id, string? home = null)
     {
         if (Scene.UserAccountService.GetUserAccount(Scene.RegionInfo.ScopeID, id) is null)
             UserAccountHelpers.CreateUserWithInventory(Scene, id);
         var data = SceneHelpers.GenerateAgentData(id);
+        if (home is not null) (data.ServiceURLs ??= new Dictionary<string, object>())["HomeURI"] = home;
         var client = new RecordingClient(data, Scene);
         SceneHelpers.AddScenePresence(Scene, client, data);
         return client;
@@ -120,6 +164,18 @@ internal sealed class MoneyScene
             var call = Service.Of(method).FirstOrDefault(c => match is null || match(c));
             if (call is not null) return call;
             Assert.True(DateTime.UtcNow < deadline, $"No {method} call reached the money service.");
+            Thread.Sleep(10);
+        }
+    }
+
+    /// <summary>Waits until the service has had a place report of <paramref name="method"/>.</summary>
+    public Call WaitForPlace(string method)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(15);
+        while (true)
+        {
+            if (Service.PlacesOf(method).FirstOrDefault() is { } call) return call;
+            Assert.True(DateTime.UtcNow < deadline, $"No {method} report reached the money service.");
             Thread.Sleep(10);
         }
     }
@@ -139,6 +195,21 @@ internal sealed class RecordingClient(AgentCircuitData data, Scene scene) : Test
     public new void SendAlertMessage(string message) => Alerts.Enqueue(message);
 
     public new void SendAgentAlertMessage(string message, bool modal) => Alerts.Enqueue(message);
+
+    /// <summary>The xfer ids the region asked this client to send an upload's data on.</summary>
+    public ConcurrentQueue<ulong> XferRequests { get; } = new();
+
+    public new void SendXferRequest(ulong xferID, short assetType, UUID fileID, byte filePath, byte[] fileName) => XferRequests.Enqueue(xferID);
+
+    /// <summary>The instant messages delivered to this client directly (the invitee being in the region).</summary>
+    public ConcurrentQueue<GridInstantMessage> Instant { get; } = new();
+
+    public new void SendInstantMessage(GridInstantMessage im) => Instant.Enqueue(im);
+
+    /// <summary>What the client was told about each join: the group and whether it worked.</summary>
+    public ConcurrentQueue<(UUID Group, bool Success)> JoinReplies { get; } = new();
+
+    public new void SendJoinGroupReply(UUID groupID, bool success) => JoinReplies.Enqueue((groupID, success));
 
     /// <summary>Raises one of the client's packet events, as OpenSim's UDP stack does when the viewer's packet arrives.</summary>
     public void Raise(string clientEvent, params object?[] args)
@@ -175,7 +246,30 @@ internal class OneGroup : DispatchProxy
     private GroupRecord? _record;
 
     protected override object? Invoke(MethodInfo? targetMethod, object?[]? args) =>
-        targetMethod?.Name == nameof(IGroupsModule.GetGroupRecord) && args is [string name]
-            ? name == _record!.GroupName ? _record : null
-            : throw new NotSupportedException(targetMethod?.Name);
+        targetMethod?.Name != nameof(IGroupsModule.GetGroupRecord) ? throw new NotSupportedException(targetMethod?.Name)
+        : args is [string name] ? name == _record!.GroupName ? _record : null
+        : args is [UUID id] ? id == _record!.GroupID ? _record : null
+        : throw new NotSupportedException(targetMethod?.Name);
+}
+
+/// <summary>A user management module for visitors known only by what its name cache says: each has a home address there.</summary>
+internal class CachedVisitors : DispatchProxy
+{
+    public const string CachedHome = "http://cache.example:8002/";
+
+    public static IUserManagement Create(params UUID[] visitors)
+    {
+        var proxy = Create<IUserManagement, CachedVisitors>();
+        ((CachedVisitors)(object)proxy)._visitors = [.. visitors];
+        return proxy;
+    }
+
+    private HashSet<UUID> _visitors = [];
+
+    protected override object? Invoke(MethodInfo? targetMethod, object?[]? args) => targetMethod?.Name switch
+    {
+        nameof(IUserManagement.IsLocalGridUser) => !_visitors.Contains((UUID)args![0]!),
+        nameof(IUserManagement.GetUserHomeURL) => _visitors.Contains((UUID)args![0]!) ? CachedHome : "",
+        _ => targetMethod is { ReturnType: { IsValueType: true } t } && t != typeof(void) ? Activator.CreateInstance(t) : null,
+    };
 }

@@ -5,6 +5,7 @@ using GridGate.Launcher.Core.Money;
 using GridGate.Launcher.Core.OpenSim;
 using GridGate.Launcher.Core.Settings;
 using GridGate.Launcher.Guests;
+using GridGate.Launcher.Money;
 using GridGate.Launcher.Security;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
@@ -17,12 +18,16 @@ public sealed record CoinsLine(DateTimeOffset At, string What, string Who, long 
 
 /// <summary>
 /// My coins (<c>/guest/coins</c>; money design §9.5): the resident's balance, the newest 50 lines, and the "my scripts may
-/// pay out" switch, which is off until they turn it on. Not there while money is off.
+/// pay out" switch, which is off until they turn it on; and one line when money is paused for them. Not there while money
+/// is off.
 /// </summary>
 [MoneyPagesOnly]
 public sealed class CoinsModel(IMoneyBooks books, Func<LauncherSettings> settings, IRobustClient robust, AuditLog audit,
-    IStringLocalizer<ResidentText> t) : PageModel
+    IStringLocalizer<ResidentText> t, IMoneyRegions regions) : PageModel
 {
+    /// <summary>The text key of the line saying money is paused for them, and why; null when it isn't.</summary>
+    public string? Paused { get; private set; }
+
     public const int HistoryLines = 50;
 
     // Lines that move coins in or out of Holding (a purchase on its way): the other side is never shown (plan 1 deferred finding).
@@ -93,15 +98,38 @@ public sealed class CoinsModel(IMoneyBooks books, Func<LauncherSettings> setting
             Balance = null;
             Lines = [];
         }
+        try
+        {
+            // Their newest logged-in session; nothing when they aren't in the world.
+            Paused = (await regions.WhereAgentAsync(principal, ct))?.State switch
+            {
+                LocationState.Unverified => "MyCoins.MoneyPaused",
+                LocationState.Handed => "MyCoins.MoneyPausedMoved",
+                _ => null,
+            };
+        }
+        catch (MoneyUnavailableException)
+        {
+            // Only this line depends on it: the rest of the page stands.
+        }
     }
 
     /// <summary>
     /// What a line was, in words. A completed hold is the seller's side: a sale, of land when the hold was for land. The
-    /// buyer's own hold line stays for good, so its words never say it is still waiting.
+    /// buyer's own hold line stays for good, so its words never say it is still waiting. A fee held before its action reads
+    /// as that fee on both sides.
     /// </summary>
     private string What(HistoryLine line)
     {
-        var type = line.Type == EntryType.HoldCompleted && line.Reason == EntryType.LandSale ? EntryType.LandSale : line.Type;
+        var type = line.Type switch
+        {
+            EntryType.Hold or EntryType.HoldCompleted when line.Reason is { } fee && MoneyLedger.IsFeeKind(fee) => fee,
+            EntryType.HoldCompleted when line.Reason == EntryType.LandSale => EntryType.LandSale,
+            // A sale completed after its hold ran out reads as what it paid for: its fee, a land sale or an object sale.
+            EntryType.LateSale when line.Reason is EntryType.LandSale or EntryType.ObjectSale => line.Reason,
+            EntryType.LateSale when line.Reason is { } late && MoneyLedger.IsFeeKind(late) => late,
+            _ => line.Type,
+        };
         string words = t["MyCoins.Type." + type];
         return string.IsNullOrWhiteSpace(line.ObjectName) ? words : t["MyCoins.WhatWithObject", words, line.ObjectName];
     }

@@ -215,6 +215,34 @@ namespace OpenSim.Region.CoreModules.Agent.AssetTransaction
                     transactionID, item);
         }
 
+        // GridGate: temporary uploads started per avatar in this region
+        private readonly TemporaryUploadLimit m_temporaryUploads = new();
+
+        /// <summary>
+        /// GridGate: the UDP uploads the upload fee applies to. The funds check in HandleUDPUploadRequest and the charge in
+        /// AssetXferUploader both ask this, so they can't disagree.
+        /// </summary>
+        public static bool UploadFeeApplies(sbyte assetType, bool temporary)
+        {
+            // The texture family is the one UploadTypesMatch accepts for a texture item, so no variant is a free texture.
+            return !temporary && (IsTextureFamily(assetType) || (AssetType)assetType is AssetType.Sound or AssetType.Animation);
+        }
+
+        /// <summary>
+        /// GridGate: whether an item of <paramref name="itemType"/> may be made from an upload of
+        /// <paramref name="uploadedType"/>. The same type always matches; the texture variants a viewer sends for a
+        /// texture (Texture, TextureTGA, ImageTGA, ImageJPEG) match each other; nothing else does.
+        /// </summary>
+        public static bool UploadTypesMatch(sbyte uploadedType, sbyte itemType)
+        {
+            return uploadedType == itemType || (IsTextureFamily(uploadedType) && IsTextureFamily(itemType));
+        }
+
+        private static bool IsTextureFamily(sbyte assetType)
+        {
+            return (AssetType)assetType is AssetType.Texture or AssetType.TextureTGA or AssetType.ImageTGA or AssetType.ImageJPEG;
+        }
+
         /// <summary>
         /// Request that a client (agent) begin an asset transfer.
         /// </summary>
@@ -232,11 +260,15 @@ namespace OpenSim.Region.CoreModules.Agent.AssetTransaction
 //                "[ASSET TRANSACTION MODULE]: HandleUDPUploadRequest - assetID: {0}, transaction {1}, type {2}, storeLocal {3}, tempFile {4}, data.Length {5}",
 //                assetID, transactionID, type, storeLocal, tempFile, data.Length);
 
-            if (((AssetType)type == AssetType.Texture ||
-                (AssetType)type == AssetType.Sound ||
-                (AssetType)type == AssetType.TextureTGA ||
-                (AssetType)type == AssetType.Animation) &&
-                tempFile == false)
+            // GridGate: temporary uploads are free (viewer bakes use them) and are limited per avatar instead.
+            if (tempFile && !m_temporaryUploads.TryStart(remoteClient.AgentId, Environment.TickCount64))
+            {
+                remoteClient.SendAgentAlertMessage("Too many temporary uploads. Please wait a minute and try again.", false);
+                return;
+            }
+
+            // GridGate: the same list decides the check here and the charge in AssetXferUploader.
+            if (UploadFeeApplies(type, tempFile))
             {
                 Scene scene = (Scene)remoteClient.Scene;
                 scene.TryGetScenePresence(remoteClient.AgentId, out ScenePresence avatar);
@@ -253,6 +285,13 @@ namespace OpenSim.Region.CoreModules.Agent.AssetTransaction
 
                 // check funds
                 IMoneyModule mm = scene.RequestModuleInterface<IMoneyModule>();
+
+                // GridGate: while the money module doesn't know the fee (an unpaired Region Server never does), say so
+                if (mm is IUploadFeeKnown { UploadFeeKnown: false } feeNotKnown)
+                {
+                    remoteClient.SendAgentAlertMessage("Unable to upload asset. " + feeNotKnown.UploadFeeUnknownText, false);
+                    return;
+                }
 
                 if (mm != null)
                 {

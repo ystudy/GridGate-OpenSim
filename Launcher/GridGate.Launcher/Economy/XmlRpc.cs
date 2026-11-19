@@ -22,6 +22,16 @@ public static class XmlRpc
 
     private sealed class Bad : Exception;
 
+    private static readonly UTF8Encoding StrictUtf8 = new(false, true);
+
+    /// <summary>
+    /// Whether a declared encoding is one this reader reads: none, or UTF-8. A viewer's library may declare an ASCII-compatible
+    /// one over a body that is plain ASCII, which UTF-8 reads the same; every other declaration is refused.
+    /// </summary>
+    private static bool PlainEncoding(string? declared, byte[] bytes) =>
+        declared is null || declared.Equals("utf-8", StringComparison.OrdinalIgnoreCase) || declared.Equals("utf8", StringComparison.OrdinalIgnoreCase)
+        || (declared.ToLowerInvariant() is "us-ascii" or "ascii" or "iso-8859-1" or "latin1" && bytes.All(b => b < 0x80));
+
     /// <summary>The call in <paramref name="body"/>, or null for anything that isn't a plain XML-RPC call.</summary>
     public static Call? Read(Stream body, int maxBytes = MaxBytes)
     {
@@ -29,6 +39,9 @@ public static class XmlRpc
         {
             var bytes = ReadCapped(body, maxBytes);
             if (bytes is null || bytes.Length == 0) return null;
+            // UTF-8 only: a byte order mark is dropped, and bytes that aren't valid UTF-8 (UTF-16 and UTF-32 included) throw.
+            var start = bytes.AsSpan().StartsWith(Encoding.UTF8.Preamble) ? Encoding.UTF8.Preamble.Length : 0;
+            var text = StrictUtf8.GetString(bytes, start, bytes.Length - start);
             var settings = new XmlReaderSettings
             {
                 DtdProcessing = DtdProcessing.Prohibit,
@@ -38,16 +51,27 @@ public static class XmlRpc
                 IgnoreComments = true,
                 IgnoreProcessingInstructions = true,
             };
-            using var reader = XmlReader.Create(new MemoryStream(bytes), settings);
-            var root = XDocument.Load(reader).Root;
-            if (root is null || root.Name.LocalName != "methodCall") return null;
-            var method = root.Element("methodName")?.Value.Trim();
+            using var reader = XmlReader.Create(new StringReader(text), settings);
+            var doc = XDocument.Load(reader);
+            if (!PlainEncoding(doc.Declaration?.Encoding, bytes)) return null;
+            var root = doc.Root;
+            if (root is null || root.Name.LocalName != "methodCall" || root.DescendantsAndSelf().Any(e => e.Name.Namespace != XNamespace.None)) return null;
+            // Exactly one name, and at most one params with one param: a second would read as the first, or be ignored.
+            var names = root.Elements("methodName").ToList();
+            var allParams = root.Elements("params").ToList();
+            if (names.Count != 1 || allParams.Count > 1 || allParams.Any(p => p.Elements("param").Count() > 1)) return null;
+            var name = names[0];
+            // The name is text only: nested markup around it would read as the same method.
+            if (name.HasElements) return null;
+            var method = name.Value.Trim();
             if (string.IsNullOrEmpty(method)) return null;
-            var value = root.Element("params")?.Element("param")?.Element("value");
+            var values = allParams.SelectMany(p => p.Elements("param")).SelectMany(p => p.Elements("value")).ToList();
+            if (values.Count > 1) return null;
+            var value = values.FirstOrDefault();
             if (value is null) return new Call(method, new Dictionary<string, object>());
             return Value(value, 1) is IReadOnlyDictionary<string, object> members ? new Call(method, members) : null;
         }
-        catch (Exception e) when (e is XmlException or Bad or IOException or InvalidOperationException)
+        catch (Exception e) when (e is XmlException or Bad or IOException or InvalidOperationException or DecoderFallbackException)
         {
             return null;
         }
@@ -71,28 +95,37 @@ public static class XmlRpc
         if (depth > MaxDepth) throw new Bad();
         var typed = value.Elements().ToList();
         if (typed.Count == 0) return value.Value;
-        if (typed.Count > 1) throw new Bad();
+        if (typed.Count > 1 || HasText(value)) throw new Bad();
         var e = typed[0];
+        // A simple type holds text only: nested markup would be flattened to its text.
+        if (e.Name.LocalName != "struct" && e.HasElements) throw new Bad();
         return e.Name.LocalName switch
         {
             "string" => e.Value,
             "int" or "i4" => int.TryParse(e.Value.Trim(), NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var i) ? i : throw new Bad(),
             "boolean" => e.Value.Trim() switch { "1" => true, "0" => false, _ => throw new Bad() },
-            "double" => double.TryParse(e.Value.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var d) ? d : throw new Bad(),
+            "double" => double.TryParse(e.Value.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var d) && double.IsFinite(d) ? d : throw new Bad(),
             "struct" => Struct(e, depth),
             _ => throw new Bad(),
         };
     }
 
+    /// <summary>Text, other than white space, directly inside <paramref name="e"/>.</summary>
+    private static bool HasText(XElement e) => e.Nodes().OfType<XText>().Any(t => !string.IsNullOrWhiteSpace(t.Value));
+
     private static Dictionary<string, object> Struct(XElement s, int depth)
     {
         var members = new Dictionary<string, object>(StringComparer.Ordinal);
+        if (HasText(s)) throw new Bad();
         foreach (var m in s.Elements())
         {
-            if (m.Name.LocalName != "member") throw new Bad();
-            var name = m.Element("name")?.Value ?? throw new Bad();
-            var value = m.Element("value") ?? throw new Bad();
-            members[name] = Value(value, depth + 1);
+            if (m.Name.LocalName != "member" || HasText(m)) throw new Bad();
+            var names = m.Elements("name").ToList();
+            var values = m.Elements("value").ToList();
+            if (names.Count != 1 || values.Count != 1 || names[0].HasElements) throw new Bad();
+            var name = names[0].Value;
+            var value = values[0];
+            if (!members.TryAdd(name, Value(value, depth + 1))) throw new Bad();
         }
         return members;
     }

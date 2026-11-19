@@ -1,0 +1,63 @@
+@model GridGate.Launcher.Pages.Money.IndexModel
+@using GridGate.Launcher.Core.Money
+@using GridGate.Launcher.Money
+@{
+    var s = Model.Current;
+}
+@* Every region and whether money works there. *@
+<section class="work-panel" id="money-regions" aria-labelledby="money-regions-title">
+    <h2 id="money-regions-title" class="panel-title">Regions<help-tip>Every region on the grid, and whether money works there. Money works only in verified regions: their program runs GridGate's money module, says where people go when they leave, and checked in within the last 10 minutes. Everywhere else people can still visit; only money is off.</help-tip></h2>
+    <p><a href="@MoneyVerifyText.Link(MoneyVerifyText.VerifiedAnchor)" target="_blank" rel="noopener noreferrer">What "verified" means</a></p>
+    @if (Model.RegionsDown)
+    {
+        <p id="money-regions-down" class="mb-0">The region list can't be read right now.</p>
+    }
+    else if (Model.Regions.Count == 0)
+    {
+        <p class="mb-0">No region is registered yet.</p>
+    }
+    else
+    {
+        <div class="table-responsive">
+            <table class="table align-middle mb-0">
+                <thead><tr><th>Region</th><th>Where</th><th>Money</th></tr></thead>
+                <tbody>
+                @foreach (var r in Model.Regions)
+                {
+                    var verified = r.Status == RegionStatus.Verified;
+                    var movedFrom = r.PinnedKeyId is { } pinned ? MoneyVerifyText.KeyName(pinned, s)
+                        : r.Status == RegionStatus.Waiting && r.KeyId is { } listed ? MoneyVerifyText.KeyName(listed, s) : null;
+                    // A moved region is approved to the paired server Robust lists it at now.
+                    var listedAt = r.Status == RegionStatus.Moved ? s.Money.PairedServers?.FirstOrDefault(p => MoneyVerifyText.KeyOf(p) == r.KeyId) : null;
+                    <tr id="money-region-@r.RegionId">
+                        <td>@r.Name</td>
+                        <td>@MoneyVerifyText.Where(r, s)</td>
+                        <td>
+                            <span aria-hidden="true">@(verified ? "✔" : "✖")</span>
+                            @MoneyVerifyText.Words(r.Status, movedFrom, r.FirstSeen)<help-tip>@MoneyVerifyText.Help(r.Status)</help-tip>
+                            @if (!verified)
+                            {
+                                <a href="@MoneyVerifyText.Link(MoneyVerifyText.Anchor(r.Status))" target="_blank" rel="noopener noreferrer">How to fix</a>
+                            }
+                            @if (listedAt is not null && Model.IsOwner)
+                            {
+                                <div class="d-flex flex-wrap gap-2 mt-1">
+                                    <form method="post" action="/money?handler=ApproveMove" asp-antiforgery="true">
+                                        <input type="hidden" name="Region" value="@r.RegionId">
+                                        <input type="hidden" name="Server" value="@listedAt.Id">
+                                        <button type="submit" class="btn btn-sm btn-outline-secondary">Approve move</button>
+                                    </form>
+                                    <form method="post" action="/money?handler=KeepOff" asp-antiforgery="true">
+                                        <input type="hidden" name="Region" value="@r.RegionId">
+                                        <button type="submit" class="btn btn-sm btn-outline-secondary">Keep off</button>
+                                    </form>
+                                </div>
+                            }
+                        </td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    }
+</section>

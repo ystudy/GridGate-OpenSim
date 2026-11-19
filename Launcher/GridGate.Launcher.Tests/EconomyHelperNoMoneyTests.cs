@@ -119,6 +119,8 @@ public sealed class EconomyHelperNoMoneyTests
                 services.AddSingleton(books);
                 services.RemoveAll<ISecureSessionCheck>();
                 services.AddSingleton<ISecureSessionCheck>(sessions);
+                services.RemoveAll<EconomyLimits>();
+                services.AddSingleton(new EconomyLimits(TimeProvider.System, perSecond: 1000));
                 if (open)
                 {
                     services.RemoveAll<MoneyGate>();
@@ -204,7 +206,7 @@ public sealed class EconomyHelperNoMoneyTests
         }
 
         Assert.Contains("Too many requests", last);
-        Assert.True(answers >= 5 * 2 * 5 * 4, $"{answers} answers");
+        Assert.True(answers >= 5 * 2 * 5 * Enum.GetValues<PresenceOutcome>().Length, $"{answers} answers");
         lock (books.Calls) Assert.Empty(books.Calls);
     }
 }

@@ -88,6 +88,9 @@ namespace OpenSim.Region.ScriptEngine.Shared.Api
             }
         }
 
+        // GridGate: script payouts have their own queue, shared by every engine in the process.
+        public Payouts PayoutsPlugin => Payouts.Instance;
+
         public ScriptTimer TimerPlugin
         {
             get

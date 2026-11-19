@@ -38,7 +38,22 @@ public sealed class TwoFactorStore(string file, IDataProtectionProvider dp, Time
     /// <c>Pending</c> is a secret shown but not yet confirmed, kept apart so starting again never switches a working one off.
     /// <c>LastStep</c> is the newest step already used.
     /// </summary>
-    private sealed record Entry(string? Name, string? Secret, string? Pending, string? PendingName, long? LastStep, List<string>? Backup);
+    private sealed record Entry(string? Name, string? Secret, string? Pending, string? PendingName, long? LastStep, List<string>? Backup)
+    {
+        // What this record holds is never printed, so a log line or an exception that shows it can't leak it.
+        private bool PrintMembers(System.Text.StringBuilder sb)
+        {
+            sb.Append($"Name = {Name}, secrets hidden");
+            return true;
+        }
+
+        public override string ToString()
+        {
+            var sb = new System.Text.StringBuilder("Entry { ");
+            PrintMembers(sb);
+            return sb.Append(" }").ToString();
+        }
+    }
 
     public TwoFactorState StateOf(Guid principal)
     {

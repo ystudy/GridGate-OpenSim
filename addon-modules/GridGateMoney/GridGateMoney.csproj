@@ -66,8 +66,11 @@
     <Compile Include="MoneyServiceClient.cs" />
     <Compile Include="MoneyModels.cs" />
     <Compile Include="MoneyActions.cs" />
+    <Compile Include="ParcelBuyLimit.cs" />
+    <Compile Include="PayoutLimit.cs" />
     <Compile Include="UnpairedMoneyService.cs" />
     <Compile Include="VisitorHomes.cs" />
+    <Compile Include="PlaceReporter.cs" />
     <Compile Include="GridGateMoneyModule.cs" />
   </ItemGroup>
 </Project>

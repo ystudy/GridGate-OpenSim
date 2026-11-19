@@ -59,7 +59,7 @@ public sealed class MoneyServerConfigTests : IDisposable
     private static ServerPairing Paired(string fingerprint = Fingerprint, string host = "192.168.1.5") =>
         new(host, fingerprint, Key, DateTimeOffset.UtcNow);
 
-    private void Write(LauncherSettings s, bool open = true) => new GridConfigWriter(_paths, open ? MoneyGate.Open : null).Write(s, []);
+    private void Write(LauncherSettings s, bool open = true) => new GridConfigWriter(_paths, open ? MoneyGate.Open : MoneyGate.Closed).Write(s, []);
 
     private IniDocument Region(string instance) => IniDocument.Load(Path.Combine(_paths.RegionDir(instance), "OpenSim.ini"));
     private IniDocument Robust() => IniDocument.Load(Path.Combine(_paths.RuntimeOpenSim, "Robust.HG.ini"));

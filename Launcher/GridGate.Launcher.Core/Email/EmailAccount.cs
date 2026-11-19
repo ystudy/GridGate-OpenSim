@@ -22,4 +22,19 @@ public sealed record EmailAccount(
     bool Paused,
     int Order,
     string? Problem,
-    DateTimeOffset? ProblemSince);
+    DateTimeOffset? ProblemSince)
+{
+    // What this record holds is never printed, so a log line or an exception that shows it can't leak it.
+    private bool PrintMembers(System.Text.StringBuilder sb)
+    {
+        sb.Append($"Id = {Id}, Provider = {Provider}, Host = {Host}, Port = {Port}, UserName = {UserName}, Password = hidden, FromAddress = {FromAddress}");
+        return true;
+    }
+
+    public override string ToString()
+    {
+        var sb = new System.Text.StringBuilder("EmailAccount { ");
+        PrintMembers(sb);
+        return sb.Append(" }").ToString();
+    }
+}

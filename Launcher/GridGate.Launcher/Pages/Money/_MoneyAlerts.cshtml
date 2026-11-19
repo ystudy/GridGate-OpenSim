@@ -1,0 +1,87 @@
+@model GridGate.Launcher.Pages.Money.IndexModel
+@using GridGate.Launcher.Core.Money
+@using GridGate.Launcher.Money
+@* The open alerts, notices and warnings: what happened, where, who, and what to do. *@
+<section class="work-panel" id="money-alerts" aria-labelledby="money-alerts-title">
+    <h2 id="money-alerts-title" class="panel-title">Alerts<help-tip>Things the money service noticed that you may need to act on. A notice asks you to check something; a warning also shows on the dashboard. Clear an alert once you've dealt with it.</help-tip></h2>
+    <p><a href="@MoneyVerifyText.Link(MoneyVerifyText.AlertsAnchor)" target="_blank" rel="noopener noreferrer">What each alert means and what to do</a></p>
+    @if (Model.AlertsDown)
+    {
+        <p id="money-alerts-down" class="mb-0">The alerts can't be read right now.</p>
+    }
+    else if (Model.Alerts.Count == 0)
+    {
+        <p id="money-no-alerts" class="mb-0">No open alerts.</p>
+    }
+    else
+    {
+        <ul class="list-unstyled mb-0">
+            @foreach (var row in Model.Alerts)
+            {
+                var a = row.Alert;
+                var warning = a.Level == AlertLevel.Warning;
+                <li id="money-alert-@a.Id" class="mb-3 ps-2 border-start border-3 @(warning ? "border-danger" : "border-warning")">
+                    <p class="mb-1"><strong>@(warning ? "Warning" : "Notice"):</strong> @row.Text</p>
+                    @if (row.Person is { } person)
+                    {
+                        <p class="mb-1">Who:
+                            @if (row.PersonPage is { } id)
+                            {
+                                <a href="/money/person?id=@id">@person</a>
+                            }
+                            else
+                            {
+                                @person
+                            }
+                        </p>
+                    }
+                    <p class="mb-1">What to do:
+                        @switch (a.Kind)
+                        {
+                            case AlertKind.UnhandedArrival when a.OtherKeyId is not null:
+                                <text>either server may be the one that is wrong: check that both regions are running and their GridGate is up to date. If either charged someone it shouldn't have, <a href="#money-refund-title">refund the entry</a>, or freeze their account on their page.</text>
+                                break;
+                            case AlertKind.UnhandedArrival:
+                                <text>check that the region is running and its GridGate is up to date. If it charged someone it shouldn't have, <a href="#money-refund-title">refund the entry</a>, or freeze their account on their page.@(row.RemovableServer is null ? "" : " If you don't trust this server, remove it: its regions take no payments until it is paired again.")</text>
+                                break;
+                            case AlertKind.RefusedHandoff:
+                                <text>nothing, usually: people placed without a verified start, such as those who walked in from a stock region, are not handed on. If it keeps rising, check that the region is running and its GridGate is up to date.</text>
+                                break;
+                            case AlertKind.ArrivalNotCovered:
+                                <text><a href="#money-regions">confirm the region or approve its move</a>, under Regions, if it is really that server's.</text>
+                                break;
+                            case AlertKind.KeyLimitReached:
+                                <text>if that's expected, give it a higher limit of its own under <a href="#money-limits">Limits</a>. If not, <a href="#money-freeze-title">freeze all payments</a> while you find out why.</text>
+                                break;
+                            case AlertKind.ServerTookOver:
+                                <text>if you paired the new computer yourself, clear this. If not, remove the server under Region Servers: its regions take no payments until it is paired again.</text>
+                                break;
+                            case AlertKind.RegionMoved:
+                                <text><a href="#money-regions">approve the move, or keep it off</a>, under Regions.</text>
+                                break;
+                            default:
+                                <text>if they asked for more, give them a limit of their own on their page. If not, check what charged them; refund the entries or freeze their account.</text>
+                                break;
+                        }
+                    </p>
+                    @if (Model.CanChange)
+                    {
+                        <div class="d-flex flex-wrap gap-2">
+                            @if (row.RemovableServer is { } server)
+                            {
+                                <form method="post" action="/money?handler=RemoveServer" asp-antiforgery="true">
+                                    <input type="hidden" name="Server" value="@server">
+                                    <button type="submit" class="btn btn-sm btn-outline-danger">Remove this server</button>
+                                </form>
+                            }
+                            <form method="post" action="/money?handler=ClearAlert" asp-antiforgery="true">
+                                <input type="hidden" name="Id" value="@a.Id">
+                                <button type="submit" class="btn btn-sm btn-outline-secondary">Clear</button>
+                            </form>
+                        </div>
+                    }
+                </li>
+            }
+        </ul>
+    }
+</section>

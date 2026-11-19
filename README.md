@@ -226,17 +226,18 @@ how they were measured.
 GridGate has its own money system, so residents can tip a DJ, buy from a vendor,
 pay for land or rent, and see their balance in Firestorm's status bar.
 
-**Money is switched off in this version of GridGate.** It will be turned on in
-a later release, once the money code has passed its security review.
+**Play coins and Gloebit can be turned on.** The money code passed independent
+security checks and was approved for use. **Real coins stay switched off** until
+a person has also checked the money code's security.
 
-On the **Money** page the grid's owner will choose one of four modes:
+On the **Money** page the grid's owner chooses one of four modes:
 
-* **Off:** no money, as today.
+* **Off:** no money. This is where every grid starts.
 * **Play coins:** a currency that isn't real money. Games of chance are fine here.
   Switching to real coins warns that they then count as gambling.
-* **Real coins:** the same coins, bought with real money. Staff add the coins by
-  hand once a payment arrives. Coins are never cashed back into money, and
-  balances carry over from play coins.
+* **Real coins (not available yet):** the same coins, bought with real money.
+  Staff add the coins by hand once a payment arrives. Coins are never cashed
+  back into money, and balances carry over from play coins.
 * **Gloebit:** the outside Gloebit service, for grids that want artists paid in
   real money. Gloebit handles the payments and the cash-outs.
 

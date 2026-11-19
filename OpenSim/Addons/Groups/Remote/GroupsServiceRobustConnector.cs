@@ -651,7 +651,8 @@ namespace OpenSim.Groups
                 {
                     bool success = m_GroupsService.AddAgentToGroupInvite(request["RequestingAgentID"].ToString(),
                         new UUID(request["InviteID"].ToString()), new UUID(request["GroupID"].ToString()),
-                        new UUID(request["RoleID"].ToString()), request["AgentID"].ToString());
+                        new UUID(request["RoleID"].ToString()), request["AgentID"].ToString(),
+                        GroupsDataUtils.ReadFee(request)); // GridGate: the fee the invitation shows, if the region sent one
 
                     result["RESULT"] = success.ToString();
                     return Util.UTF8NoBomEncoding.GetBytes(ServerUtils.BuildXmlResponse(result));

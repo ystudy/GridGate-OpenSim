@@ -7,6 +7,7 @@ using OpenSim.Region.CoreModules.Avatar.Attachments;
 using OpenSim.Region.CoreModules.Framework.InventoryAccess;
 using OpenSim.Region.Framework.Interfaces;
 using OpenSim.Region.Framework.Scenes;
+using OpenSim.Region.ScriptEngine.Interfaces;
 using OpenSim.Region.ScriptEngine.Shared;
 using OpenSim.Region.ScriptEngine.Shared.Api;
 using OpenSim.Region.ScriptEngine.Shared.ScriptBase;
@@ -19,6 +20,7 @@ namespace GridGate.Lsl.Tests;
 /// GridGate's changes to OpenSim's script money functions (MERGING.md, money design §12), tried against a real LSL_Api
 /// in a test region with a money module that records what it is asked to pay.
 /// </summary>
+[Collection(OpenSimScenes.Name)]
 public sealed class LslMoneyTests
 {
     private static readonly UUID Owner = TestHelpers.ParseTail(0x1);
@@ -165,6 +167,187 @@ public sealed class LslMoneyTests
         var result = await TransactionResult(r);
         Assert.Equal(1, ((LSL_Types.LSLInteger)result.Params[1]).value);
         Assert.Equal(5, (await Paid(r, Payee)).Amount);
+    }
+
+    // --- Payouts run on their own queue. ----------------------------------------------------------------------------
+
+    /// <summary>
+    /// The harness can't drive a notecard read, so this uses the dataserver pool directly: more payouts are held than the
+    /// dataserver pool has threads (four), and a request given to that pool must still run.
+    /// </summary>
+    [Fact]
+    public async Task llGiveMoney_runs_on_the_payout_queue_not_the_dataserver()
+    {
+        var r = Setup();
+        Grant(r, Owner);
+        using var hold = new ManualResetEventSlim();
+        r.Money.Hold = hold;
+        try
+        {
+            for (var i = 0; i < 6; i++) r.Api.llGiveMoney(Payee.ToString(), 1);
+            await Task.Delay(Settle, TestContext.Current.CancellationToken);
+
+            var done = new TaskCompletionSource();
+            AsyncCommandManager.GetDataserverPlugin(r.Engine)!.RegisterRequest(r.Part.LocalId, r.Item.ItemID, _ => done.TrySetResult());
+
+            await done.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+            Assert.Empty(r.Money.Payments);
+        }
+        finally
+        {
+            hold.Set();
+        }
+        await Paid(r, Payee);
+    }
+
+    // --- A payout waits on the queue: the owner who called it is the one it is paid from. -----------------------------
+
+    /// <summary>The object is sold while payouts wait: the buyer's coins are not touched.</summary>
+    private static void SellTo(Region r, UUID buyer)
+    {
+        r.Part.ParentGroup.SetOwner(buyer, UUID.Zero);
+        r.Part.Inventory.ChangeInventoryOwner(buyer);
+        Assert.Equal(0, r.Item.PermsMask & ScriptBaseClass.PERMISSION_DEBIT);
+    }
+
+    [Fact]
+    public async Task Payouts_queued_before_an_owner_change_are_not_paid_from_the_buyer()
+    {
+        var r = Setup();
+        Grant(r, Owner);
+        using var hold = new ManualResetEventSlim();
+        r.Money.Hold = hold;
+        try
+        {
+            // Two payouts are running (held); the other three wait behind them.
+            for (var i = 0; i < 5; i++) r.Api.llGiveMoney(Payee.ToString(), 1);
+            await Task.Delay(Settle, TestContext.Current.CancellationToken);
+
+            SellTo(r, Stranger);
+        }
+        finally
+        {
+            hold.Set();
+        }
+        await Paid(r, Payee);
+        await Task.Delay(Settle, TestContext.Current.CancellationToken);
+
+        Assert.DoesNotContain(r.Money.Payments, p => p.From == Stranger);
+        Assert.All(r.Money.Payments, p => Assert.Equal(Owner, p.From));
+    }
+
+    [Fact]
+    public async Task A_transfer_queued_before_an_owner_change_reports_failure_and_pays_nobody()
+    {
+        var r = Setup();
+        Grant(r, Owner);
+        using var hold = new ManualResetEventSlim();
+        r.Money.Hold = hold;
+        try
+        {
+            // Two running payouts fill the queue's threads; the transfer waits behind them.
+            r.Api.llGiveMoney(Payee.ToString(), 1);
+            r.Api.llGiveMoney(Payee.ToString(), 1);
+            await Task.Delay(Settle, TestContext.Current.CancellationToken);
+            r.Api.llTransferLindenDollars(OtherPayee.ToString(), 9);
+
+            SellTo(r, Stranger);
+        }
+        finally
+        {
+            hold.Set();
+        }
+
+        var result = await TransactionResult(r);
+        Assert.Equal(0, ((LSL_Types.LSLInteger)result.Params[1]).value);
+        Assert.Equal("MISSING_PERMISSION_DEBIT", result.Params[2].ToString());
+        Assert.DoesNotContain(r.Money.Payments, p => p.To == OtherPayee);
+    }
+
+    [Fact]
+    public async Task A_payout_whose_grant_was_taken_back_while_it_waited_is_dropped()
+    {
+        var r = Setup();
+        Grant(r, Owner);
+        using var hold = new ManualResetEventSlim();
+        r.Money.Hold = hold;
+        try
+        {
+            r.Api.llGiveMoney(Payee.ToString(), 1);
+            r.Api.llGiveMoney(Payee.ToString(), 1);
+            await Task.Delay(Settle, TestContext.Current.CancellationToken);
+            r.Api.llGiveMoney(OtherPayee.ToString(), 3);
+
+            r.Item.PermsMask = 0;
+        }
+        finally
+        {
+            hold.Set();
+        }
+        await Paid(r, Payee);
+        await Task.Delay(Settle, TestContext.Current.CancellationToken);
+
+        Assert.DoesNotContain(r.Money.Payments, p => p.To == OtherPayee);
+    }
+
+    [Fact]
+    public async Task An_owner_can_have_at_most_60_payouts_waiting()
+    {
+        var r = Setup();
+        Grant(r, Owner);
+        using var hold = new ManualResetEventSlim();
+        r.Money.Hold = hold;
+        try
+        {
+            for (var i = 0; i < 70; i++) r.Api.llGiveMoney(Payee.ToString(), 1);
+        }
+        finally
+        {
+            hold.Set();
+        }
+        var deadline = DateTime.UtcNow.AddSeconds(30);
+        while (r.Money.Payments.Count < 60 && DateTime.UtcNow < deadline)
+            await Task.Delay(20, TestContext.Current.CancellationToken);
+        await Task.Delay(Settle, TestContext.Current.CancellationToken);
+
+        Assert.Equal(60, r.Money.Payments.Count);
+    }
+
+    [Fact]
+    public async Task A_transfer_over_the_waiting_limit_reports_failure()
+    {
+        var r = Setup();
+        Grant(r, Owner);
+        using var hold = new ManualResetEventSlim();
+        r.Money.Hold = hold;
+        try
+        {
+            for (var i = 0; i < 60; i++) r.Api.llGiveMoney(Payee.ToString(), 1);
+            r.Api.llTransferLindenDollars(OtherPayee.ToString(), 9);
+
+            var result = await TransactionResult(r);
+            Assert.Equal(0, ((LSL_Types.LSLInteger)result.Params[1]).value);
+        }
+        finally
+        {
+            hold.Set();
+        }
+        await Task.Delay(Settle, TestContext.Current.CancellationToken);
+        Assert.DoesNotContain(r.Money.Payments, p => p.To == OtherPayee);
+    }
+
+    [Fact]
+    public async Task llTransferLindenDollars_still_posts_its_transaction_result()
+    {
+        var r = Setup();
+        Grant(r, Owner);
+
+        var key = r.Api.llTransferLindenDollars(Payee.ToString(), 7);
+
+        var result = await TransactionResult(r);
+        Assert.Equal(key.ToString(), result.Params[0].ToString());
+        Assert.Equal(1, ((LSL_Types.LSLInteger)result.Params[1]).value);
+        Assert.Equal(7, (await Paid(r, Payee)).Amount);
     }
 
     // --- llGiveMoney refuses amounts of 0 or less. ------------------------------------------------------------------
@@ -400,6 +583,55 @@ public sealed class LslMoneyTests
     public void A_restore_without_debit_is_unchanged() =>
         Assert.Equal(Anim, DebitPermission.Restored(Anim, Stranger, Owner, fromRunningScript: false));
 
+    // --- ...and only when that state is this program's own, not one that came from another program or an archive. --
+
+    /// <summary>What YEngine restores for an owner-granted DEBIT in <paramref name="group"/>'s saved state.</summary>
+    private static int RestoredIn(SceneObjectGroup group, StateSource source) =>
+        DebitPermission.Restored(Debit | Anim, Owner, group.OwnerID,
+            DebitPermission.FromRunningScript(source, group.StateFromOutside, stateIsMarked: true));
+
+    [Fact]
+    public void A_debit_from_another_programs_crossing_is_dropped()
+    {
+        var group = SceneHelpers.CreateSceneObject(1, Owner);
+        group.StateFromOutside = true;
+
+        Assert.Equal(Anim, RestoredIn(group, StateSource.PrimCrossing));
+        Assert.Equal(Anim, RestoredIn(group, StateSource.Teleporting));
+    }
+
+    [Fact]
+    public void A_debit_from_this_programs_own_crossing_stays()
+    {
+        var group = SceneHelpers.CreateSceneObject(1, Owner);
+
+        Assert.False(group.StateFromOutside);
+        Assert.Equal(Debit | Anim, RestoredIn(group, StateSource.PrimCrossing));
+        Assert.Equal(Debit | Anim, RestoredIn(group, StateSource.Teleporting));
+    }
+
+    [Fact]
+    public void A_region_restart_keeps_its_own_debit()
+    {
+        var group = SceneHelpers.CreateSceneObject(1, Owner);
+
+        Assert.Equal(Debit | Anim, RestoredIn(group, StateSource.RegionStart));
+    }
+
+    [Theory]
+    [InlineData(StateSource.NewRez)]
+    [InlineData(StateSource.ScriptedRez)]
+    [InlineData(StateSource.AttachedRez)]
+    [InlineData(StateSource.None)]
+    public void A_rez_drops_the_debit_marked_or_not(StateSource source)
+    {
+        var group = SceneHelpers.CreateSceneObject(1, Owner);
+        Assert.Equal(Anim, RestoredIn(group, source));
+
+        group.StateFromOutside = true;
+        Assert.Equal(Anim, RestoredIn(group, source));
+    }
+
     // --- llTransferLindenDollars can pay hypergrid visitors. --------------------------------------------------------
 
     [Fact]
@@ -445,8 +677,12 @@ public sealed class LslMoneyTests
         public void RemoveRegion(Scene scene) { }
         public void RegionLoaded(Scene scene) { }
 
+        /// <summary>When set, <see cref="ObjectGiveMoney"/> waits for it before paying.</summary>
+        public ManualResetEventSlim? Hold { get; set; }
+
         public bool ObjectGiveMoney(UUID objectID, UUID fromID, UUID toID, int amount, UUID txn, out string reason)
         {
+            Hold?.Wait(TimeSpan.FromSeconds(30));
             _payments.Enqueue(new Payment(objectID, fromID, toID, amount));
             reason = string.Empty;
             return true;

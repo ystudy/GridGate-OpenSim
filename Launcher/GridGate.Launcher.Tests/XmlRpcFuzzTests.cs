@@ -465,36 +465,27 @@ public sealed class XmlRpcFuzzTests
 
     private static readonly string Quote = Call("getCurrencyQuote", Who("fr") + Member("currencyBuy", "<int>250</int>") + Member("note", "<string>café 世</string>"));
 
-    /// <summary>money review 2026-11-15, H-7: UTF-16 (either byte order, with its BOM) reads the same call as UTF-8.</summary>
+    /// <summary>UTF-16 (either byte order, with its BOM) is refused: the helper reads UTF-8 only.</summary>
     [Theory]
     [InlineData("utf-16LE")]
     [InlineData("utf-16BE")]
-    public void Utf16_with_a_bom_reads_the_same_call(string encoding)
+    public void Utf16_with_a_bom_is_refused(string encoding)
     {
         var e = Encoding.GetEncoding(encoding);
         var xml = Quote.Replace("<?xml version=\"1.0\"?>", "<?xml version=\"1.0\" encoding=\"UTF-16\"?>");
         var bytes = e.GetPreamble().Concat(e.GetBytes(xml)).ToArray();
 
-        var call = XmlRpc.Read(Body(bytes));
-
-        Assert.NotNull(call);
-        Assert.Equal("getCurrencyQuote", call.Method);
-        Assert.Equal(Agent.ToString(), call.Params["agentId"]);
-        Assert.Equal(250, call.Params["currencyBuy"]);
-        Assert.Equal("café 世", call.Params["note"]);
+        Assert.Null(XmlRpc.Read(Body(bytes)));
     }
 
-    /// <summary>money review 2026-11-15, H-7: a declared ISO-8859-1 body is read as Latin-1.</summary>
+    /// <summary>A declared ISO-8859-1 body with a character outside ASCII is refused.</summary>
     [Fact]
-    public void Latin1_declared_is_read_as_latin1()
+    public void Latin1_declared_with_accents_is_refused()
     {
         var xml = Call("getCurrencyQuote", Who("fr") + Member("note", "<string>café</string>"))
             .Replace("<?xml version=\"1.0\"?>", "<?xml version=\"1.0\" encoding=\"ISO-8859-1\"?>");
 
-        var call = XmlRpc.Read(Body(Encoding.Latin1.GetBytes(xml)));
-
-        Assert.NotNull(call);
-        Assert.Equal("café", call.Params["note"]);
+        Assert.Null(XmlRpc.Read(Body(Encoding.Latin1.GetBytes(xml))));
     }
 
     /// <summary>
@@ -657,49 +648,55 @@ public sealed class XmlRpcFuzzTests
 
     // ---- duplicates ----
 
-    /// <summary>money review 2026-11-15, H-7: a duplicated member doesn't throw; the last one wins.</summary>
+    /// <summary>A duplicated member name is refused, never resolved to one of its values.</summary>
     [Fact]
-    public void Duplicate_member_keeps_the_last()
+    public void Duplicate_member_is_refused()
     {
         var call = XmlRpc.Read(Body(Call("m", Member("currencyBuy", "<int>1</int>") + Member("currencyBuy", "<string>two</string>") + Member("currencyBuy", "<int>3</int>"))));
 
-        Assert.NotNull(call);
-        Assert.Equal(3, Assert.Single(call.Params).Value);
+        Assert.Null(call);
     }
 
-    /// <summary>money review 2026-11-15, H-7: a second methodName or param is ignored; the first counts.</summary>
+    /// <summary>A second methodName, params or param is refused, not ignored.</summary>
     [Fact]
-    public void Duplicate_method_name_and_param_keep_the_first()
+    public void Duplicate_method_name_params_and_param_are_refused()
     {
-        var call = XmlRpc.Read(Body(
-            "<methodCall><methodName>first</methodName><methodName>second</methodName><params>"
-            + "<param><value><struct>" + Member("a", "<int>1</int>") + "</struct></value></param>"
-            + "<param><value><struct>" + Member("b", "<int>2</int>") + "</struct></value></param>"
-            + "</params><params><param><value><struct>" + Member("c", "<int>3</int>") + "</struct></value></param></params></methodCall>"));
-
-        Assert.NotNull(call);
-        Assert.Equal("first", call.Method);
-        Assert.Equal(new[] { "a" }, call.Params.Keys);
+        var m = Member("a", "<int>1</int>");
+        Assert.Null(XmlRpc.Read(Body("<methodCall><methodName>first</methodName><methodName>second</methodName><params><param><value><struct>" + m + "</struct></value></param></params></methodCall>")));
+        Assert.Null(XmlRpc.Read(Body("<methodCall><methodName>first</methodName><params><param><value><struct>" + m + "</struct></value></param><param><value><struct>" + m + "</struct></value></param></params></methodCall>")));
+        Assert.Null(XmlRpc.Read(Body("<methodCall><methodName>first</methodName><params><param><value><struct>" + m + "</struct></value></param></params><params><param><value><struct>" + m + "</struct></value></param></params></methodCall>")));
+        Assert.Null(XmlRpc.Read(Body("<methodCall><methodName>first</methodName><params><param><value><struct>" + m + "</struct></value><value><struct>" + m + "</struct></value></param></params></methodCall>")));
     }
 
-    /// <summary>money review 2026-11-15, H-7: two typed values in one value, or a member with two names, read as nothing odd.</summary>
+    /// <summary>Markup inside a typed value or a member name is refused, not flattened to its text.</summary>
     [Fact]
-    public void Duplicate_value_parts_are_refused_or_take_the_first()
+    public void Markup_inside_values_and_member_names_is_refused()
+    {
+        Assert.Null(XmlRpc.Read(Body(Call("m", Member("a", "<string>ab<b>cd</b></string>")))));
+        Assert.Null(XmlRpc.Read(Body(Call("m", Member("a", "<int><i>5</i></int>")))));
+        Assert.Null(XmlRpc.Read(Body(Call("m", Member("a", "<i4><i>5</i></i4>")))));
+        Assert.Null(XmlRpc.Read(Body(Call("m", Member("a", "<boolean><x/>1</boolean>")))));
+        Assert.Null(XmlRpc.Read(Body(Call("m", Member("a", "<double><x/>1.5</double>")))));
+        Assert.Null(XmlRpc.Read(Body(Call("m", Member("a", "<string><x/></string>")))));
+        Assert.Null(XmlRpc.Read(Body(Call("m", Member("agent<x/>Id", "<int>1</int>")))));
+        Assert.NotNull(XmlRpc.Read(Body(Call("m", Member("a", "<string>ab</string>")))));
+    }
+
+    /// <summary>Two typed values in one value, or a member with two names or two values, are refused.</summary>
+    [Fact]
+    public void Duplicate_value_parts_are_refused()
     {
         Assert.Null(XmlRpc.Read(Body(Call("m", Member("a", "<int>1</int><int>2</int>")))));
-
-        var call = XmlRpc.Read(Body(Call("m", "<member><name>a</name><name>b</name><value><int>1</int></value><value><int>2</int></value></member>")));
-
-        Assert.NotNull(call);
-        Assert.Equal(1, Assert.Single(call.Params, p => p.Key == "a").Value);
+        Assert.Null(XmlRpc.Read(Body(Call("m", "<member><name>a</name><name>b</name><value><int>1</int></value></member>"))));
+        Assert.Null(XmlRpc.Read(Body(Call("m", "<member><name>a</name><value><int>1</int></value><value><int>2</int></value></member>"))));
     }
 
     /// <summary>
-    /// money review 2026-11-15, H-7: the helper takes the last of duplicated ids, so a viewer can't slip a second agent past
+    /// The helper refuses duplicated ids, so a viewer can't slip a second agent past
     /// the session check: the one it checks is the one it answers for.
     /// </summary>
     [Fact]
-    public async Task Helper_checks_the_last_of_duplicated_ids()
+    public async Task Helper_refuses_duplicated_ids()
     {
         var sessions = new OkSessions();
         await using var f = Helper(sessions);
@@ -712,6 +709,7 @@ public sealed class XmlRpcFuzzTests
 
         Assert.Equal(HttpStatusCode.OK, status);
         AssertAnswer(xml, "duplicate ids");
-        Assert.Equal((Agent, Secure), Assert.Single(sessions.Asked));
+        Assert.Contains("<fault>", xml);
+        Assert.Empty(sessions.Asked);
     }
 }

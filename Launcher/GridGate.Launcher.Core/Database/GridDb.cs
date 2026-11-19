@@ -23,6 +23,10 @@ internal static class GridDb
     public static Task<MySqlConnection> OpenRobustAsync(LauncherSettings s, uint timeoutSeconds, CancellationToken ct) =>
         OpenAsync(MariaDbServer.ConnectionString(s, "robust", "robustuser", s.Db.RobustPassword, timeoutSeconds), ct);
 
+    /// <summary>Opens a pooled connection to the robust database as robustuser: at most <paramref name="maxPool"/> at once.</summary>
+    public static Task<MySqlConnection> OpenRobustPooledAsync(LauncherSettings s, uint timeoutSeconds, uint maxPool, CancellationToken ct) =>
+        OpenAsync(MariaDbServer.ConnectionString(s, "robust", "robustuser", s.Db.RobustPassword, timeoutSeconds, maxPool), ct);
+
     /// <summary>Opens a connection to the opensim database as opensimuser.</summary>
     public static Task<MySqlConnection> OpenOpensimAsync(LauncherSettings s, uint timeoutSeconds, CancellationToken ct) =>
         OpenAsync(MariaDbServer.ConnectionString(s, "opensim", "opensimuser", s.Db.OpensimPassword, timeoutSeconds), ct);

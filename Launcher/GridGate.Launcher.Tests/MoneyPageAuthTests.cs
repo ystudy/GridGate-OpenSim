@@ -28,6 +28,9 @@ public sealed class MoneyPageAuthTests
     private static readonly Guid Hope = Guid.Parse("c0000000-0000-0000-0000-0000000000c1");
     private const string HopeHome = "http://grid.example:8002/";
     private static readonly Guid Server = Guid.Parse("d0000000-0000-0000-0000-0000000000d1");
+    private static readonly Guid Moved = Guid.Parse("e0000000-0000-0000-0000-0000000000e3");
+    private static readonly string ServerKey = "server:" + Server.ToString("N");
+    private const string ListedGrid = "http://listed.example:8002";
     private const string GKey = "e0000000-0000-0000-0000-00000000000e";
     private const string GSecret = "f0000000-0000-0000-0000-00000000000f";
 
@@ -38,11 +41,14 @@ public sealed class MoneyPageAuthTests
     public enum Site { GridAsset, RegionCoins, RegionGloebit }
 
     /// <summary>What an allowed caller's POST does, so the refusals below are known to guard something.</summary>
-    private enum Effect { Books, Settings, Pending, PairClient }
+    private enum Effect { Books, Settings, Pending, PairClient, Regions, Confirms, Alerts }
 
-    /// <summary>One POST handler, with a form that would act if the caller were allowed.</summary>
+    /// <summary>
+    /// One POST handler, with a form that would act if the caller were allowed. <paramref name="OwnerOnly"/>: an admin is
+    /// refused too (limit overrides and moved regions are the owner's).
+    /// </summary>
     private sealed record Case(string Page, string Handler, Site Site, Dictionary<string, string> Form, Effect Effect, string? BooksCall = null,
-        bool CodePending = false);
+        bool CodePending = false, bool OwnerOnly = false);
 
     private static Dictionary<string, string> Why(Dictionary<string, string>? more = null) =>
         new(more ?? []) { ["Reason"] = "checking a report" };
@@ -53,7 +59,7 @@ public sealed class MoneyPageAuthTests
         {
             ["Mode"] = "Play", ["CurrencySymbol"] = "GG", ["CurrencyName"] = "coins", ["StartingBalancePlay"] = "100", ["StartingBalanceReal"] = "0",
             ["WeeklyAllowance"] = "0", ["UploadFee"] = "0", ["ClassifiedFee"] = "0", ["DailyPayoutLimit"] = "5000", ["MaxPayment"] = "1000000",
-            ["ScriptPayouts"] = "true", ["VisitorWallets"] = "true",
+            ["ScriptPayouts"] = "true", ["DailySpendLimit"] = "10000", ["DailyKeySpendLimit"] = "100000", ["DailyKeyPayoutLimit"] = "20000",
         }, Effect.Settings),
         new("/money", "Gloebit", Site.GridAsset, new()
         {
@@ -67,11 +73,21 @@ public sealed class MoneyPageAuthTests
         new("/money", "Unfreeze", Site.GridAsset, Why(), Effect.Books, "freeze False"),
         new("/money", "Refund", Site.GridAsset, Why(new() { ["EntryId"] = "42" }), Effect.Books, "refund 42"),
         new("/money", "MoveFees", Site.GridAsset, Why(new() { ["Name"] = "Ann Smith", ["Amount"] = "5" }), Effect.Books, "move-fees"),
+        new("/money", "Visitors", Site.GridAsset, new() { ["Visitors"] = "All" }, Effect.Settings),
+        new("/money", "AddGrid", Site.GridAsset, new() { ["Address"] = "http://new.example:8002/" }, Effect.Settings),
+        new("/money", "RemoveGrid", Site.GridAsset, new() { ["Address"] = ListedGrid }, Effect.Settings),
+        new("/money", "KeyLimits", Site.GridAsset, Why(new() { ["KeyId"] = ServerKey, ["DailySpend"] = "5" }), Effect.Books, "set-limits", OwnerOnly: true),
+        new("/money", "ApproveMove", Site.GridAsset, new() { ["Region"] = Moved.ToString(), ["Server"] = Server.ToString() }, Effect.Regions, OwnerOnly: true),
+        new("/money", "ConfirmRegions", Site.GridAsset, new() { ["Server"] = Server.ToString() }, Effect.Confirms, OwnerOnly: true),
+        new("/money", "KeepOff", Site.GridAsset, new() { ["Region"] = Moved.ToString() }, Effect.Alerts, OwnerOnly: true),
+        new("/money", "ClearAlert", Site.GridAsset, new() { ["Id"] = "5" }, Effect.Alerts),
         new(AnnPage, "Give", Site.GridAsset, Why(new() { ["Amount"] = "5" }), Effect.Books, "give"),
         new(AnnPage, "Take", Site.GridAsset, Why(new() { ["Amount"] = "5" }), Effect.Books, "take"),
         new(AnnPage, "FreezeAccount", Site.GridAsset, Why(), Effect.Books, $"freeze-account {Ann} True"),
         new(AnnPage, "UnfreezeAccount", Site.GridAsset, Why(), Effect.Books, $"freeze-account {Ann} False"),
         new(AnnPage, "Payouts", Site.GridAsset, new() { ["On"] = "true" }, Effect.Books, "payouts"),
+        new(AnnPage, "Limits", Site.GridAsset, Why(new() { ["DailySpend"] = "5" }), Effect.Books, "set-person-limits", OwnerOnly: true),
+        new(AnnPage, "RefundFee", Site.GridAsset, Why(new() { ["EntryId"] = "77" }), Effect.Books, "refund-fee", OwnerOnly: true),
         new(HopePage, "Merge", Site.GridAsset, Why(new() { ["NewHome"] = "http://new.example:8002/" }), Effect.Books, "merge"),
         new("/guest/coins", "Payouts", Site.GridAsset, new() { ["On"] = "true" }, Effect.Books, "payouts"),
         new("/advanced/money", "Pair", Site.RegionCoins, new() { ["Code"] = "7K2M-9QXD-4HTB-ZW3R" }, Effect.PairClient),
@@ -86,7 +102,10 @@ public sealed class MoneyPageAuthTests
     private static Case Find(string page, string handler) => Handlers.Single(c => c.Page == page && c.Handler == handler);
 
     /// <summary>The page's own guest (for <c>/guest/coins</c>) or owner may post; these may not.</summary>
-    private static string[] Refused(Case c) => c.Page == "/guest/coins" ? ["anonymous", "supervisor", "owner"] : ["anonymous", "guest", "supervisor"];
+    private static string[] Refused(Case c) =>
+        c.Page == "/guest/coins" ? ["anonymous", "supervisor", "owner"]
+        : c.OwnerOnly ? ["anonymous", "guest", "supervisor", "admin"]
+        : ["anonymous", "guest", "supervisor"];
 
     private static string Allowed(Case c) => c.Page == "/guest/coins" ? "guest" : "owner";
 
@@ -125,7 +144,7 @@ public sealed class MoneyPageAuthTests
         }
     }
 
-    private sealed record Host(LauncherFactory F, FakeBooks Books, CountingPairClient Pair) : IAsyncDisposable
+    private sealed record Host(LauncherFactory F, FakeBooks Books, CountingPairClient Pair, FakeAlerts Alerts) : IAsyncDisposable
     {
         public ValueTask DisposeAsync() => F.DisposeAsync();
     }
@@ -138,6 +157,8 @@ public sealed class MoneyPageAuthTests
     {
         var books = new FakeBooks();
         var pair = new CountingPairClient();
+        var alerts = new FakeAlerts();
+        alerts.Open.Add(new MoneyAlert(5, AlertKind.RegionMoved, AlertLevel.Notice, ServerKey, Moved, null, 1, DateTime.UtcNow, DateTime.UtcNow));
         var visitors = new FakeVisitors();
         visitors.Known.Add(new VisitorInfo(Hope, HopeHome, "Hope Visitor"));
         var region = site != Site.GridAsset;
@@ -151,7 +172,7 @@ public sealed class MoneyPageAuthTests
             Money = region
                 ? new MoneySettings(Pairing: new ServerPairing("192.168.1.5", new string('A', 64), "the-key", DateTimeOffset.UtcNow))
                 : new MoneySettings(Mode: MoneyMode.Play, ScriptPayouts: true, VisitorWallets: true,
-                    PairedServers: [new PairedServer(Server, "192.168.1.20", new string('B', 64), DateTimeOffset.UtcNow)]),
+                    PairedServers: [new PairedServer(Server, "192.168.1.20", new string('B', 64), DateTimeOffset.UtcNow)], ListedGrids: [ListedGrid]),
             MoneyPort = 0,
         })
         {
@@ -164,13 +185,18 @@ public sealed class MoneyPageAuthTests
                 services.AddSingleton<IVisitorDirectory>(visitors);
                 services.RemoveAll<IMoneyPairClient>();
                 services.AddSingleton<IMoneyPairClient>(pair);
+                services.RemoveAll<IMoneyAlerts>();
+                services.AddSingleton<IMoneyAlerts>(alerts);
                 services.RemoveAll<MoneyGate>();
                 services.AddSingleton(sp => new MoneyGate(sp.GetRequiredService<Func<LauncherSettings>>(), MoneyGate.Open));
             },
         };
         TestAuth.AddStaff(f.Robust);
         f.Robust.Add("Ann", "Smith", 0, "pw", Ann);
-        return new Host(f, books, pair);
+        // Market Square is pinned to another server but now registers from the paired one: waiting for the owner.
+        f.MoneyRegions.States.Add(new RegionState(Moved, "Market Square", "192.168.1.20", 9000, ServerKey, RegionStatus.Moved, "server:" + Guid.NewGuid().ToString("N")));
+        f.MoneyRegions.States.Add(new RegionState(Guid.NewGuid(), "Cove", "192.168.1.20", 9001, ServerKey, RegionStatus.Waiting));
+        return new Host(f, books, pair, alerts);
     }
 
     /// <summary>A client signed in as <paramref name="who"/>: anonymous, guest (a resident's guest cookie), supervisor, admin or owner.</summary>
@@ -218,7 +244,8 @@ public sealed class MoneyPageAuthTests
     /// audit log's actions. The "request" line every staff POST gets (with its status) records the attempt, not a change, so
     /// it isn't counted.
     /// </summary>
-    private sealed record Seen(int BooksCalls, int PairCalls, int SettingsUpdates, string SettingsHash, DateTimeOffset? Pending, string Actions);
+    private sealed record Seen(int BooksCalls, int PairCalls, int SettingsUpdates, string SettingsHash, DateTimeOffset? Pending, string Actions,
+        int Approvals, int Confirms, int AlertsCleared);
 
     private static Seen Look(Host h)
     {
@@ -228,14 +255,18 @@ public sealed class MoneyPageAuthTests
             using var s = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
             return new StreamReader(s).ReadToEnd();
         }
-        int books, pair, updates;
+        int books, pair, updates, approvals, confirms, cleared;
         lock (h.Books.Calls) books = h.Books.Calls.Count;
+        lock (h.F.MoneyRegions.Calls) approvals = h.F.MoneyRegions.Calls.Count(c => c.StartsWith("approve", StringComparison.Ordinal));
+        lock (h.F.MoneyRegions.Calls) confirms = h.F.MoneyRegions.Calls.Count(c => c.StartsWith("confirm", StringComparison.Ordinal));
+        lock (h.Alerts.Calls) cleared = h.Alerts.Calls.Count(c => c.StartsWith("clear", StringComparison.Ordinal));
         lock (h.Pair.Calls) pair = h.Pair.Calls.Count;
         lock (h.F.Grid.UpdateWriteConfig) updates = h.F.Grid.UpdateWriteConfig.Count;
         var actions = string.Join(" ", Read(Path.Combine(h.F.Paths.Logs, "audit.log")).Split('\n', StringSplitOptions.RemoveEmptyEntries)
             .Select(l => JsonDocument.Parse(l).RootElement.GetProperty("action").GetString())
             .Where(a => a != "request"));
-        return new Seen(books, pair, updates, Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(Read(h.F.Paths.SettingsFile))))[..16], h.F.Services.GetRequiredService<MoneyPairing>().PendingUntil, actions);
+        return new Seen(books, pair, updates, Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(Read(h.F.Paths.SettingsFile))))[..16], h.F.Services.GetRequiredService<MoneyPairing>().PendingUntil, actions,
+            approvals, confirms, cleared);
     }
 
     private static List<string> BooksSince(Host h, Seen before)
@@ -281,7 +312,7 @@ public sealed class MoneyPageAuthTests
         var what = $"{who} POST {page} handler={handler}";
         if (page == "/guest/coins")
             AssertSentToSignIn(r, "/guest/sign-in", what);
-        else if (who == "supervisor")
+        else if (who is "supervisor" or "admin")
             Assert.True(r.StatusCode == HttpStatusCode.Forbidden, $"{what}: {(int)r.StatusCode}, expected 403");
         else
             AssertSentToSignIn(r, "/login", what);
@@ -295,14 +326,25 @@ public sealed class MoneyPageAuthTests
     /// </summary>
     [Theory]
     [MemberData(nameof(AllPosts))]
-    public async Task Same_post_from_the_right_person_acts(string page, string handler)
+    public Task Same_post_from_the_right_person_acts(string page, string handler) => ActsAsync(Find(page, handler), Allowed(Find(page, handler)));
+
+    /// <summary>The settings and alert handlers that aren't the owner's alone: an admin may use them too.</summary>
+    [Theory]
+    [InlineData("Visitors")]
+    [InlineData("AddGrid")]
+    [InlineData("RemoveGrid")]
+    [InlineData("ClearAlert")]
+    public Task Admin_may_change_visitors_grids_and_alerts(string handler) => ActsAsync(Find("/money", handler), "admin");
+
+    private static async Task ActsAsync(Case k, string who)
     {
-        var k = Find(page, handler);
         await using var h = Make(k.Site);
         Arrange(h, k);
-        var who = Allowed(k);
         var c = await ClientAsync(h.F, who);
         var token = await TokenAsync(c, who, k.Site);
+        // A Region Server's Gloebit app is saved only with the owner's current two-factor code.
+        if (k is { Page: "/advanced/money", Handler: "Gloebit" } && who == "owner")
+            k = k with { Form = new(k.Form) { ["TwoFactorCode"] = OwnerTwoFactorKit.NextCode(h.F) } };
         var before = Look(h);
 
         using var r = await PostAsync(c, k, token);
@@ -322,6 +364,15 @@ public sealed class MoneyPageAuthTests
                 break;
             case Effect.PairClient:
                 Assert.True(after.PairCalls > before.PairCalls, $"the pairing client wasn't asked; {after}");
+                break;
+            case Effect.Regions:
+                Assert.True(after.Approvals > before.Approvals, $"no move was approved; {after}");
+                break;
+            case Effect.Confirms:
+                Assert.True(after.Confirms > before.Confirms, $"no region was confirmed; {after}");
+                break;
+            case Effect.Alerts:
+                Assert.True(after.AlertsCleared > before.AlertsCleared, $"no alert was cleared; {after}");
                 break;
         }
     }

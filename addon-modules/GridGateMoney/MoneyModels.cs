@@ -41,9 +41,19 @@ internal static class MoneyRules
     private static readonly int[] DefaultButtons = [1, 5, 10, 20];
 
     public const string GroupLandText = "Group-owned land can't be sold for coins on this grid.";
+    public const string LandTooFastText = "You're buying land too quickly. Please wait a minute and try again.";
     public const string GroupPassText = "Passes to group-owned land can't be bought with coins on this grid.";
     public const string NoEconomyText = "Fees can't be paid yet: this region hasn't reached the grid's money service. Try again in a minute.";
+
+    /// <summary>
+    /// What an uploader is told on a Region Server that isn't paired with the grid's money: it never learns the fees, so
+    /// uploads that cost a fee are refused until it is paired.
+    /// </summary>
+    public const string NotPairedUploadText =
+        "This Region Server isn't paired with the money service yet, so uploads that cost a fee are refused until it is.";
     public const string VisitorsOffText = "Visitors can't pay or be paid on this grid.";
+    public const string AbsentVisitorText = "That person is a visitor who isn't here, and this grid can't tell which grid their account is on, so they can't be paid right now.";
+    public const string CheckingText = "This payment is being checked: the money service didn't answer in time. Please look at your balance before you pay again.";
 
     public static Refusal CheckPayAvatar(Guid clientAgent, Guid source, int amount) =>
         source != clientAgent ? Refusal.ForgedSource
@@ -107,9 +117,12 @@ internal static class MoneyRules
         "not_enough" => "LINDENDOLLAR_INSUFFICIENTFUNDS",
         "no_wallet" => "LINDENDOLLAR_ENTITYDOESNOTEXIST",
         "not_allowed" => "TRANSFERS_DISABLED",
-        "over_daily_limit" => "THROTTLED",
+        "over_daily_limit" or "over_key_limit" => "THROTTLED",
         "bad_amount" => "INVALID_AMOUNT",
         "visitors_off" => "LINDENDOLLAR_ENTITYDOESNOTEXIST",
+        "unverified_region" => "REGION_NOT_VERIFIED",
+        "unverified_avatar" => "AVATAR_NOT_VERIFIED",
+        "visitor_grid_not_listed" => "VISITOR_GRID_NOT_LISTED",
         _ => "SERVICE_ERROR",
     };
 
@@ -132,12 +145,18 @@ internal static class MoneyRules
         "account_frozen" => "Your coins are frozen. Please contact the grid's staff.",
         "visitors_off" => VisitorsOffText,
         UnpairedMoneyService.Code => "This region isn't connected to the grid's money yet.",
+        "outcome_unknown" => CheckingText,
         "unavailable" => "Money is unavailable right now. Please try again later.",
         "no_wallet" => "That person can't receive coins on this grid.",
         "no_session" or "wrong_region" => "Please log in again to use money here.",
         "bad_amount" => "That amount can't be paid.",
         "not_allowed" => "That payment isn't allowed on this grid.",
-        "over_daily_limit" => "That's more than today's limit allows.",
+        // Verification and limits.
+        "unverified_region" => "Money is off in this region: it can't verify who is here. You can still visit.",
+        "unverified_avatar" => "Money is paused for you until you next log in: you arrived from a region that can't verify where you are.",
+        "visitor_grid_not_listed" => "Visitors from your grid can't use money here. You're welcome to look around.",
+        "over_daily_limit" => "You've reached today's spending limit on this grid.",
+        "over_key_limit" => "This region has reached today's money limit. Try again later.",
         _ => "That payment couldn't be made. Please try again.",
     };
 }

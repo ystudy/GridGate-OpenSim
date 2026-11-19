@@ -27,6 +27,7 @@ public sealed class MoneyPairServiceTests(MoneyMariaDb maria) : IClassFixture<Mo
     private static readonly Guid Session = Guid.Parse("5000000a-0000-0000-0000-000000000005");
     private static readonly Guid Secure = Guid.Parse("6000000a-0000-0000-0000-000000000006");
     private const string ServerHost = "192.168.1.20";
+    private const string OwnKey = "own-program-key-000000000000000000000000000000"; // program p1's, for the Grid Asset Server's own region
 
     private readonly string _dir = Path.Combine(Path.GetTempPath(), "gg-money-pair-" + Guid.NewGuid().ToString("N"));
     private readonly ConcurrentQueue<string> _logs = new();
@@ -35,7 +36,10 @@ public sealed class MoneyPairServiceTests(MoneyMariaDb maria) : IClassFixture<Mo
     private LauncherSettings _settings = null!;
     private MoneyMode _mode = MoneyMode.Play;
     private bool _saveFails;
+    private bool _moneyDown;
     private MoneyPairing _pairing = null!;
+    private RegionPins _pins = null!;
+    private MoneyAlerts _alerts = null!;
     private string _fingerprint = "";
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
@@ -62,7 +66,7 @@ public sealed class MoneyPairServiceTests(MoneyMariaDb maria) : IClassFixture<Mo
             MoneyPort = port,
             Programs = [new ProgramSettings("p1", 8004, 8011)],
             Regions = [new RegionSettings("p1", "Own", Own, UdpPort: 8004)],
-            Money = new MoneySettings(Mode: MoneyMode.Play, ProgramKeys: new() { ["p1"] = "own-program-key-000000000000000000000000000000" }),
+            Money = new MoneySettings(Mode: MoneyMode.Play, ProgramKeys: new() { ["p1"] = OwnKey }),
         };
         var dbSettings = _settings;
         var time = TimeProvider.System;
@@ -74,10 +78,13 @@ public sealed class MoneyPairServiceTests(MoneyMariaDb maria) : IClassFixture<Mo
         var cert = MoneyCertificate.LoadOrCreate(Path.Combine(_dir, MoneyCertificate.FileName), time);
         _fingerprint = MoneyCertificate.Fingerprint(cert);
         _pairing = new MoneyPairing(time);
+        var pins = _pins = new RegionPins(MoneyConnections.Money(() => _moneyDown ? dbSettings with { MariaDbPort = MoneyMariaDb.FreePort() } : dbSettings),
+            new RegionHosts(MoneyConnections.Robust(() => dbSettings)), TimeProvider.System);
+        var verification = new RegionVerification(MoneyConnections.Money(() => dbSettings), MoneyConnections.Robust(() => dbSettings), pins, time);
         _host = new MoneyServiceHost(ledger, presence, () => _settings, () => _mode, () => cert,
             new MoneyAuthFailures(time, loggers.CreateLogger<MoneyAuthFailures>()), loggers, new MoneyStatus(), _pairing,
-            change => _saveFails ? throw new IOException("disk full") : _settings = change(_settings),
-            new RegionHosts(MoneyConnections.Robust(() => dbSettings)));
+            change => _saveFails ? throw new IOException("disk full") : _settings = change(_settings), pins, verification,
+            new MoneyLocations(MoneyConnections.Money(() => dbSettings), MoneyConnections.Robust(() => dbSettings), verification, presence, time), _alerts = new MoneyAlerts(db.OpenMoney, time));
         await _host.StartAsync(Ct);
         _http = new HttpClient(new SocketsHttpHandler
         {
@@ -97,9 +104,14 @@ public sealed class MoneyPairServiceTests(MoneyMariaDb maria) : IClassFixture<Mo
 
     private static string NewNonce() => Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
 
-    /// <summary>Pairs as a Region Server at <paramref name="host"/> would, with a fresh code; returns the key.</summary>
-    private async Task<string> PairAsync(string host = ServerHost, int firstPort = 9000, string? machineId = null)
+    /// <summary>
+    /// Pairs as a Region Server at <paramref name="host"/> would, with a fresh code; returns the key. Regions Robust already lists
+    /// at the new server wait for the owner: <paramref name="confirm"/> is the owner clicking Confirm, so a test that wants the
+    /// server's regions covered doesn't repeat it.
+    /// </summary>
+    private async Task<string> PairAsync(string host = ServerHost, int firstPort = 9000, string? machineId = null, bool confirm = true)
     {
+        machineId = machineId is null ? null : PairedServer.MachineKeyOf(machineId); // as a Region Server sends it
         var (code, _) = _pairing.Issue();
         var nonce = NewNonce();
         var (status, body, _) = await Post("pair", new { host, firstPort, machineId, nonce, proof = PairingProof.Client(code, _fingerprint, nonce, host) });
@@ -107,10 +119,23 @@ public sealed class MoneyPairServiceTests(MoneyMariaDb maria) : IClassFixture<Mo
         Assert.Equal("ok", (string?)body!["code"]);
         var key = (string)body["key"]!;
         Assert.True(PairingProof.Same(PairingProof.Server(code, _fingerprint, nonce, key), (string)body["proof"]!));
+        if (confirm && !_moneyDown) await _pins.ConfirmAllAsync(_settings.Money.PairedServers!.Single(p => p.KeyHash == PairedServer.HashOf(key)), Ct);
         return key;
     }
 
     private static object Who(Guid agent) => new { agentId = agent, home = "", sessionId = Session, secureSessionId = Secure };
+
+    /// <summary>
+    /// Logs <paramref name="agent"/> in at <paramref name="region"/> as the service learns it: the
+    /// module behind <paramref name="key"/> checks in, Robust writes a start and the module reports the arrival.
+    /// </summary>
+    private async Task Place(MoneyTestDatabase db, string key, Guid agent, Guid region, Guid? session = null, Guid? secure = null)
+    {
+        await db.AddPresence(agent, region, session ?? Session, secure ?? Secure);
+        Assert.Equal(HttpStatusCode.OK, (await Post("health", new { protocol = RegionVerification.HandoffProtocol, regions = new[] { region } }, key)).Status);
+        await db.AddSessionStart(session ?? Session, agent, region, "login");
+        Assert.Equal("ok", (string?)(await Post("arrived", new { id = Guid.NewGuid(), sessionId = session ?? Session, agentId = agent, regionId = region }, key)).Body!["code"]);
+    }
 
     [Fact]
     public async Task Right_proof_pairs_and_stores_only_a_hash()
@@ -179,8 +204,8 @@ public sealed class MoneyPairServiceTests(MoneyMariaDb maria) : IClassFixture<Mo
     public async Task Paired_key_acts_for_its_own_regions()
     {
         var db = await StartAsync();
-        await db.AddPresence(A, Theirs, Session, Secure);
         var key = await PairAsync();
+        await Place(db, key, A, Theirs);
 
         var (_, body, _) = await Post("balance", Who(A), key);
 
@@ -192,7 +217,7 @@ public sealed class MoneyPairServiceTests(MoneyMariaDb maria) : IClassFixture<Mo
     public async Task Server_key_never_covers_the_grids_own_regions()
     {
         var db = await StartAsync();
-        await db.AddPresence(A, Own, Session, Secure);
+        await Place(db, OwnKey, A, Own);
         await db.Sql($"UPDATE `robust`.`regions` SET serverIP = '{ServerHost}' WHERE uuid = '{Own}'"); // Robust says it's theirs
         var key = await PairAsync();
 
@@ -208,6 +233,8 @@ public sealed class MoneyPairServiceTests(MoneyMariaDb maria) : IClassFixture<Mo
         await db.AddPresence(A, Other, Session, Secure);
         var key = await PairAsync();
 
+        Assert.Equal(1, (await Post("health", new { }, key)).Body!["regions"]!.GetValue<int>()); // Theirs, not Other
+        Assert.Equal("wrong_region", (string?)(await Post("arrived", new { id = Guid.NewGuid(), sessionId = Session, agentId = A, regionId = Other }, key)).Body!["code"]);
         Assert.Equal("wrong_region", (string?)(await Post("balance", Who(A), key)).Body!["code"]);
     }
 
@@ -235,6 +262,57 @@ public sealed class MoneyPairServiceTests(MoneyMariaDb maria) : IClassFixture<Mo
         Assert.Single(_settings.Money.PairedServers!);
         Assert.Equal(HttpStatusCode.Unauthorized, (await Post("health", new { }, first)).Status);
         Assert.Equal(HttpStatusCode.OK, (await Post("health", new { }, second)).Status);
+    }
+
+    [Fact]
+    public async Task Five_wrong_proofs_from_this_address_block_it_but_leave_the_code_for_others()
+    {
+        await StartAsync();
+        var (code, _) = _pairing.Issue();
+        var nonce = NewNonce();
+        for (var i = 0; i < MoneyPairing.MaxWrongProofs; i++)
+            Assert.Equal("refused", (string?)(await Post("pair", new { host = ServerHost, firstPort = 9000, nonce, proof = new string('A', 64) })).Body!["code"]);
+
+        // Even the right proof from this address is refused now.
+        var right = await Post("pair", new { host = ServerHost, firstPort = 9000, nonce, proof = PairingProof.Client(code, _fingerprint, nonce, ServerHost) });
+
+        Assert.Equal("""{"code":"refused"}""", right.Raw);
+        Assert.Null(_settings.Money.PairedServers);
+        Assert.NotNull(_pairing.PendingUntil);
+        Assert.Equal(code, _pairing.Redeem(c => c == code, IPAddress.Parse("192.168.1.77")));
+    }
+
+    [Fact]
+    public async Task A_pairing_that_takes_over_another_servers_address_and_ports_is_noticed()
+    {
+        await StartAsync();
+        await PairAsync(machineId: "machine-one");
+        Assert.Empty(await _alerts.OpenAsync(Ct));
+
+        var key = await PairAsync(machineId: "machine-two");
+
+        var alert = Assert.Single(await _alerts.OpenAsync(Ct));
+        var now = Assert.Single(_settings.Money.PairedServers!);
+        Assert.Equal(AlertKind.ServerTookOver, alert.Kind);
+        Assert.Equal(AlertLevel.Notice, alert.Level);
+        Assert.Equal(MoneyVerifyText.KeyOf(now), alert.KeyId);
+        Assert.StartsWith("server:", alert.OtherKeyId);
+        Assert.NotEqual(alert.KeyId, alert.OtherKeyId);
+        Assert.Contains("took over the earlier server's address and ports", MoneyVerifyText.Alert(alert, "a region", MoneyVerifyText.KeyName(alert.KeyId, _settings), null));
+        Assert.Equal(PairedServer.HashOf(key), now.KeyHash);
+    }
+
+    [Fact]
+    public async Task The_same_computer_pairing_again_or_another_address_is_not_a_takeover()
+    {
+        await StartAsync();
+        await PairAsync(machineId: "machine-one");
+
+        await PairAsync(machineId: "machine-one");
+        await PairAsync(host: "192.168.1.21", machineId: "machine-two");
+        await PairAsync(host: "192.168.1.21", firstPort: 9200, machineId: "machine-three");
+
+        Assert.Empty(await _alerts.OpenAsync(Ct));
     }
 
     [Fact]
@@ -289,12 +367,14 @@ public sealed class MoneyPairServiceTests(MoneyMariaDb maria) : IClassFixture<Mo
         var (sessionB, secureB) = (Guid.NewGuid(), Guid.NewGuid());
         await db.AddUser(b);
         await db.AddRegion(upper, ServerHost, port: 9100);
-        await db.AddPresence(A, Theirs, Session, Secure);       // Theirs is at port 9000
-        await db.AddPresence(b, upper, sessionB, secureB);
         var whoB = new { agentId = b, home = "", sessionId = sessionB, secureSessionId = secureB };
 
-        var lower = await PairAsync(firstPort: 9000);
-        var higher = await PairAsync(firstPort: 9100);
+        // The lower server pairs first, so its range covers the upper region for now; the higher one then takes it over.
+        var lower = await PairAsync(firstPort: 9000, confirm: false);
+        var higher = await PairAsync(firstPort: 9100, confirm: false);
+        foreach (var paired in _settings.Money.PairedServers!) await _pins.ConfirmAllAsync(paired, Ct);
+        await Place(db, lower, A, Theirs); // Theirs is at port 9000
+        await Place(db, higher, b, upper, sessionB, secureB);
 
         Assert.Equal(2, _settings.Money.PairedServers!.Count);
         Assert.Equal("ok", (string?)(await Post("balance", Who(A), lower)).Body!["code"]);
@@ -341,6 +421,368 @@ public sealed class MoneyPairServiceTests(MoneyMariaDb maria) : IClassFixture<Mo
 
         Assert.Equal("refused", (string?)body!["code"]);
         Assert.Null(_settings.Money.PairedServers);
+    }
+
+    [Fact]
+    public async Task Transfer_in_a_hijacked_region_is_wrong_region()
+    {
+        // Server A's program registers B's region id at A's address. B's region stays B's; A's key gets nothing there.
+        var db = await StartAsync();
+        const string hostA = "192.168.1.40";
+        var keyB = await PairAsync(ServerHost);
+        var keyA = await PairAsync(hostA);
+        Assert.Equal(1, (await Post("health", new { }, keyB)).Body!["regions"]!.GetValue<int>()); // first sight pins Theirs to B
+        await Place(db, keyB, A, Theirs);
+        await db.Sql($"UPDATE `robust`.`regions` SET serverIP = '{hostA}' WHERE uuid = '{Theirs}'");
+        var transfer = new { txnId = Guid.NewGuid(), type = "pay_avatar", from = Who(A), to = new { agentId = Guid.NewGuid(), home = "" }, amount = 1, regionId = Theirs };
+
+        Assert.Equal("wrong_region", (string?)(await Post("transfer", transfer, keyA)).Body!["code"]);
+        Assert.Equal("wrong_region", (string?)(await Post("balance", Who(A), keyA)).Body!["code"]);
+        Assert.Equal("wrong_region", (string?)(await Post("balance", Who(A), keyB)).Body!["code"]); // listed elsewhere: B doesn't cover it now either
+        Assert.Equal(0, (await Post("health", new { }, keyA)).Body!["regions"]!.GetValue<int>());
+    }
+
+    [Fact]
+    public async Task Re_pairing_whose_save_fails_leaves_the_old_key_and_its_pins_alone()
+    {
+        var db = await StartAsync();
+        await db.AddPresence(A, Theirs, Session, Secure);
+        var old = await PairAsync(machineId: "rs-1");
+        Assert.Equal(1, (await Post("health", new { }, old)).Body!["regions"]!.GetValue<int>());
+        var oldId = _settings.Money.PairedServers!.Single().Id;
+        var (code, _) = _pairing.Issue();
+        var nonce = NewNonce();
+        _saveFails = true;
+
+        var body = (await Post("pair", new { host = ServerHost, firstPort = 9000, machineId = PairedServer.MachineKeyOf("rs-1"), nonce, proof = PairingProof.Client(code, _fingerprint, nonce, ServerHost) })).Body;
+        _saveFails = false;
+
+        Assert.Equal("refused", (string?)body!["code"]);
+        Assert.Equal(oldId, _settings.Money.PairedServers!.Single().Id);
+        Assert.Equal(1, (await Post("health", new { }, old)).Body!["regions"]!.GetValue<int>());
+        Assert.Equal(oldId.ToString("N"), await db.Text($"SELECT server_id FROM `money`.`region_pins` WHERE region_id = '{Theirs}'"));
+    }
+
+    [Fact]
+    public async Task Re_pairing_while_the_money_database_is_down_still_pairs_and_leaves_the_regions_as_moves()
+    {
+        var db = await StartAsync();
+        await db.AddPresence(A, Theirs, Session, Secure);
+        var old = await PairAsync(machineId: "rs-1");
+        Assert.Equal(1, (await Post("health", new { }, old)).Body!["regions"]!.GetValue<int>());
+        var oldId = _settings.Money.PairedServers!.Single().Id;
+        _moneyDown = true;
+
+        var fresh = await PairAsync(machineId: "rs-1"); // not a 500: the pairing itself is saved
+        _moneyDown = false;
+
+        var server = Assert.Single(_settings.Money.PairedServers!);
+        Assert.NotEqual(oldId, server.Id);
+        Assert.Equal(0, (await Post("health", new { }, fresh)).Body!["regions"]!.GetValue<int>());
+        Assert.Equal(oldId.ToString("N"), await db.Text($"SELECT server_id FROM `money`.`region_pins` WHERE region_id = '{Theirs}'"));
+        var log = string.Join("\n", _logs);
+        Assert.Contains("MoneyUnavailableException", log);
+        Assert.DoesNotContain(oldId.ToString("N"), log);
+        Assert.DoesNotContain(server.Id.ToString("N"), log);
+    }
+
+    [Fact]
+    public async Task Re_pairing_keeps_pins_only_for_the_same_machine()
+    {
+        var db = await StartAsync();
+        var first = await PairAsync(machineId: "rs-1");
+        Assert.Equal(1, (await Post("health", new { }, first)).Body!["regions"]!.GetValue<int>());
+        await Place(db, first, A, Theirs);
+
+        var same = await PairAsync(machineId: "rs-1");
+        Assert.Equal(1, (await Post("health", new { }, same)).Body!["regions"]!.GetValue<int>());
+        Assert.Equal("ok", (string?)(await Post("balance", Who(A), same)).Body!["code"]);
+
+        var other = await PairAsync(machineId: "rs-2"); // another computer at the same address and first port
+        Assert.Equal(0, (await Post("health", new { }, other)).Body!["regions"]!.GetValue<int>());
+        Assert.Equal("wrong_region", (string?)(await Post("balance", Who(A), other)).Body!["code"]);
+    }
+
+    [Fact]
+    public async Task Pairing_where_regions_are_already_listed_leaves_them_waiting()
+    {
+        await StartAsync();
+
+        var key = await PairAsync(confirm: false);
+
+        Assert.Equal(0, (await Post("health", new { }, key)).Body!["regions"]!.GetValue<int>());
+        var server = _settings.Money.PairedServers!.Single();
+        Assert.Equal([Theirs], await _pins.WaitingAsync(server.Id, Ct));
+
+        // The owner confirms: the same key now covers the region.
+        await _pins.ConfirmAllAsync(server, Ct);
+        Assert.Equal(1, (await Post("health", new { }, key)).Body!["regions"]!.GetValue<int>());
+    }
+
+    [Fact]
+    public async Task Re_pairing_the_same_machine_keeps_its_regions_covered()
+    {
+        var db = await StartAsync();
+        var first = await PairAsync(machineId: "rs-1");
+        await Place(db, first, A, Theirs);
+
+        var same = await PairAsync(machineId: "rs-1", confirm: false);
+
+        Assert.Equal(1, (await Post("health", new { }, same)).Body!["regions"]!.GetValue<int>());
+        Assert.Empty(await _pins.WaitingAsync(_settings.Money.PairedServers!.Single().Id, Ct));
+    }
+
+    [Fact]
+    public async Task Database_down_while_pairing_keeps_the_pairing_and_the_regions_wait_at_first_sight()
+    {
+        await StartAsync();
+        _moneyDown = true;
+
+        var key = await PairAsync(confirm: false);
+
+        Assert.Single(_settings.Money.PairedServers!);
+        Assert.Contains(_logs, l => l.Contains("wait", StringComparison.OrdinalIgnoreCase) && l.Contains(ServerHost));
+        _moneyDown = false;
+        Assert.Equal(0, (await Post("health", new { }, key)).Body!["regions"]!.GetValue<int>()); // first sight pins it waiting
+        await _pins.ConfirmAllAsync(_settings.Money.PairedServers!.Single(), Ct);
+        Assert.Equal(1, (await Post("health", new { }, key)).Body!["regions"]!.GetValue<int>());
+    }
+
+    /// <summary>A payment of one coin from A, in <paramref name="region"/>, to a resident who is offline.</summary>
+    private static async Task<object> PaymentFromA(MoneyTestDatabase db, Guid region)
+    {
+        var payee = Guid.NewGuid();
+        await db.AddUser(payee);
+        return new { txnId = Guid.NewGuid(), type = "pay_avatar", from = Who(A), to = new { agentId = payee, home = "" }, amount = 1, regionId = region };
+    }
+
+    /// <summary>A module's health call with <paramref name="key"/> at the handoff protocol, listing <paramref name="region"/>; how many regions the key covers.</summary>
+    private async Task<int> Health(string key, Guid region) =>
+        (await Post("health", new { protocol = RegionVerification.HandoffProtocol, regions = new[] { region } }, key)).Body!["regions"]!.GetValue<int>();
+
+    [Fact]
+    public async Task A_new_machine_in_a_removed_servers_place_cannot_charge_who_the_old_one_placed()
+    {
+        // The owner removes a Region Server, as the Money page does, and another computer pairs at the same address and
+        // ports. The owner approves Theirs for the new server, whose key then covers it; A was placed there by the old key.
+        var db = await StartAsync();
+        var old = await PairAsync(machineId: "rs-1");
+        await Place(db, old, A, Theirs);
+        _settings = _settings with { Money = _settings.Money with { PairedServers = [] } };
+
+        // Removing the old server kept its pin, so Theirs is a move for the new machine until the owner approves it.
+        var other = await PairAsync(machineId: "rs-2", confirm: false);
+        Assert.Equal(0, await Health(other, Theirs));
+        await _pins.ApproveMoveAsync(Theirs, _settings.Money.PairedServers!.Single().Id, Ct);
+        Assert.Equal(1, await Health(other, Theirs));
+
+        Assert.Equal("unverified_avatar", (string?)(await Post("transfer", await PaymentFromA(db, Theirs), other)).Body!["code"]);
+    }
+
+    [Fact]
+    public async Task An_arrival_held_across_an_approved_move_leaves_the_new_server_unable_to_charge()
+    {
+        // A is at the grid's own region. The old server's region reports A arrived in Theirs before the handoff got there,
+        // and that arrival waits. Meanwhile Theirs moves to another server and the owner approves the move. The handoff
+        // then comes: the grid's region sent A to Theirs at the old server's address, where it had found the region, so the
+        // waiting arrival places A in Theirs under the old key, which the new server's key isn't.
+        var db = await StartAsync();
+        const string newHost = "192.168.1.50";
+        await Place(db, OwnKey, A, Own);
+        var old = await PairAsync(machineId: "rs-1");
+        Assert.Equal(1, await Health(old, Theirs));
+        var arrival = Post("arrived", new { id = Guid.NewGuid(), sessionId = Session, agentId = A, regionId = Theirs }, old);
+        await Task.Delay(300, Ct);
+        Assert.False(arrival.IsCompleted, "the arrival should wait for its handoff");
+
+        var fresh = await PairAsync(newHost, machineId: "rs-3");
+        await db.Sql($"UPDATE `robust`.`regions` SET serverIP = '{newHost}' WHERE uuid = '{Theirs}'");
+        await _pins.ApproveMoveAsync(Theirs, _settings.Money.PairedServers!.Single(p => p.Host == newHost).Id, Ct);
+        var handoff = new { id = Guid.NewGuid(), sessionId = Session, fromRegion = Own, toRegion = Theirs, kind = "teleport", toHost = ServerHost, toPort = 9000 };
+        Assert.Equal("ok", (string?)(await Post("handoff", handoff, OwnKey)).Body!["code"]);
+        Assert.Equal("ok", (string?)(await arrival).Body!["code"]);
+        Assert.Equal("Verified", await db.Text($"SELECT state FROM `money`.`session_locations` WHERE session_id = '{Session}'"));
+
+        Assert.Equal(1, await Health(fresh, Theirs));
+        Assert.Equal("unverified_avatar", (string?)(await Post("transfer", await PaymentFromA(db, Theirs), fresh)).Body!["code"]);
+    }
+
+    [Fact]
+    public async Task A_server_naming_another_computers_address_gets_no_region_that_registers_there_until_the_owner_confirms()
+    {
+        // Sam pairs from his own computer, naming Jo's address, where nothing is registered yet. Harbour registers there
+        // later and Wendy logs in at it. Sam's key neither covers Harbour nor can place or charge Wendy there, until the owner confirms it.
+        var db = await StartAsync();
+        const string joHost = "192.168.1.77";
+        var harbour = Guid.NewGuid();
+        var sam = await PairAsync(joHost, confirm: false);
+        await db.AddRegion(harbour, joHost);
+        await db.AddPresence(A, harbour, Session, Secure);
+        await db.AddSessionStart(Session, A, harbour, "login");
+
+        Assert.Equal(0, await Health(sam, harbour));
+        Assert.NotEqual("ok", (string?)(await Post("arrived", new { id = Guid.NewGuid(), sessionId = Session, agentId = A, regionId = harbour }, sam)).Body!["code"]);
+        Assert.Equal("unverified_avatar", (string?)(await Post("transfer", await PaymentFromA(db, harbour), sam)).Body!["code"]);
+        Assert.Equal(0, await db.Scalar("SELECT COUNT(*) FROM `money`.`entries` WHERE type = 'pay_avatar'"));
+        Assert.Equal([harbour], await _pins.WaitingAsync(_settings.Money.PairedServers!.Single().Id, Ct));
+
+        await _pins.ConfirmAllAsync(_settings.Money.PairedServers!.Single(), Ct);
+
+        Assert.Equal(1, await Health(sam, harbour));
+        Assert.Equal("ok", (string?)(await Post("arrived", new { id = Guid.NewGuid(), sessionId = Session, agentId = A, regionId = harbour }, sam)).Body!["code"]);
+        Assert.Equal("ok", (string?)(await Post("transfer", await PaymentFromA(db, harbour), sam)).Body!["code"]);
+    }
+
+    [Fact]
+    public async Task A_machine_id_that_is_not_the_derived_value_is_not_kept_anywhere()
+    {
+        // An older Region Server sends its own MachineId, its password for the command port: the grid drops it.
+        var db = await StartAsync();
+        const string raw = "7a1e5c3b-0000-4000-8000-000000000001";
+        var (code, _) = _pairing.Issue();
+        var nonce = NewNonce();
+
+        var (_, body, _) = await Post("pair", new { host = ServerHost, firstPort = 9000, machineId = raw, nonce, proof = PairingProof.Client(code, _fingerprint, nonce, ServerHost) });
+
+        Assert.Equal("ok", (string?)body!["code"]);
+        Assert.Null(_settings.Money.PairedServers!.Single().MachineId);
+        Assert.DoesNotContain(raw, JsonSerializer.Serialize(_settings));
+        Assert.Equal(0, await db.Scalar($"SELECT COUNT(*) FROM `money`.`region_pins` WHERE machine_id = '{raw}'"));
+        Assert.DoesNotContain(raw, string.Join("\n", _logs));
+    }
+
+    [Fact]
+    public async Task A_server_that_paired_with_its_raw_machine_id_counts_as_another_computer_once_it_sends_the_derived_one()
+    {
+        var db = await StartAsync();
+        const string raw = "machine-one";
+        _settings = _settings with
+        {
+            Money = _settings.Money with { PairedServers = [new PairedServer(Guid.NewGuid(), ServerHost, new string('b', 64), DateTimeOffset.UtcNow, 9000, raw)] },
+        };
+        var oldId = _settings.Money.PairedServers!.Single().Id;
+        await db.Sql($"INSERT INTO `money`.`region_pins` (region_id, server_id, machine_id, pinned) VALUES ('{Theirs}', '{oldId:N}', '{raw}', UTC_TIMESTAMP(6))");
+
+        await PairAsync(machineId: raw);
+
+        Assert.Equal(PairedServer.MachineKeyOf(raw), _settings.Money.PairedServers!.Single().MachineId);
+        Assert.Equal(oldId.ToString("N"), await db.Text($"SELECT server_id FROM `money`.`region_pins` WHERE region_id = '{Theirs}'"));
+        Assert.Contains(await _alerts.OpenAsync(Ct), a => a.Kind == AlertKind.ServerTookOver);
+    }
+
+    [Fact]
+    public async Task A_purchase_held_under_a_servers_old_key_settles_under_its_new_key_after_the_same_computer_pairs_again()
+    {
+        var db = await StartAsync();
+        var seller = Guid.NewGuid();
+        await db.AddUser(seller);
+        var first = await PairAsync(machineId: "rs-1");
+        await Place(db, first, A, Theirs);
+        var hold = (await Post("hold", new
+        {
+            txnId = Guid.NewGuid(), kind = "object", buyer = Who(A), seller = new { agentId = seller, home = "" }, amount = 25, regionId = Theirs,
+            objectId = Guid.NewGuid(), objectName = "dress",
+        }, first)).Body!;
+        Assert.Equal("ok", (string?)hold["code"]);
+        var holdId = hold["holdId"]!.GetValue<long>();
+
+        var again = await PairAsync(machineId: "rs-1");
+
+        // The old key is gone and never settles it; the same computer's new key does, and so can't be refused as a stranger's.
+        Assert.Null(_settings.Money.PairedServers!.SingleOrDefault(p => p.KeyHash == PairedServer.HashOf(first)));
+        var settled = await Post("hold/complete", new { txnId = Guid.NewGuid(), holdId }, again);
+        Assert.Equal("ok", (string?)settled.Body!["code"]);
+        Assert.Equal("completed", await db.Text($"SELECT state FROM `money`.`holds` WHERE id = {holdId}"));
+    }
+
+    [Fact]
+    public async Task A_hold_made_by_another_computers_key_is_not_settled_by_a_server_paired_in_its_place()
+    {
+        var db = await StartAsync();
+        var seller = Guid.NewGuid();
+        await db.AddUser(seller);
+        var first = await PairAsync(machineId: "rs-1");
+        await Place(db, first, A, Theirs);
+        var holdId = (await Post("hold", new
+        {
+            txnId = Guid.NewGuid(), kind = "object", buyer = Who(A), seller = new { agentId = seller, home = "" }, amount = 25, regionId = Theirs,
+            objectId = Guid.NewGuid(), objectName = "dress",
+        }, first)).Body!["holdId"]!.GetValue<long>();
+
+        var other = await PairAsync(machineId: "rs-2");
+
+        Assert.Equal("unknown_hold", (string?)(await Post("hold/complete", new { txnId = Guid.NewGuid(), holdId }, other)).Body!["code"]);
+    }
+
+    /// <summary>Logs <paramref name="who"/> in at <paramref name="region"/> and has the module behind <paramref name="key"/> report the arrival, without any health call: the region is covered but never heard from.</summary>
+    private async Task<string?> LoginAndArrive(MoneyTestDatabase db, string key, Guid who, Guid region)
+    {
+        var (session, secure) = (Guid.NewGuid(), Guid.NewGuid());
+        await db.AddUser(who);
+        await db.AddPresence(who, region, session, secure);
+        await db.AddSessionStart(session, who, region, "login");
+        var arrived = (string?)(await Post("arrived", new { id = Guid.NewGuid(), sessionId = session, agentId = who, regionId = region }, key)).Body!["code"];
+        Sessions[who] = session;
+        return arrived;
+    }
+
+    private readonly Dictionary<Guid, Guid> Sessions = [];
+
+    [Fact]
+    public async Task An_honest_server_whose_people_were_placed_unverified_and_teleport_on_gets_no_claims_warning()
+    {
+        var db = await StartAsync();
+        var key = await PairAsync();
+        for (var i = 0; i < 4; i++)
+        {
+            var person = Guid.NewGuid();
+            Assert.Equal("unverified_avatar", await LoginAndArrive(db, key, person, Theirs));
+            // The module sends a handoff for everyone who leaves.
+            var handoff = new { id = Guid.NewGuid(), sessionId = Sessions[person], fromRegion = Theirs, toRegion = Own, kind = "teleport", toHost = "10.0.0.2", toPort = 9000 };
+            Assert.Equal("not_held", (string?)(await Post("handoff", handoff, key)).Body!["code"]);
+        }
+
+        var open = await _alerts.OpenAsync(Ct);
+        Assert.Empty(await _alerts.WarningsAsync(Ct));
+        Assert.DoesNotContain(open, a => a.Kind == AlertKind.UnhandedArrival);
+        var row = Assert.Single(open);
+        Assert.Equal(AlertKind.RefusedHandoff, row.Kind);
+        Assert.Equal(AlertLevel.Notice, row.Level);
+        Assert.Equal(4, row.Count);
+        Assert.False(row.Repeated);
+    }
+
+    [Fact]
+    public async Task People_arriving_in_a_region_that_still_waits_for_the_owner_raise_a_notice_never_a_claims_warning()
+    {
+        var db = await StartAsync();
+        var key = await PairAsync(confirm: false);
+        for (var i = 0; i < 4; i++)
+            Assert.Equal("wrong_region", await LoginAndArrive(db, key, Guid.NewGuid(), Theirs));
+
+        var open = await _alerts.OpenAsync(Ct);
+        Assert.Empty(await _alerts.WarningsAsync(Ct));
+        var row = Assert.Single(open);
+        Assert.Equal(AlertKind.ArrivalNotCovered, row.Kind);
+        Assert.Equal(AlertLevel.Notice, row.Level);
+        Assert.Equal(4, row.Count);
+    }
+
+    [Fact]
+    public async Task One_key_reporting_arrivals_in_made_up_regions_opens_one_row()
+    {
+        var db = await StartAsync();
+        var key = await PairAsync();
+        var (person, session) = (Guid.NewGuid(), Guid.NewGuid());
+        await db.AddUser(person);
+        await db.AddPresence(person, Theirs, session, Guid.NewGuid());
+
+        for (var i = 0; i < 30; i++)
+            await Post("arrived", new { id = Guid.NewGuid(), sessionId = session, agentId = person, regionId = Guid.NewGuid() }, key);
+
+        var row = Assert.Single(await _alerts.OpenAsync(Ct));
+        Assert.Equal(AlertKind.ArrivalNotCovered, row.Kind);
+        Assert.Equal(30, row.Count);
     }
 
     [Fact]

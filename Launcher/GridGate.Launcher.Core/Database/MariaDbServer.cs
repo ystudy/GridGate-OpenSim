@@ -44,8 +44,11 @@ public sealed class MariaDbServer(MariaDbBinaries bin, LauncherPaths paths, Laun
             ConnectionTimeout = 5,
         }.ConnectionString;
 
-    /// <summary>Connection string for one of the grid's database users over TCP to the private port.</summary>
-    internal static string ConnectionString(LauncherSettings s, string database, string user, string password, uint timeoutSeconds) =>
+    /// <summary>
+    /// Connection string for one of the grid's database users over TCP to the private port. A <paramref name="maxPool"/> above 0
+    /// pools the connections, at most that many, and closes one left idle for a minute.
+    /// </summary>
+    internal static string ConnectionString(LauncherSettings s, string database, string user, string password, uint timeoutSeconds, uint maxPool = 0) =>
         new MySqlConnectionStringBuilder
         {
             Server = "127.0.0.1",
@@ -53,7 +56,10 @@ public sealed class MariaDbServer(MariaDbBinaries bin, LauncherPaths paths, Laun
             Database = database,
             UserID = user,
             Password = password,
-            Pooling = false,
+            Pooling = maxPool > 0,
+            MaximumPoolSize = maxPool > 0 ? maxPool : 100,
+            MinimumPoolSize = 0,
+            ConnectionIdleTimeout = 60,
             SslMode = MySqlSslMode.Disabled,
             ConnectionTimeout = timeoutSeconds,
             DefaultCommandTimeout = timeoutSeconds,

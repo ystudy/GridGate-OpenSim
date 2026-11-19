@@ -266,8 +266,9 @@ namespace Gloebit.GloebitMoneyModule
             }
             
 
+            // Only the last four characters of the app key are logged, as the launcher's pages show it; the secret is never logged.
             m_log.InfoFormat("[GLOEBITMONEYMODULE] Initialised. Gloebit enabled: {0}, GLBEnvironment: {1}, GLBApiUrl: {2} GLBKeyAlias {3}, GLBKey: {4}, GLBSecret {5}",
-                m_enabled, m_environment, m_apiUrl, m_keyAlias, m_key, (m_secret == null ? "null" : "configured"));
+                m_enabled, m_environment, m_apiUrl, m_keyAlias, MaskedKey(m_key), (m_secret == null ? "null" : "configured"));
 
             // TODO: I've added GLBEnv.Custom for testing.  Remove before we ship
             if(m_environment != GLBEnv.Sandbox && m_environment != GLBEnv.Production && m_environment != GLBEnv.Custom) {
@@ -323,6 +324,12 @@ namespace Gloebit.GloebitMoneyModule
         /// </summary>
         /// <param name="config"></param>
         /// <param name="section"></param>
+        /// <summary>The app key as the launcher's pages show it: its last four characters only.</summary>
+        internal static string MaskedKey(string key)
+        {
+            return String.IsNullOrEmpty(key) ? "" : "\u2022\u2022\u2022\u2022" + key.Substring(key.Length - Math.Min(4, key.Length));
+        }
+
         private void ReadConfigAndPopulate(IConfig config, string section)
         {
             /********** [Startup] ************/

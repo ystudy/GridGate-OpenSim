@@ -85,7 +85,7 @@ public sealed class MoneyLedgerGapTests(MoneyMariaDb maria) : IClassFixture<Mone
     {
         // The §12 race covered one payee and transfers only, and never ran the self-check.
         var (ledger, db, _) = await MoneyLedgerTransferTests.Setup(maria,
-            new MoneySettings(Mode: MoneyMode.Play, ScriptPayouts: true, DailyPayoutLimit: 1_000));
+            new MoneySettings(Mode: MoneyMode.Play, ScriptPayouts: true, DailyPayoutLimit: 1_000, UploadFee: 1));
         await db.AddUser(C);
         await ledger.SetPayoutsAllowedAsync(A, true, Ct);
         await ledger.BalanceAsync(AccountRef.Resident(B), Ct);
@@ -170,5 +170,67 @@ public sealed class MoneyLedgerGapTests(MoneyMariaDb maria) : IClassFixture<Mone
         Assert.All(results, r => Assert.Contains(r.Outcome, new[] { MoneyOutcome.Ok, MoneyOutcome.DuplicateTxn }));
         Assert.Equal(1, await db.Scalar("SELECT COUNT(*) FROM `money`.`entries` WHERE type = 'pay_avatar'"));
         await AssertSound(ledger, db);
+    }
+
+    /// <summary>A real database exception (MySqlException can't be built directly), from a statement that fails.</summary>
+    private static async Task<Exception> DatabaseError(MoneyTestDatabase db)
+    {
+        await using var conn = await db.OpenMoney(Ct);
+        await using var cmd = new MySqlConnector.MySqlCommand("SELECT * FROM no_such_table", conn);
+        return await Assert.ThrowsAsync<MySqlConnector.MySqlException>(() => cmd.ExecuteNonQueryAsync(Ct));
+    }
+
+    /// <summary>A ledger whose commit fails after <paramref name="landed"/> says whether it went through; once it has failed
+    /// the database can be made unreachable too.</summary>
+    private static async Task<(MoneyLedger Ledger, MoneyTestDatabase Db)> CommitFailing(MoneyMariaDb maria, bool landed, bool thenUnreachable)
+    {
+        var (_, db, time) = await MoneyLedgerTransferTests.Setup(maria);
+        var down = false;
+        var failure = await DatabaseError(db);
+        var ledger = new MoneyLedger(
+            async ct => down ? throw failure : await db.OpenMoney(ct),
+            () => new MoneySettings(Mode: MoneyMode.Play, Visitors: VisitorMoney.All), () => MoneyMode.Play,
+            MoneyLedgerTransferTests.LocalUsers(db), MoneyLedgerTransferTests.KnownVisitors(db), time);
+        ledger.CommitForTests = async (tx, ct) =>
+        {
+            if (landed) await tx.CommitAsync(ct);
+            else await tx.RollbackAsync(ct);
+            down = thenUnreachable;
+            throw failure;
+        };
+        return (ledger, db);
+    }
+
+    [Fact]
+    public async Task A_commit_that_fails_but_landed_answers_what_was_stored()
+    {
+        var (ledger, db) = await CommitFailing(maria, landed: true, thenUnreachable: false);
+
+        var r = await ledger.TransferAsync(Pay(B, 30), Ct);
+
+        Assert.Equal(MoneyOutcome.Ok, r.Outcome);
+        Assert.Equal(70, r.FromBalance);
+        Assert.Equal(30, await Of(db, B) - 100);
+    }
+
+    [Fact]
+    public async Task A_commit_that_fails_and_whose_lookup_finds_nothing_answers_outcome_unknown()
+    {
+        var (ledger, db) = await CommitFailing(maria, landed: false, thenUnreachable: false);
+
+        var r = await ledger.TransferAsync(Pay(B, 30), Ct);
+
+        Assert.Equal(MoneyOutcome.OutcomeUnknown, r.Outcome);
+        Assert.Equal(0, await db.Scalar("SELECT COUNT(*) FROM `money`.`entries` WHERE type = 'pay_avatar'"));
+    }
+
+    [Fact]
+    public async Task A_commit_that_fails_when_the_database_is_then_unreachable_answers_outcome_unknown()
+    {
+        var (ledger, _) = await CommitFailing(maria, landed: true, thenUnreachable: true);
+
+        var r = await ledger.TransferAsync(Pay(B, 30), Ct);
+
+        Assert.Equal(MoneyOutcome.OutcomeUnknown, r.Outcome);
     }
 }

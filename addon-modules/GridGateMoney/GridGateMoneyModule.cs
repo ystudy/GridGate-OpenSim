@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using System.Threading;
 using System.Threading.Tasks;
 using log4net;
 using Mono.Addins;
@@ -13,6 +14,7 @@ using OpenSim.Framework;
 using OpenSim.Region.Framework.Interfaces;
 using OpenSim.Region.Framework.Scenes;
 using OpenSim.Services.Interfaces;
+using GridRegion = OpenSim.Services.Interfaces.GridRegion;
 
 namespace GridGate.Region.Money;
 
@@ -23,12 +25,16 @@ namespace GridGate.Region.Money;
 /// only while money is on.
 /// </summary>
 [Extension(Path = "/OpenSim/RegionModules", NodeName = "RegionModule", Id = "GridGateMoneyModule")]
-public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVisitorMoneyModule, IClassifiedFeeModule
+public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVisitorMoneyModule, IClassifiedFeeModule, IFeeHoldModule, IMoneyModuleTellsPayer, IUploadFeeKnown
 {
     public const string ModuleName = "GridGateMoneyModule";
     private static readonly ILog Log = LogManager.GetLogger(MethodBase.GetCurrentMethod()!.DeclaringType);
     private static readonly TimeSpan EconomyFresh = TimeSpan.FromSeconds(60);
-    private static readonly TimeSpan LandHoldLimit = TimeSpan.FromSeconds(3);
+    internal static readonly TimeSpan LandHoldLimit = TimeSpan.FromSeconds(1.5);
+    // A parcel's purchase mark this old belongs to a purchase that never finished.
+    private static readonly TimeSpan LandMarkStale = TimeSpan.FromMinutes(1);
+    private const string LandBusyText = "Someone is buying this parcel right now. Please try again in a moment.";
+    private static readonly TimeSpan HealthEvery = TimeSpan.FromMinutes(3);
     // Until the service first answers: no fees are known (so none are offered free, R-8), and visitors and payouts are off.
     private static readonly EconomyInfo NoEconomy = new("C$", 0, 0, false, false, 1_000_000);
 
@@ -39,6 +45,9 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
     private readonly ConcurrentDictionary<UUID, string> _visitorHomes = new();
     // Land purchases between the hold (validate) and the settle (buy), by region and parcel.
     private readonly ConcurrentDictionary<(UUID Region, int Parcel), LandHold> _landHolds = new();
+    private readonly ParcelBuyLimit _buyLimit = new(TimeProvider.System);
+    private readonly PayoutLimit _payoutLimit = new(TimeProvider.System);
+    private readonly MoneyActions.PayoutPauseState _payoutPause = new();
     private readonly object _economyGate = new();
 
     private IMoneyService? _client;
@@ -46,14 +55,22 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
     private EconomyInfo? _economy;
     private DateTime _economyAt = DateTime.MinValue;
     private bool _economyRefreshing;
+    private ITimer? _healthTimer;
 
-    private sealed record LandHold(UUID Agent, long HoldId, Payer Payer, MoneyWho Seller, DateTime At);
+    /// <summary>A parcel's purchase mark; <see cref="At"/> is a monotonic timestamp (<see cref="TimeProvider.GetTimestamp"/>).</summary>
+    private sealed record LandHold(UUID Agent, long HoldId, Payer Payer, MoneyWho Seller, long At);
 
     /// <summary>Whether the INI chose this module and gave it everything it needs.</summary>
     internal bool Enabled { get; private set; }
 
     /// <summary>False on a Region Server not paired with its grid's money yet: every payment is refused (money plan 3).</summary>
     internal bool IsPaired { get; private set; }
+
+    /// <summary>
+    /// The one place reporter of this program (the module is shared by all its regions), made with the first region: one
+    /// queue, so a move between two of its regions is handed off before the arrival it vouches for.
+    /// </summary>
+    internal PlaceReporter? Places { get; private set; }
 
     public string Name => ModuleName;
 
@@ -112,11 +129,28 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
         if (!Enabled) return;
         // Registered here, not in RegionLoaded: YEngine hooks OnObjectPaid in its own RegionLoaded.
         scene.RegisterModuleInterface<IMoneyModule>(this);
-        lock (_scenes) _scenes.Add(scene);
+        lock (_scenes)
+        {
+            _scenes.Add(scene);
+            Places ??= new PlaceReporter(_client!, TimeProvider.System, text => Log.Warn("[GRIDGATE MONEY]: " + text));
+            _healthTimer ??= TimeProvider.System.CreateTimer(_ => TimedHealth(), null, HealthEvery, HealthEvery);
+        }
         var regionId = scene.RegionInfo.RegionID;
-        _actions[regionId] = new MoneyActions(_client!, regionId.Guid, KnownEconomy, new View(this));
+        _actions[regionId] = new MoneyActions(_client!, regionId.Guid, KnownEconomy, new View(this), FetchEconomyNow) { Pause = _payoutPause };
         scene.EventManager.OnNewClient += OnNewClient;
         scene.EventManager.OnClientClosed += OnClientClosed;
+        // Where avatars are: reported in the background, never holding up a teleport or crossing. A teleport or crossing is
+        // remembered when it starts and handed off once the avatar is let go here (or has arrived in another of this
+        // program's regions), so one that fails hands nobody over.
+        scene.EventManager.OnMakeRootAgent += OnMakeRootAgent;
+        scene.EventManager.OnTeleportStart += OnTeleportStart;
+        scene.EventManager.OnTeleportFail += OnTeleportFail;
+        scene.EventManager.OnCrossAgentToNewRegion += OnCrossAgentToNewRegion;
+        scene.EventManager.OnMakeChildAgent += OnMakeChildAgent;
+        // Reported now and again once the region has started. OpenSim adds the region before registering it with the grid,
+        // so a Region Server's key doesn't cover it yet and the service ignores it in this first report.
+        scene.EventManager.OnRegionStarted += OnRegionStarted;
+        ReportHealth();
     }
 
     public void RegionLoaded(Scene scene)
@@ -136,11 +170,70 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
         scene.UnregisterModuleInterface<IMoneyModule>(this);
         scene.EventManager.OnNewClient -= OnNewClient;
         scene.EventManager.OnClientClosed -= OnClientClosed;
+        scene.EventManager.OnMakeRootAgent -= OnMakeRootAgent;
+        scene.EventManager.OnTeleportStart -= OnTeleportStart;
+        scene.EventManager.OnTeleportFail -= OnTeleportFail;
+        scene.EventManager.OnCrossAgentToNewRegion -= OnCrossAgentToNewRegion;
+        scene.EventManager.OnMakeChildAgent -= OnMakeChildAgent;
+        scene.EventManager.OnRegionStarted -= OnRegionStarted;
         lock (_scenes) _scenes.Remove(scene);
         _actions.TryRemove(scene.RegionInfo.RegionID, out _);
+        // At once, so the service stops counting the removed region as run here.
+        ReportHealth();
     }
 
-    public void Close() => (_client as IDisposable)?.Dispose();
+    public void Close()
+    {
+        _healthTimer?.Dispose();
+        Places?.Dispose();
+        (_client as IDisposable)?.Dispose();
+    }
+
+    // ---- where avatars are --------------------------------------------------------------------------
+
+    /// <summary>The program's regions, at once on each new region and every <see cref="HealthEvery"/>.</summary>
+    private void ReportHealth()
+    {
+        List<Guid> regions;
+        lock (_scenes) regions = _scenes.Select(s => s.RegionInfo.RegionID.Guid).ToList();
+        Places?.Health(regions);
+    }
+
+    /// <summary>The health timer's callback, on a pool thread nobody waits for: a failure (say, at shutdown) is logged by type only.</summary>
+    private void TimedHealth()
+    {
+        try
+        {
+            ReportHealth();
+        }
+        catch (Exception e)
+        {
+            Log.Warn($"[GRIDGATE MONEY]: The health report failed with {e.GetType().Name}.");
+        }
+    }
+
+    private void OnRegionStarted(Scene scene)
+    {
+        if (Enabled) ReportHealth();
+    }
+
+    private void OnMakeRootAgent(ScenePresence sp) => Places?.Arrived(sp);
+
+    // Raised by the scene the avatar is leaving, so the client's scene is the region it leaves.
+    private void OnTeleportStart(IClientAPI client, GridRegion destination, GridRegion finalDestination, uint teleportFlags, bool gridLogout)
+    {
+        if (client.Scene?.RegionInfo is { } from) Places?.TeleportStarting(client, from.RegionID.Guid, finalDestination, gridLogout);
+    }
+
+    private void OnTeleportFail(IClientAPI client, bool gridLogout)
+    {
+        if (client.Scene?.RegionInfo is { } from) Places?.TeleportFailed(client, from.RegionID.Guid);
+    }
+
+    private void OnCrossAgentToNewRegion(ScenePresence sp, bool isFlying, GridRegion newRegion) => Places?.Crossing(sp, newRegion);
+
+    // Raised by the scene the avatar is leaving, once a teleport or crossing out of it has succeeded.
+    private void OnMakeChildAgent(ScenePresence sp) => Places?.Released(sp);
 
     // ---- economy settings ----------------------------------------------------------------------------
 
@@ -156,6 +249,22 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
 
     /// <summary><see cref="KnownEconomy"/>, or <see cref="NoEconomy"/> before the service ever answered.</summary>
     private EconomyInfo Economy() => KnownEconomy() ?? NoEconomy;
+
+    /// <summary>
+    /// Asks the service for its settings now, on the caller's thread, and keeps them: for a fee the ledger refused as not the
+    /// configured one, right after it changed. Null when the service didn't answer.
+    /// </summary>
+    private EconomyInfo? FetchEconomyNow()
+    {
+        if (_client is null) return null;
+        var info = _client.EconomyAsync(default).GetAwaiter().GetResult();
+        lock (_economyGate)
+        {
+            if (info is not null) _economy = info;
+            _economyAt = DateTime.UtcNow;
+        }
+        return info;
+    }
 
     private void RefreshEconomy()
     {
@@ -214,7 +323,9 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
 
     private void OnClientClosed(UUID agent, Scene scene)
     {
-        if (FindClient(agent) is null) _balances.TryRemove(agent, out _);
+        if (FindClient(agent) is not null) return;
+        _balances.TryRemove(agent, out _);
+        _buyLimit.Forget(agent.Guid);
     }
 
     private async Task PushBalanceAsync(IClientAPI c)
@@ -230,7 +341,8 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
         switch ((MoneyTransactionType)type)
         {
             case MoneyTransactionType.Gift:
-                await actions.PayAvatarAsync(payer, source.Guid, WhoOf(dest), amount).ConfigureAwait(false);
+                if (Payee(dest, c.AgentId) is not { } friend) return;
+                await actions.PayAvatarAsync(payer, source.Guid, friend, amount).ConfigureAwait(false);
                 break;
             case MoneyTransactionType.PayObject:
                 if (SceneOf(c)?.GetSceneObjectPart(dest) is not { ParentGroup.RootPart: { } root } part)
@@ -238,7 +350,8 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
                     c.SendAlertMessage("That object isn't here any more.");
                     return;
                 }
-                await actions.PayObjectAsync(payer, source.Guid, Info(part), Info(root), WhoOf(root.OwnerID), amount).ConfigureAwait(false);
+                if (Payee(root.OwnerID, c.AgentId) is not { } owner) return;
+                await actions.PayObjectAsync(payer, source.Guid, Info(part), Info(root), owner, amount).ConfigureAwait(false);
                 break;
             default:
                 c.SendAlertMessage("That kind of payment isn't available on this grid.");
@@ -268,7 +381,11 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
         bool Deliver() => scene.RequestModuleInterface<IBuySellModule>()?.BuyObject(c, category, localId, saleType, salePrice) ?? false;
         // The object as it is when this buy's turn comes: another buyer may have bought it, or the owner changed the sale.
         PartInfo? Now() => scene.GetSceneObjectPart(localId) is { ParentGroup: { IsDeleted: false } } p ? Info(p) : null;
-        await actions.BuyAsync(PayerOf(c), Info(part), WhoOf(group.RootPart.OwnerID), saleType, salePrice, Deliver, Now).ConfigureAwait(false);
+        var ownerId = group.RootPart.OwnerID;
+        // Nothing is paid for a free sale or one's own object, so a seller who can't be paid doesn't matter there.
+        var seller = salePrice > 0 && ownerId != c.AgentId ? Payee(ownerId, c.AgentId) : WhoOf(ownerId);
+        if (seller is null) return;
+        await actions.BuyAsync(PayerOf(c), Info(part), seller, saleType, salePrice, Deliver, Now).ConfigureAwait(false);
     }
 
     // ---- land ---------------------------------------------------------------------------------------
@@ -285,7 +402,7 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
             return;
         }
         // The price the land module validated is "at least the sale price"; GridGate takes exactly the sale price.
-        if (e.parcelPrice != land.LandData.SalePrice || land.LandData.OwnerID != e.parcelOwnerID)
+        if (e.parcelPrice != land.LandData.SalePrice || land.LandData.OwnerID != e.parcelOwnerID || land.LandData.Area != e.parcelArea)
         {
             client.SendAlertMessage(MoneyRules.Message(Refusal.PriceChanged));
             return;
@@ -295,20 +412,59 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
             e.economyValidated = true;
             return;
         }
-        var key = (scene.RegionInfo.RegionID, e.parcelLocalID);
-        // One purchase of a parcel at a time. Validate and buy already run one after another on the region's packet thread,
-        // and the land module's own check refuses a parcel no longer for sale; this only guards against that changing.
-        if (_landHolds.TryGetValue(key, out var busy) && DateTime.UtcNow - busy.At < TimeSpan.FromMinutes(1))
+        // After a land hold ran out of time, land buys here fail at once for a while (and use nobody's allowance).
+        if (actions.LandPaused)
         {
-            client.SendAlertMessage("Someone is buying this parcel right now. Please try again in a moment.");
+            client.SendAlertMessage(MoneyRules.Message(MoneyAnswer.UnavailableCode));
             return;
         }
+        if (Payee(e.parcelOwnerID, e.agentId) is not { } seller) return;
+        if (!_buyLimit.TryTake(e.agentId.Guid))
+        {
+            client.SendAlertMessage(MoneyRules.LandTooFastText);
+            return;
+        }
+        var key = (scene.RegionInfo.RegionID, e.parcelLocalID);
         var payer = PayerOf(client);
-        var seller = WhoOf(e.parcelOwnerID);
-        // This runs on the region's packet thread (ParcelBuy is handled in line), so the service gets a few seconds only.
+        // One purchase of a parcel at a time: the parcel is marked before the service is asked (HoldId 0, nothing held yet),
+        // so a second buyer who gets in while the first one waits is turned away. An entry over a minute old (by the
+        // monotonic clock, so a wall-clock jump can't age one) is a purchase that never finished, and is taken over.
+        var mine = new LandHold(e.agentId, 0, payer, seller, TimeProvider.System.GetTimestamp());
+        if (!_landHolds.TryAdd(key, mine))
+        {
+            if (!_landHolds.TryGetValue(key, out var busy) || TimeProvider.System.GetElapsedTime(busy.At) < LandMarkStale || !_landHolds.TryUpdate(key, mine, busy))
+            {
+                client.SendAlertMessage(LandBusyText);
+                return;
+            }
+        }
+        // This runs on the region's packet thread (ParcelBuy is handled in line), so the service gets a moment only.
         var hold = actions.HoldLandAsync(payer, seller, e.parcelPrice, e.parcelLocalID, LandHoldLimit).GetAwaiter().GetResult();
-        if (hold is not { } holdId || holdId == 0) return;
-        _landHolds[key] = new LandHold(e.agentId, holdId, payer, seller, DateTime.UtcNow);
+        if (hold is not { } holdId || holdId == 0)
+        {
+            _landHolds.TryRemove(KeyValuePair.Create(key, mine));
+            return;
+        }
+        // The mark was taken over while the service was asked: this purchase no longer has the parcel, so OnLandBuy would
+        // never settle its hold. It gives the coins back and doesn't go ahead.
+        if (!_landHolds.TryUpdate(key, mine with { HoldId = holdId }, mine))
+        {
+            Run(() => actions.SettleLandAsync(payer, seller, holdId, false));
+            client.SendAlertMessage(LandBusyText);
+            return;
+        }
+        // The parcel can change while the service holds the coins (a subdivide makes a new parcel object), so it is read
+        // again: what the buyer was shown has to be what is sold, or the hold goes back.
+        var after = scene.LandChannel?.GetLandObject(e.parcelLocalID)?.LandData;
+        if (after is null || after.OwnerID != e.parcelOwnerID || after.SalePrice != e.parcelPrice || after.Area != e.parcelArea
+            || (after.Flags & (uint)(ParcelFlags.ForSale | ParcelFlags.ForSaleObjects | ParcelFlags.SellParcelObjects)) == 0
+            || (after.AuthBuyerID != UUID.Zero && after.AuthBuyerID != e.agentId))
+        {
+            _landHolds.TryRemove(KeyValuePair.Create(key, mine with { HoldId = holdId }));
+            Run(() => actions.SettleLandAsync(payer, seller, holdId, false));
+            client.SendAlertMessage(MoneyRules.Message(Refusal.PriceChanged));
+            return;
+        }
         e.economyValidated = true;
         e.amountDebited = e.parcelPrice;
     }
@@ -316,8 +472,9 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
     private void OnLandBuy(Scene scene, EventManager.LandBuyArgs e)
     {
         var key = (scene.RegionInfo.RegionID, e.parcelLocalID);
-        if (!_landHolds.TryGetValue(key, out var hold) || hold.Agent != e.agentId) return;
-        _landHolds.TryRemove(key, out _);
+        if (!_landHolds.TryGetValue(key, out var hold) || hold.Agent != e.agentId || hold.HoldId == 0) return;
+        // Only this purchase's own mark is removed; its hold is settled either way.
+        _landHolds.TryRemove(KeyValuePair.Create(key, hold));
         var data = scene.LandChannel?.GetLandObject(e.parcelLocalID)?.LandData;
         var confirmed = data is not null && (e.groupOwned ? data.GroupID == e.groupId && data.IsGroupOwned : data.OwnerID == e.agentId && !data.IsGroupOwned);
         if (_actions.TryGetValue(scene.RegionInfo.RegionID, out var actions))
@@ -327,6 +484,17 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
     // ---- IMoneyModule -------------------------------------------------------------------------------
 
     public int UploadCharge => (int)Math.Clamp(Economy().UploadFee, 0, int.MaxValue);
+
+    /// <summary>False until the money service has answered: <see cref="UploadCharge"/> reads 0 then, which isn't "free".</summary>
+    public bool UploadFeeKnown => KnownEconomy() is not null;
+
+    /// <summary>
+    /// Why uploads that cost a fee are refused while the fee isn't known: a Region Server that isn't paired never learns it
+    /// (they stay refused until it is paired); otherwise the service hasn't answered yet.
+    /// </summary>
+    public string UploadFeeUnknownText => _client is UnpairedMoneyService
+        ? MoneyRules.NotPairedUploadText
+        : "The upload fee isn't known yet. Please try again in a minute.";
 
     /// <summary>Always 0: GridGate takes no fee for making a group (money design §7.3).</summary>
     public int GroupCreationCharge => 0;
@@ -353,8 +521,7 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
         switch (type)
         {
             case MoneyTransactionType.GroupJoin:
-                var founder = FindClient(agentID)?.Scene is Scene s ? s.RequestModuleInterface<IGroupsModule>()?.GetGroupRecord(extraData)?.FounderID : null;
-                Charge(agentID, "group_join_fee", amount, founder is { } f && !f.IsZero() ? f.Guid : null);
+                Charge(agentID, "group_join_fee", amount, Founder(FindClient(agentID), extraData));
                 break;
             case MoneyTransactionType.ClassifiedCharge:
                 // The grid's fee, whatever listing price the viewer sent.
@@ -378,12 +545,91 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
         actions.Charge(PayerOf(c), type, amount, payTo);
     }
 
+    /// <summary>
+    /// The founder of the group with id <paramref name="groupId"/> (the groups modules pass the id, not a name: proxy groups
+    /// of other grids don't have unique names), who a join fee pays; null for none known.
+    /// </summary>
+    private static Guid? Founder(IClientAPI? client, string groupId) =>
+        UUID.TryParse(groupId, out var id) && client?.Scene is Scene s
+        && s.RequestModuleInterface<IGroupsModule>()?.GetGroupRecord(id)?.FounderID is { } f && !f.IsZero() ? f.Guid : null;
+
+    // ---- IFeeHoldModule: a fee held before its action -----------------------------------------------------------------
+
+    private static readonly IFeeHold NothingDue = new NoFee();
+
+    /// <summary>
+    /// Holds a fee before OpenSim's action: <c>UploadCharge</c> as given, <c>GroupJoin</c> paying the founder of the
+    /// group whose id is <paramref name="extraData"/> (as <see cref="ApplyCharge"/> does), <c>ClassifiedCharge</c> at the
+    /// grid's fee whatever <paramref name="amount"/> says. A money service from before fee holds can't hold one: the
+    /// payer is told money is unavailable. Null when it can't be paid, or the payer isn't here.
+    /// </summary>
+    public IFeeHold? HoldFee(UUID agentID, int amount, MoneyTransactionType type, string extraData = "")
+    {
+        var fee = type switch
+        {
+            MoneyTransactionType.UploadCharge => "upload_fee",
+            MoneyTransactionType.GroupJoin => "group_join_fee",
+            MoneyTransactionType.ClassifiedCharge => "classified_fee",
+            _ => null,
+        };
+        if (fee is null)
+        {
+            Log.Debug($"[GRIDGATE MONEY]: Ignored a {type} fee of {amount} for {agentID}.");
+            return NothingDue;
+        }
+        // The classified fee is the grid's own, so it is asked about even when OpenSim passes nothing.
+        if (fee != "classified_fee" && amount <= 0) return NothingDue;
+        if (FindClient(agentID) is not { } c || ActionsFor(c) is not { } actions)
+        {
+            // The caller says this in its own words (too few coins), so the log says what really happened.
+            Log.Debug($"[GRIDGATE MONEY]: Held no {fee} of {amount} for {agentID}: not here");
+            return null;
+        }
+        var payer = PayerOf(c);
+        Guid? payTo = fee == "group_join_fee" && Founder(c, extraData) is { } founder && founder != agentID.Guid ? founder : null;
+
+        if (fee == "classified_fee") amount = actions.ClassifiedFee();
+        return actions.HoldFee(payer, fee, amount, payTo) switch
+        {
+            null => null,
+            0 => NothingDue,
+            { } holdId => new Held(actions, payer, fee, amount, payTo, holdId),
+        };
+    }
+
+    private sealed class NoFee : IFeeHold
+    {
+        public void Settle(bool succeeded)
+        {
+        }
+    }
+
+    /// <summary>A fee the service holds: completed or returned off the caller's thread, once.</summary>
+    private sealed class Held(MoneyActions actions, Payer payer, string fee, int amount, Guid? payTo, long holdId) : IFeeHold
+    {
+        private int _settled;
+
+        public void Settle(bool succeeded)
+        {
+            if (Interlocked.Exchange(ref _settled, 1) == 0)
+                Run(() => actions.SettleFeeAsync(payer, fee, amount, payTo, holdId, succeeded));
+        }
+    }
+
     /// <summary>The land module's parcel pass; the only money movement it asks for.</summary>
     public bool MoveMoney(UUID fromUser, UUID toUser, int amount, MoneyTransactionType type, string text)
     {
         if (type != MoneyTransactionType.LandPassSale) return false;
-        return FindClient(fromUser) is { } c && ActionsFor(c) is { } actions
-            && actions.MovePass(PayerOf(c), WhoOf(toUser), amount, groupLand: GroupLand(c, toUser));
+        if (FindClient(fromUser) is not { } c) return false; // nobody here to tell
+        if (ActionsFor(c) is not { } actions)
+        {
+            c.SendAlertMessage(MoneyRules.Message("unavailable"));
+            return false;
+        }
+        // A pass that costs nothing pays nobody.
+        var owner = amount > 0 ? Payee(toUser, fromUser) : WhoOf(toUser);
+        if (owner is null) return false;
+        return actions.MovePass(PayerOf(c), owner, amount, groupLand: GroupLand(c, toUser));
     }
 
     public void MoveMoney(UUID fromUser, UUID toUser, int amount, string text) =>
@@ -405,12 +651,31 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
             reason = "SERVICE_ERROR";
             return false;
         }
-        if (MoneyRules.CheckPayout(Info(root), fromID.Guid) is { } refused)
+        // The cheap refusals come first: the pause, then the owner and group checks, which need no walk through the
+        // object's inventory. A payout the pause refuses anyway doesn't use up the owner's allowance.
+        if (actions.PayoutsPaused)
+        {
+            reason = "SERVICE_ERROR";
+            return false;
+        }
+        if (MoneyRules.CheckPayout(PayoutInfo(root), fromID.Guid) is { } refused)
         {
             reason = refused;
             return false;
         }
-        return actions.Payout(fromID.Guid, WhoOf(toID), amount, root.UUID.Guid, root.Name, txn.Guid, out reason);
+        if (!_payoutLimit.TryTake(fromID.Guid, out var warn))
+        {
+            if (warn) Log.Warn($"[GRIDGATE MONEY]: {fromID} has made {PayoutLimit.PerWindow} script payouts in a minute; more are refused until it eases.");
+            reason = "SERVICE_ERROR";
+            return false;
+        }
+        var payee = WhoOf(toID, out var unproven);
+        if (unproven)
+        {
+            reason = "LINDENDOLLAR_ENTITYDOESNOTEXIST";
+            return false;
+        }
+        return actions.Payout(fromID.Guid, payee, amount, root.UUID.Guid, root.Name, txn.Guid, out reason);
     }
 
     /// <summary>Whether <paramref name="owner"/> is a group that owns land in the client's region: a pass's payee.</summary>
@@ -424,7 +689,9 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
     {
         if (!Economy().VisitorWallets) return false;
         var um = UserManagement();
-        return um is not null && !um.IsLocalGridUser(agentID) && WhoOf(agentID).Home.Length > 0;
+        if (um is null || um.IsLocalGridUser(agentID)) return false;
+        var who = WhoOf(agentID, out var unproven);
+        return !unproven && who.Home.Length > 0;
     }
 
     // ---- helpers ------------------------------------------------------------------------------------
@@ -438,14 +705,34 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
     /// An avatar as the ledger keys it: a resident by id, a visitor by id and home grid. A visitor's home comes from their
     /// own login before OpenSim's name cache, which an object's creator data can plant (<see cref="VisitorHomes"/>).
     /// </summary>
-    private MoneyWho WhoOf(UUID id)
+    private MoneyWho WhoOf(UUID id) => WhoOf(id, out _);
+
+    /// <summary>
+    /// <see cref="WhoOf(UUID)"/>; <paramref name="unproven"/> is true for a visitor who isn't here and whose home is known
+    /// only from the name cache: nothing in this program has seen where they come from, so they aren't paid.
+    /// </summary>
+    private MoneyWho WhoOf(UUID id, out bool unproven)
     {
+        unproven = false;
         var um = UserManagement();
         if (um is null || um.IsLocalGridUser(id)) return new MoneyWho(id.Guid, "");
         var circuit = CircuitHome(id);
         if (circuit is not null) _visitorHomes[id] = circuit;
         var remembered = _visitorHomes.TryGetValue(id, out var r) ? r : null;
+        unproven = string.IsNullOrWhiteSpace(circuit) && string.IsNullOrWhiteSpace(remembered) && FindClient(id) is null;
         return new MoneyWho(id.Guid, VisitorHomes.Choose(circuit, remembered, um.GetUserHomeURL(id)));
+    }
+
+    /// <summary>
+    /// Who <paramref name="payer"/>'s payment goes to, or null after telling the payer why not: a visitor who isn't here and
+    /// whose home is known only from the name cache isn't paid (see <see cref="WhoOf(UUID, out bool)"/>).
+    /// </summary>
+    private MoneyWho? Payee(UUID id, UUID payer)
+    {
+        var who = WhoOf(id, out var unproven);
+        if (!unproven) return who;
+        FindClient(payer)?.SendAlertMessage(MoneyRules.AbsentVisitorText);
+        return null;
     }
 
     /// <summary>The home grid in the login of an avatar with a circuit in one of this program's regions, or null.</summary>
@@ -475,6 +762,11 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
                     return sp.ControllingClient;
         return null;
     }
+
+    /// <summary>The root's owner and group only, for a payout's first checks: no walk through its inventory.</summary>
+    private static PartInfo PayoutInfo(SceneObjectPart root) =>
+        new(root.UUID.Guid, root.UUID.Guid, true, root.OwnerID.Guid, root.GroupID.Guid, root.Name, root.PayPrice, root.ObjectSaleType, root.SalePrice,
+            false);
 
     private static PartInfo Info(SceneObjectPart p)
     {
@@ -521,7 +813,7 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
 
         public void ObjectPaid(Guid partId, Guid payer, int amount) => module.OnObjectPaid?.Invoke(new UUID(partId), new UUID(payer), amount);
 
-        public Task Delay(TimeSpan t) => Task.Delay(t);
+        public Task Delay(TimeSpan t, CancellationToken ct) => Task.Delay(t, ct);
 
         public void Warn(string text) => Log.Warn("[GRIDGATE MONEY]: " + text);
 

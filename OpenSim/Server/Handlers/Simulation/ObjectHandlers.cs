@@ -127,6 +127,8 @@ namespace OpenSim.Server.Handlers.Simulation
                 //m_log.DebugFormat("[OBJECT HANDLER]: received {0}", sogXmlStr);
                 sog = s.DeserializeObject(sogXmlStr);
                 sog.ExtraFromXmlString(extraStr);
+                // GridGate: anyone can post an object here, so its script state comes from outside this program.
+                sog.StateFromOutside = true;
             }
             catch (Exception ex)
             {

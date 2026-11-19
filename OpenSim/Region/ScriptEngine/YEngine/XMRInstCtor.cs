@@ -553,7 +553,8 @@ namespace OpenSim.Region.ScriptEngine.Yengine
 
             XmlElement permissionsN = (XmlElement)scriptStateN.SelectSingleNode("Permissions");
             m_Item.PermsGranter = new UUID(permissionsN.GetAttribute("granter"));
-            m_Item.PermsMask = RestoredPermsMask(m_Item.PermsGranter, Convert.ToInt32(permissionsN.GetAttribute("mask")));
+            m_Item.PermsMask = RestoredPermsMask(m_Item.PermsGranter, Convert.ToInt32(permissionsN.GetAttribute("mask")),
+                DebitPermission.IsMarked(scriptStateN));
             m_Part.Inventory.UpdateInventoryItem(m_Item, false, false);
 
             // Restore event queues, preserving any events that queued
@@ -583,14 +584,16 @@ namespace OpenSim.Region.ScriptEngine.Yengine
         }
 
         /// <summary>
-        /// GridGate: a saved PERMISSION_DEBIT comes back only from a running script's own state (a region start, a
+        /// GridGate: a saved PERMISSION_DEBIT comes back only from this program's own running script (a region start, a
         /// crossing, a teleport), granted by the owner. A rez or an attach reads the state saved in the object's asset,
-        /// which an inventory backup or a copy sale can bring from someone else (money review 2026-11-15, R-1).
+        /// which an inventory backup or a copy sale can bring from someone else. A state from outside this program
+        /// (another program's crossing or teleport, or an archive: the object is marked StateFromOutside) can name
+        /// anyone as the granter, so it brings no grant back either. A state written before this version's mark
+        /// (<paramref name="stateIsMarked"/>) loses the grant once; the next save carries the mark.
         /// </summary>
-        private int RestoredPermsMask(UUID granter, int mask)
+        private int RestoredPermsMask(UUID granter, int mask, bool stateIsMarked)
         {
-            bool fromRunningScript = m_StateSource == StateSource.RegionStart || m_StateSource == StateSource.PrimCrossing
-                                     || m_StateSource == StateSource.Teleporting;
+            bool fromRunningScript = DebitPermission.FromRunningScript(m_StateSource, m_Part.ParentGroup.StateFromOutside, stateIsMarked);
             return DebitPermission.Restored(mask, granter, m_Part.OwnerID, fromRunningScript);
         }
 
@@ -898,7 +901,7 @@ namespace OpenSim.Region.ScriptEngine.Yengine
             doGblInit = false;
 
             m_Item.PermsGranter = permsGranter;
-            m_Item.PermsMask = RestoredPermsMask(permsGranter, permsMask);
+            m_Item.PermsMask = RestoredPermsMask(permsGranter, permsMask, false); // GridGate: another engine's state never carries this program's mark
             m_Part.Inventory.UpdateInventoryItem(m_Item, false, false);
 
             lock (m_RunLock)

@@ -70,18 +70,26 @@ public static class PairingProof
 }
 
 /// <summary>
-/// The Grid Asset Server's pending pairing code, in memory only: one at a time, for 15 minutes, cancelled after 5 wrong
-/// proofs, gone when the launcher restarts (money plan 3).
+/// The Grid Asset Server's pending pairing code, in memory only: one at a time, for 15 minutes, cancelled only from the Money page
+/// (never by what arrives over the network), gone when the launcher restarts (money plan 3).
 /// </summary>
 public sealed class MoneyPairing(TimeProvider time)
 {
+    /// <summary>Wrong proofs from one address that block it for the code's lifetime.</summary>
     public const int MaxWrongProofs = 5;
+
+    /// <summary>
+    /// Addresses whose wrong proofs are counted at once. Past this the proofs of a further address are still tried but not counted, so
+    /// a flood of made-up addresses can't grow the list without end, and can't use up the code either.
+    /// </summary>
+    public const int MaxAddressesCounted = 1024;
+
     public static readonly TimeSpan Lifetime = TimeSpan.FromMinutes(15);
 
     private readonly Lock _gate = new();
     private string? _code;
     private DateTimeOffset _expires;
-    private int _wrong;
+    private readonly Dictionary<System.Net.IPAddress, int> _wrongBy = [];
 
     /// <summary>A new code, replacing any pending one, and when it stops working.</summary>
     public (string Code, DateTimeOffset Expires) Issue()
@@ -90,11 +98,12 @@ public sealed class MoneyPairing(TimeProvider time)
         {
             _code = PairingCode.New();
             _expires = time.GetUtcNow() + Lifetime;
-            _wrong = 0;
+            _wrongBy.Clear();
             return (_code, _expires);
         }
     }
 
+    /// <summary>The owner cancels the pending code, from the Money page. Nothing a request sends can do this.</summary>
     public void Cancel()
     {
         lock (_gate) _code = null;
@@ -110,21 +119,27 @@ public sealed class MoneyPairing(TimeProvider time)
     }
 
     /// <summary>
-    /// The pending code, used up, when <paramref name="proofMatches"/> says the proof was made with it; otherwise null, and a
-    /// wrong proof counts towards cancelling it.
+    /// The pending code, used up, when <paramref name="proofMatches"/> says the proof was made with it; otherwise null. A wrong
+    /// proof counts against the address it came from (<paramref name="from"/>): after <see cref="MaxWrongProofs"/> that
+    /// address is blocked for this code's lifetime and its proofs aren't even tried, while the code stays good for other
+    /// addresses. No number of wrong proofs cancels the code: that is the owner's to do, on the Money page, so a device on the network
+    /// can't force the owner to make a new one.
     /// </summary>
-    public string? Redeem(Func<string, bool> proofMatches)
+    public string? Redeem(Func<string, bool> proofMatches, System.Net.IPAddress? from = null)
     {
         lock (_gate)
         {
             if (!Live()) return null;
+            var address = from is null ? System.Net.IPAddress.None : from.IsIPv4MappedToIPv6 ? from.MapToIPv4() : from;
+            _wrongBy.TryGetValue(address, out var wrongHere);
+            if (wrongHere >= MaxWrongProofs) return null;
             var code = _code!;
             if (proofMatches(code))
             {
                 _code = null;
                 return code;
             }
-            if (++_wrong >= MaxWrongProofs) _code = null;
+            if (wrongHere > 0 || _wrongBy.Count < MaxAddressesCounted) _wrongBy[address] = wrongHere + 1;
             return null;
         }
     }

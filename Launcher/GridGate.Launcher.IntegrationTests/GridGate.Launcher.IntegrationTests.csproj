@@ -14,11 +14,26 @@
     <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" Version="10.0.0" />
     <!-- Parses the website's forms (antiforgery tokens, input names) in the end-to-end test. -->
     <PackageReference Include="AngleSharp" Version="1.8.6" />
+    <!-- MySql.Data (OpenSim's driver, used by the groups store test) loads this when it opens a connection. -->
+    <PackageReference Include="System.Security.Permissions" Version="6.0.0" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\GridGate.Launcher.Core\GridGate.Launcher.Core.csproj" />
     <ProjectReference Include="..\GridGate.Launcher\GridGate.Launcher.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Robust's groups service and its MySQL store, for the join fee kept with an invitation. -->
+    <ProjectReference Include="$(GgRoot)OpenSim/Addons/Groups/OpenSim.Addons.Groups.csproj" />
+    <ProjectReference Include="$(GgRoot)OpenSim/Data/MySQL/OpenSim.Data.MySQL.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="OpenMetaverseTypes"><HintPath>$(GgRoot)bin/OpenMetaverseTypes.dll</HintPath></Reference>
+    <Reference Include="OpenMetaverse"><HintPath>$(GgRoot)bin/OpenMetaverse.dll</HintPath></Reference>
+    <Reference Include="Nini"><HintPath>$(GgRoot)bin/Nini.dll</HintPath></Reference>
+    <Reference Include="log4net"><HintPath>$(GgRoot)bin/log4net.dll</HintPath></Reference>
   </ItemGroup>
 
   <ItemGroup>

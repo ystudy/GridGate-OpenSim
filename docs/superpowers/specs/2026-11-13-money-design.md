@@ -1,6 +1,8 @@
 # Money — design
 
 Date: 2026-11-13. Status: draft for the owner's approval. Builds on `main` at `72a36548`.
+Updated 2026-11-16: verified regions and avatars, and daily limits (§7.2, §7.5, §7.6, §7.7, §9.1, §9.5, §11). The owner's
+guide to them is `docs/money-verification.md`.
 
 Marks: **(owner)** is what the owner said. **(call)** is the designer's call, open to change. Everything else follows from those
 or from the code as it is. File references are to this tree unless they name another repository.
@@ -170,10 +172,27 @@ The money service runs **inside the launcher process**, on **its own listener an
 - **Region keys:** every region program gets its own random key (`Settings/Secrets.cs` `NewPassword`), written into that program's
   INI. The service keeps only a hash of each key and knows which regions each key covers. A request without a valid key gets a
   bare 401 and is counted; repeated failures from one address are slowed down and logged.
-- **A key may act only for avatars in its own regions.** For anything an avatar does (pay, buy, land), the service checks Robust's
-  `Presence` table: the avatar's session id and secure session id must match, and the avatar's current region must be one the
-  key covers. This also covers hypergrid visitors, because the Gatekeeper records them in `Presence` too
-  (`OpenSim/Services/HypergridService/GatekeeperService.cs:552`).
+- **A key acts only for avatars handed to its own regions** (updated 2026-11-16; the owner's guide is
+  `docs/money-verification.md`). The money service keeps its own record of where each session is, in the `money` database:
+  - **Starts.** Robust's login service and the Gatekeeper write where each session starts to a table of their own
+    (`gridgate_session_starts`), which no HTTP route writes. Each start is used once. A Gatekeeper start (someone arriving
+    from another grid) counts only in the Grid Asset Server's own regions, and a start never moves someone who is already
+    verified somewhere.
+  - **Handoffs and arrivals.** When an avatar teleports or crosses a border, the region it leaves tells the service, with its
+    key, where it is sending them; the destination reports the arrival with its own key. An arrival counts only when a start
+    or a handoff to that region vouches for it. Leaving for another grid is recorded as "left the grid".
+  - **Robust's `Presence`** is used only to prove that the avatar is logged in with those session ids. Only login and the
+    Gatekeeper create its rows, so hypergrid visitors are covered too (`OpenSim/Services/HypergridService/GatekeeperService.cs:552`).
+
+  For anything an avatar pays (pay, buy, land, passes, fees), the payer must be logged in, the record must have them
+  **verified** in a region, that region must be covered by the calling key and **verified** (§7.7: its module checks in
+  with a money protocol that reports handoffs, within the last 10 minutes), the request must name that region, visitor
+  money must allow them (§7.6), and the daily limits must allow it (§7.5). A receiver is checked only against visitor
+  money: receiving can't lose anything, and a vendor's owner is often offline. Anything that can't be verified gets money
+  off, never a guess: people still travel, chat and build there. An avatar who arrives from a region that can't verify, or
+  about whom two keys disagree, has money paused until their next login, and two keys disagreeing raises an alert (§9.1).
+  The refusals are fixed codes the module turns into short viewer messages: `unverified_region`, `unverified_avatar`,
+  `visitor_grid_not_listed`, `wrong_region`, `over_daily_limit` and `over_key_limit`.
 - **A resident account is only created for a real local user** (found while planning). The UUID must be in Robust's
   `UserAccounts`; anything else gets "no wallet". Otherwise a taken-over region could create starting balances by inventing
   UUIDs.
@@ -199,10 +218,12 @@ The money service runs **inside the launcher process**, on **its own listener an
   - A resident's objects can pay out only after that resident has turned on "my scripts may pay out" on their My coins page
     (§9.5). It is off by default; staff can turn it on for someone, with an audit entry.
   - Each resident also has a **daily payout limit**, set by the owner (§7.5).
+  - A payout needs a verified region covered by the calling key, and each key has a **daily script payout limit** of its
+    own (§7.5).
   - Visitors have no website account, so their objects can't pay out.
-  - The reason: the object's owner is often offline, so `Presence` can't vouch for them. The service can't see objects
-    either, because a Region Server keeps its objects in its own database. Opt-in and the limit cap what a taken-over region
-    could do (§11).
+  - The reason: the object's owner is often offline, so there is no payer whose place the service can check. The service
+    can't see objects either, because a Region Server keeps its objects in its own database. Opt-in and the limits cap what a
+    taken-over region could do (§11).
 - **Amounts are whole coins,** greater than zero and below a sanity limit the owner can raise (call: 1,000,000).
 - **When something is wrong, payments are refused, never guessed.** If the database or Robust can't be reached, or the service is
   frozen, the region gets "money is unavailable right now". Nothing else in the grid is affected.
@@ -229,7 +250,7 @@ What it handles (research notes in `SampleMoneyModule.cs`, Gloebit's module, and
 | Buy object | client `OnObjectBuy` | Use `remoteClient.AgentId`, not the packet's. Check the part is a root, is for sale, and that price and sale type match. For "contents", check there is something transferable. Hold, then call `IBuySellModule.BuyObject`. **True: complete. False: return at once.** |
 | Buy land | scene `OnValidateLandBuy` / `OnLandBuy` | The buyer is never charged for land they don't get. The seller is the parcel's owner at the time of sale. Hold, and complete only once the new owner is confirmed; otherwise return. The builder chooses the sequencing. Gloebit re-runs the land validation itself, then confirms the new owner (Gloebit `GloebitMoneyModule.cs:3166`). |
 | `llGiveMoney`, `llTransferLindenDollars` | `ObjectGiveMoney` | Refuse an amount of 0 or less. Transfer from the object owner, with type "script payout", the object id and name. The service refuses unless the owner opted in, the daily limit allows it, and grid-wide script payouts are on (§7.2, §7.5). |
-| Upload fee | `UploadCovered` / `ApplyUploadCharge` | Check, then charge to Fees. Until the money service first answers with the grid's fees, uploads and classifieds aren't covered, so nothing is offered free; visitor payments and payouts are off too (money review 2026-11-15, R-8). |
+| Upload fee | `UploadCovered` / `ApplyUploadCharge` | Held before the asset is stored, on UDP and on caps, then charged to Fees once something is stored. Priced by the stored type and by the data: texture, sound and animation data pay under any type, and the item-update caps refuse that data while a fee is in force. Not recognised: mesh data stored under a free type (a mesh UUID can be reused on any prim anyway). A model's textures, meshes and instances can't exceed what was priced, and a mesh upload is priced again from its data when it completes. Temporary uploads are free (viewer bakes use them) but limited to 30 a minute per avatar. Until the money service first answers with the grid's fees, uploads and classifieds aren't covered, so nothing is offered free: an upload that would pay is refused with a message saying why, and a Region Server that isn't paired keeps refusing until it is; visitor payments and payouts are off too (money review 2026-11-15, R-8). |
 | Group join fee, classified ads | `AmountCovered` / `ApplyCharge` | Check first. OpenSim charges *after* the action (`GroupsModule.cs:1151`, `UserProfileModule.cs:812`). If the charge then fails, the entry is recorded as uncollected and isn't retried. Group creation is always free (§8.8). |
 | Parcel pass | `MoveMoney` (bool) | Transfer. The module refuses a pass to group-owned land itself (money review 2026-11-15, R-9). |
 | Economy data | client `OnEconomyDataRequest` | Send the prices the owner set, the same numbers the service charges. The sample sends prices it never charges (`SampleMoneyModule.cs:114`). |
@@ -268,8 +289,18 @@ All on the Money page (§9), stored in the launcher settings under the money mod
 - **Fees:** upload 0 and classified ads 0. Group join fees are set per group in-world, as today. There is no group creation fee (§8.8).
 - **Script payouts:** allowed grid-wide. Each resident still has to opt in (§7.2).
 - **Daily script payout limit per resident:** 5,000 coins (call). Owners running games may raise it.
-- **Visitor wallets:** on (§7.6).
+- **Visitor money:** Only grids I list, with an empty list (§7.6).
 - **Largest single payment:** 1,000,000.
+- **Daily limits** (added 2026-11-16), over the last 24 hours, rolling, so there is no midnight reset:
+  - **daily spending limit per person:** 10,000 coins that regions may take from one person's wallet (pay, buy, land, parcel
+    passes and fees). A purchase counts when its coins are held; one whose coins come back doesn't count;
+  - **daily region limit per region program or Region Server:** 100,000 coins that all of one key's regions may take from
+    all wallets;
+  - **daily script payouts per region program or Region Server:** 20,000 coins that all of one key's objects may pay out.
+
+  These are grid-wide defaults. The owner can set any of them higher or lower for one person (with an optional end date),
+  one region program or one Region Server; each change needs a reason and is audited. Staff gifts, take-backs and refunds
+  never count toward a limit. The limits apply in play-coin mode too.
 
 ### 7.6 Hypergrid visitors (call)
 
@@ -280,8 +311,23 @@ All on the Money page (§9), stored in the launcher settings under the money mod
 - Visitors can receive tips and payments, and spend what they have. In real mode, staff can credit coins a visitor bought.
 - The balance stays on this grid. If they come back, it's still there.
 - `llTransferLindenDollars` refuses non-local recipients today (`LSL_Api.cs:17623`). It is changed to accept a visitor the region
-  knows when visitor wallets are on (§7.8).
-- With visitor wallets off, visitors can't pay or be paid. They are told so politely.
+  knows when visitor money allows it (§7.8).
+- **Visitor money** (updated 2026-11-16; it replaces the on/off "Visitor wallets" setting) has three choices:
+  - **Off:** no visitor can pay or be paid.
+  - **Only grids I list** (the default): visitors from the grids the owner lists can. A new grid starts with an empty list,
+    so visitor money is off until the owner adds a grid.
+  - **All grids:** any visitor the Gatekeeper let in.
+
+  A grid is listed by its home address (for example `http://hg.friendgrid.net:8002`), written and compared exactly as
+  wallets' homes are. Listing a grid is the owner's statement of trust in the people who run it; it trusts that grid only.
+  An older settings file's "Visitor wallets: on" reads as Only grids I list, and "off" as Off.
+- Visitors still visit everywhere they're allowed; only money depends on visitor money. A visitor who can't use money is
+  told so politely.
+- A visitor's own place must be verified like anyone's (§7.2). Arrivals from other grids count only in the Grid Asset
+  Server's own regions, so the owner's guide suggests keeping the hypergrid welcome region there. Someone who arrives straight
+  into a Region Server's region travels normally, with money paused for that visit.
+- A wallet a visitor already has keeps its balance. If their grid is taken off the list, the wallet is frozen in place, not
+  emptied; staff can still see it, and it works again if the grid is listed again.
 
 ### 7.7 Region Servers (call)
 
@@ -292,6 +338,26 @@ All on the Money page (§9), stored in the launcher settings under the money mod
   Money page (or join step). The Region Server's launcher exchanges it, over the pinned HTTPS connection, for one key that covers
   that server's regions. The Money page lists paired Region Servers, and the owner can remove one, which ends its key at once.
 - If the Region Server isn't paired, its regions run with money refused ("this region isn't connected to the grid's money yet").
+- **Regions are pinned to their server** (updated 2026-11-16). The first time the service sees a region at a paired
+  server's address and ports, it pins that region to the server, in the `money` database. A key covers only its pinned
+  regions that Robust still lists at its address, and never the Grid Asset Server's own regions:
+  - a region pinned to one server that now registers from another is covered by **neither**. The Money page shows it as
+    "Moved, waiting for you", with **Approve move** (it is pinned to the server it registers from now) and **Keep off** (it
+    stays with its server, and money comes back if that server registers it again). Both are owner-only and audited;
+  - a brand-new region on a paired server is pinned to it automatically. Regions Robust already lists at a server's address
+    and ports **when it pairs** are pinned to it too, but they **wait**: they cover nothing until the owner presses
+    **Confirm its regions** on that server (owner-only, audited). Pairing never hands a region over by itself;
+  - pairing again carries a server's pins over only when it is the same computer (the same machine id). A different computer
+    taking over the same address and ports gets none, so its regions show as moved until the owner approves them;
+  - removing a paired server ends its key and its coverage at once, and keeps its pins. A region of it that another server
+    lists shows as a move for the owner to decide, and its waiting regions stay waiting.
+- **Verified regions.** Each region program's money module checks in with the service (the health call) when a region
+  starts and every 3 minutes, saying which money protocol it speaks and which regions it runs. A region is **verified**
+  when it is covered by a key whose module speaks a protocol that reports handoffs (§7.2) and checked in within the last 10
+  minutes. Every other region keeps working without money, and the Money page says why: not paired (on a computer
+  that isn't paired; a computer running stock OpenSim can't be paired, so its regions stay open to visitors, without
+  money), moved, no GridGate money (a region on the Grid Asset Server or a paired Region Server that nothing has checked
+  in for: stock OpenSim, or money not set up there), needs an update, or not heard from.
 - Gloebit on a Region Server: the owner enters the Gloebit settings on that computer too. Gloebit runs inside each region.
 - Plan 3 settled the pairing details: see `docs/superpowers/plans/2026-11-14-money-plan3-visitors-region-servers.md`, Decisions.
 
@@ -306,7 +372,7 @@ Each is small, kept in its own commit, and listed in `MERGING.md`:
 3. **`llGiveMoney` refuses amounts of 0 or less** at the script side too (`LSL_Api.cs:3224`).
 4. **`llTransferLindenDollars` accepts hypergrid recipients** the region's user management knows, when the money module says
    it can pay them (§7.6).
-5. **Uploads through the older UDP path are charged** as well as checked (`AssetTransactionModule.cs:259`; today only caps
+5. **Uploads through the older UDP path are charged** as well as checked, and held before the asset is stored, so coins moved away in between can't dodge the fee (`AssetTransactionModule.cs:259`; today only caps
    uploads are charged, `Scene.Inventory.cs:102`). This only matters when the upload fee isn't 0.
 6. **Only the owner is ever asked for `PERMISSION_DEBIT`, and a saved grant doesn't travel** (money review 2026-11-15, R-1
    and R-7). Item 1 checks the granter only when money is paid. A stranger's yes would start working once they became the
@@ -507,8 +573,38 @@ audit log.
   an entry paid to it, so freezing comes first when they respond to fraud (money review 2026-11-15, L-7).
 - **Freeze all payments:** an emergency switch, with the reason shown on the dashboard.
 - **Refund an entry:** reverses one movement, with a reason. The original stays in the history.
-- **Region Servers** (Grid Asset Server only): pairing code, paired servers, remove.
+- **Region Servers** (Grid Asset Server only): pairing code, paired servers, remove. Each paired server shows whether its
+  money module is verified, and the money protocol it speaks.
 - **Self-check:** the last result, and a "check now" button.
+
+Added 2026-11-16 (verified regions; each status and setting has a help tip and links to `docs/money-verification.md`):
+
+- **Regions:** every region Robust lists, where it runs (this computer, a paired Region Server, or an address nobody
+  paired), and ✔ Verified or ✖ with the reason (§7.7). A moved region names the server it belongs to and offers **Approve
+  move** and **Keep off** to the owner.
+- **Visitors:** visitor money (Off, Only grids I list, All grids) and the listed grids, with add and remove (§7.6), and the
+  advice to keep the hypergrid welcome region on the Grid Asset Server.
+- **Limits:** the daily limits (§7.5), and each region program's and Region Server's own limits and what it used in the
+  last 24 hours.
+- **Alerts:** shown on the Money page and written to the audit log; warnings also show on the dashboard. Repeats are
+  grouped, with a count. Each names the region or server, the people affected and what to do, and can be cleared:
+  - a region claimed an arrival it wasn't handed: a notice, since a lost handoff looks the same; a warning at three in a
+    day from one key, or when the person is verified in another key's region. A warning about a Region Server offers
+    **Remove this server**. Refused claims never slow down or block a key;
+  - a key reached its daily region or payout limit (a warning);
+  - a region moved between servers;
+  - one person hit their daily spending limit three times in a day.
+- **A person's page:** "Money here now" (on, or off and why, and when it comes back), what the last 24 hours used of their
+  daily spending and payout limits, and the owner's form to set that person's own limits.
+
+Settings, visitor money and listed grids need an admin, as before. Approving a moved region and setting a person's, a
+program's or a server's own limits need the owner. Supervisors can see all of it.
+
+Added 2026-11-16: Gloebit is real dollars, so it follows the real-coins rule (§9.2). Only the owner turns Gloebit (or real
+coins) on, from any other mode, and only a computer's owner saves its Gloebit app (the Grid Asset Server's and each Region
+Server's own). Leaving Gloebit puts no dollars at risk, so an admin may: turn money Off as an emergency stop, or switch
+back to play coins with the usual tick (§10). An admin can still change the other settings while Gloebit runs. A refused
+attempt is written to the audit log.
 
 ### 9.2 Turning on real coins (owner only)
 
@@ -547,6 +643,8 @@ On the resident's account pages:
 - **"My scripts may pay out" (owner):** off by default. Turning it on explains that their objects' scripts (games, rental
   boxes, refunds) can then pay people from their balance, up to the daily limit, which is shown. Turning it on or off is
   recorded.
+- **When money is paused for them** (added 2026-11-16): one line saying so in friendly words, for example "Money is
+  paused for you until you next log in, because you came from a region that can't check where you are."
 
 Visitors have no website account, so they see only the viewer's balance, and their objects can't pay out.
 
@@ -576,7 +674,7 @@ restart: the grid's money service already refuses them.
 |---|---|
 | Someone on the internet calls the money service | Not listening there (§7.2); HTTPS; a region key is required. |
 | A program on the LAN calls it | A region key is required; keys come only by pairing; Region Servers can be removed. |
-| A region program is taken over | Its key acts only for avatars currently in its regions, checked against Robust (§7.2). Script payouts can only come from residents who opted in, up to their daily limit (§7.2); this is the remaining exposure, and the owner accepted it with these limits. The grid-wide switch and the large-payment limit also apply. Every movement is in the ledger and can be refunded. The owner can remove a Region Server's key at once. |
+| A region program is taken over | A key acts only for avatars that a login, the Gatekeeper (into the Grid Asset Server's own regions) or another verified region handed to one of its own regions, and only up to the daily limits (§7.2, §7.5). A taken-over region can charge the people actually standing in it, up to those limits. A region stays pinned to its own server (§7.7). Script payouts can only come from residents who opted in, up to their daily limit, and from each key up to its daily payout limit (§7.2); the owner accepted this exposure with these limits. The grid-wide switch and the large-payment limit also apply. Hitting a limit raises an alert. Every movement is in the ledger and can be refunded. The owner can remove a Region Server's key at once. |
 | A forged viewer packet pays from someone else | The module uses `client.AgentId`, never the packet's source (§7.3). |
 | A modified viewer pays an object the wrong amount | Fixed pay-price amounts are enforced (§7.3). |
 | A script takes money from someone who didn't mean to allow it | The debit permission must come from the object's owner and is never auto-granted (§7.8). |

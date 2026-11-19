@@ -51,7 +51,8 @@ namespace OpenSim.Groups
         bool AddAgentToGroup(string RequestingAgentID, string AgentID, UUID GroupID, UUID RoleID, string token, out string reason);
         void RemoveAgentFromGroup(string RequestingAgentID, string AgentID, UUID GroupID);
 
-        bool AddAgentToGroupInvite(string RequestingAgentID, UUID inviteID, UUID groupID, UUID roleID, string agentID);
+        // GridGate: fee is the join fee the invitation shows; null when it is not known
+        bool AddAgentToGroupInvite(string RequestingAgentID, UUID inviteID, UUID groupID, UUID roleID, string agentID, int? fee);
         GroupInviteInfo GetAgentToGroupInvite(string RequestingAgentID, UUID inviteID);
         void RemoveAgentToGroupInvite(string RequestingAgentID, UUID inviteID);
 
@@ -100,6 +101,8 @@ namespace OpenSim.Groups
         public UUID RoleID   = UUID.Zero;
         public string AgentID  = string.Empty;
         public UUID InviteID = UUID.Zero;
+        // GridGate: the join fee the invitation showed; null when it is not known
+        public int? Fee = null;
     }
 
     public class GroupNoticeInfo

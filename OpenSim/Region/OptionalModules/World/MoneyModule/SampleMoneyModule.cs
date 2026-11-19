@@ -57,7 +57,8 @@ namespace OpenSim.Region.OptionalModules.World.MoneyModule
     /// </summary>
 
     [Extension(Path = "/OpenSim/RegionModules", NodeName = "RegionModule", Id = "SampleMoneyModule")]
-    public class SampleMoneyModule : IMoneyModule, ISharedRegionModule
+    // GridGate: this module charges nothing (see IMoneyModuleNeverCharges), so the groups and land fee checks leave it alone.
+    public class SampleMoneyModule : IMoneyModule, ISharedRegionModule, IMoneyModuleNeverCharges
     {
         private static readonly ILog m_log = LogManager.GetLogger(MethodBase.GetCurrentMethod().DeclaringType);
 

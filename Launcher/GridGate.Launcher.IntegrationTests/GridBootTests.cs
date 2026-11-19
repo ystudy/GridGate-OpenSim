@@ -291,6 +291,47 @@ public sealed class GridBootTests : IDisposable
         }
     }
 
+    [Fact]
+    public async Task Login_records_where_the_session_starts()
+    {
+        var (grid, paths, s, _) = Make();
+        var ct = TestContext.Current.CancellationToken;
+        try
+        {
+            await grid.StartAsync(ct);
+            await grid.CreateOwnerAsync("Test", "Owner", "pass-word1", null, ct);
+            using var alerts = new AlertListener(s.WebPort, grid.OnRegionAlert);
+            await grid.CreateRegionAsync("Welcome", "island", ct);
+            var isle = await grid.AddRegionAsync(new NewRegion("Isle", 1010, 1010, 1, "island", null), ct);
+
+            var login = await XmlRpcLogin.LoginAsync(_http, grid.GetStatus().LoginUri, "Test", "Owner", "pass-word1", "uri:Isle&128&128&25", ct);
+            Assert.True(login.Ok, "login refused: " + login.Message);
+            Assert.False(string.IsNullOrEmpty(login.SessionId), "the login answer has no session id");
+
+            // One row only: the Gatekeeper pass inside the login must not add a second.
+            Assert.Equal(1, await CountAsync(grid, "SELECT COUNT(*) FROM `robust`.`gridgate_session_starts` WHERE `SessionID` = @id", Guid.Parse(login.SessionId!), ct));
+            Assert.Equal("login", await ScalarAsync(grid, "SELECT `Source` FROM `robust`.`gridgate_session_starts` WHERE `SessionID` = @id", login.SessionId!, ct));
+            Assert.Equal(isle.Uuid.ToString(), Convert.ToString(await ScalarAsync(grid, "SELECT `RegionID` FROM `robust`.`gridgate_session_starts` WHERE `SessionID` = @id", login.SessionId!, ct)));
+            // With the address the session was sent to, as Robust's regions table lists the region.
+            foreach (var (start, region) in new[] { ("ServerIP", "serverIP"), ("ServerPort", "serverPort") })
+            {
+                var listed = Convert.ToString(await ScalarAsync(grid, $"SELECT `{region}` FROM `robust`.`regions` WHERE `uuid` = @id", isle.Uuid.ToString(), ct));
+                Assert.False(string.IsNullOrEmpty(listed), $"Robust lists Isle with no {region}");
+                Assert.Equal(listed, Convert.ToString(await ScalarAsync(grid, $"SELECT `{start}` FROM `robust`.`gridgate_session_starts` WHERE `SessionID` = @id", login.SessionId!, ct)));
+            }
+
+            await grid.StopAllAsync(ct);
+        }
+        catch (Exception e) when (e is not Xunit.Sdk.XunitException)
+        {
+            throw new Exception(e.Message + Environment.NewLine + LogTail(paths), e);
+        }
+        finally
+        {
+            await grid.DetachAsync();
+        }
+    }
+
     // ---- OAR jobs and Recently deleted (plan 4c) ----------------------------------------------------
 
     [Fact]

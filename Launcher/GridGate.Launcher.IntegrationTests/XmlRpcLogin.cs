@@ -4,8 +4,8 @@ using System.Xml.Linq;
 
 namespace GridGate.Launcher.IntegrationTests;
 
-/// <summary><see cref="SimPort"/> is the UDP port of the region the login was sent to.</summary>
-internal sealed record LoginResult(bool Ok, int? SimPort, string Message);
+/// <summary><see cref="SimPort"/> is the UDP port of the region the login was sent to; <see cref="SessionId"/> the session the grid made.</summary>
+internal sealed record LoginResult(bool Ok, int? SimPort, string Message, string? SessionId = null);
 
 /// <summary>
 /// A viewer's first step: the XML-RPC <c>login_to_simulator</c> call to Robust's login service. A successful answer
@@ -41,6 +41,7 @@ internal static class XmlRpcLogin
         if (answer.Count == 0) return new LoginResult(false, null, "No login answer: " + reply.Root);
         var ok = answer.GetValueOrDefault("login") == "true";
         int? simPort = int.TryParse(answer.GetValueOrDefault("sim_port"), out var port) ? port : null;
-        return new LoginResult(ok, simPort, answer.GetValueOrDefault("message") ?? answer.GetValueOrDefault("reason") ?? "");
+        return new LoginResult(ok, simPort, answer.GetValueOrDefault("message") ?? answer.GetValueOrDefault("reason") ?? "",
+            answer.GetValueOrDefault("session_id"));
     }
 }

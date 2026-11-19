@@ -82,11 +82,125 @@ internal sealed class FakeBooks : IMoneyBooks
     public Task<MoneyResult> TakeAsync(AccountRef from, long amount, StaffAction who, CancellationToken ct) => Moved($"take {from.AgentId} {amount}", who);
     public Task<MoneyResult> MoveFeesAsync(AccountRef to, long amount, StaffAction who, CancellationToken ct) => Moved($"move-fees {to.AgentId} {amount}", who);
     public Task<MoneyResult> RefundAsync(long entryId, StaffAction who, CancellationToken ct) => Moved($"refund {entryId}", who);
+    /// <summary>What <see cref="RefundHeldFeeAsync"/> answers with, and who it says was paid.</summary>
+    public string? FeePayeeKind { get; set; } = "Fees";
+    public Task<MoneyResult> RefundHeldFeeAsync(AccountRef payer, long entryId, StaffAction who, CancellationToken ct) =>
+        Moved($"refund-fee {payer.AgentId} {entryId}", who).ContinueWith(t => t.Result with { PayeeKind = FeePayeeKind }, TaskScheduler.Default);
     public Task<MoneyResult> SetPayoutsAllowedAsync(Guid residentId, bool allowed, CancellationToken ct) => Moved($"payouts {residentId} {allowed}");
     public Task<SelfCheckResult> SelfCheckAsync(CancellationToken ct)
     {
         Up("self-check");
         return Task.FromResult(Check);
+    }
+    /// <summary>What the limit reads answer.</summary>
+    public LimitView? Limits { get; set; } = new(10_000, 5_000, false, false, null, 0, 0);
+    public Task<LimitView?> LimitsAsync(LimitTarget target, CancellationToken ct)
+    {
+        Up($"limits {target.Kind} {target.Id}");
+        return Task.FromResult(Limits);
+    }
+    public Task<LimitView?> PersonLimitsAsync(AccountRef person, CancellationToken ct)
+    {
+        Up($"person-limits {person.AgentId}");
+        return Task.FromResult(Limits);
+    }
+    public Task<MoneyOutcome> SetLimitsAsync(LimitTarget target, long? dailySpend, long? dailyPayout, DateTime? until, StaffAction staff, CancellationToken ct)
+    {
+        Up($"set-limits {target.Kind} {target.Id} {dailySpend} {dailyPayout} {until:O}");
+        lock (Staff) Staff.Add(staff);
+        return Task.FromResult(Outcome);
+    }
+    public Task<MoneyOutcome> SetPersonLimitsAsync(AccountRef person, long? dailySpend, long? dailyPayout, DateTime? until, StaffAction staff, CancellationToken ct)
+    {
+        Up($"set-person-limits {person.AgentId} {dailySpend} {dailyPayout} {until:O}");
+        lock (Staff) Staff.Add(staff);
+        return Task.FromResult(Outcome);
+    }
+}
+
+/// <summary>The owner's money alerts, faked for the pages: <see cref="Open"/> is what is open. <see cref="ClearDown"/> makes clearing a database failure.</summary>
+internal sealed class FakeAlerts : IMoneyAlerts
+{
+    public List<MoneyAlert> Open { get; } = [];
+    public List<string> Calls { get; } = [];
+    public bool ClearDown { get; set; }
+
+    public Task<IReadOnlyList<MoneyAlert>> OpenAsync(CancellationToken ct)
+    {
+        lock (Calls) Calls.Add("open");
+        return Task.FromResult<IReadOnlyList<MoneyAlert>>(Open.ToList());
+    }
+
+    public Task<IReadOnlyList<MoneyAlert>> WarningsAsync(CancellationToken ct)
+    {
+        lock (Calls) Calls.Add("warnings");
+        return Task.FromResult<IReadOnlyList<MoneyAlert>>(Open.Where(a => a.Level == AlertLevel.Warning).ToList());
+    }
+
+    public Task ClearAsync(long id, string staff, CancellationToken ct)
+    {
+        lock (Calls) Calls.Add($"clear {id} {staff}");
+        if (ClearDown) throw new MoneyUnavailableException(new InvalidOperationException("down"));
+        Open.RemoveAll(a => a.Id == id);
+        return Task.CompletedTask;
+    }
+}
+
+/// <summary>
+/// The regions' money status and where people are, faked for the pages (every <see cref="LauncherFactory"/> has one):
+/// answers from what a test sets and records each approval. <see cref="Down"/> makes every call a database failure.
+/// </summary>
+internal sealed class FakeMoneyRegions : IMoneyRegions
+{
+    public List<RegionState> States { get; } = [];
+    public Dictionary<string, KeyHeard> Keys { get; } = [];
+    public Dictionary<Guid, SessionLocation> Where { get; } = [];
+    public List<string> Calls { get; } = [];
+    public bool Down { get; set; }
+
+    private void Up(string call)
+    {
+        lock (Calls) Calls.Add(call);
+        if (Down) throw new MoneyUnavailableException(new InvalidOperationException("down"));
+    }
+
+    public Task<IReadOnlyList<RegionState>> AllAsync(LauncherSettings settings, CancellationToken ct)
+    {
+        Up("all");
+        return Task.FromResult<IReadOnlyList<RegionState>>(States.ToList());
+    }
+
+    public Task<IReadOnlyDictionary<string, KeyHeard>> KeysAsync(CancellationToken ct)
+    {
+        Up("keys");
+        return Task.FromResult<IReadOnlyDictionary<string, KeyHeard>>(new Dictionary<string, KeyHeard>(Keys));
+    }
+
+    public Task ApproveMoveAsync(Guid regionId, Guid toServerId, CancellationToken ct)
+    {
+        Up($"approve {regionId} {toServerId}");
+        return Task.CompletedTask;
+    }
+
+    public Task<int> ConfirmWaitingAsync(PairedServer server, int fromPort, int toPort, IReadOnlySet<Guid> ownRegions, CancellationToken ct)
+    {
+        Up($"confirm {server.Id}");
+        return Task.FromResult(Waiting(server.Id).Count);
+    }
+
+    public Task<IReadOnlyList<Guid>> WaitingAsync(PairedServer server, int fromPort, int toPort, IReadOnlySet<Guid> ownRegions, CancellationToken ct)
+    {
+        Up($"waiting {server.Id}");
+        return Task.FromResult<IReadOnlyList<Guid>>(Waiting(server.Id));
+    }
+
+    private List<Guid> Waiting(Guid serverId) =>
+        States.Where(r => r.Status == RegionStatus.Waiting && r.KeyId == "server:" + serverId.ToString("N")).Select(r => r.RegionId).ToList();
+
+    public Task<SessionLocation?> WhereAgentAsync(Guid agentId, CancellationToken ct)
+    {
+        Up($"where {agentId}");
+        return Task.FromResult(Where.GetValueOrDefault(agentId));
     }
 }
 
@@ -117,16 +231,16 @@ public sealed class MoneyPageTests
     private const string HopeHome = "http://grid.example:8002/";
 
     private static LauncherFactory Make(FakeBooks books, bool open = true, Func<MoneySettings, MoneySettings>? money = null, FakeVisitors? visitors = null,
-        OwnerPlan plan = OwnerPlan.Local)
+        OwnerPlan plan = OwnerPlan.Local, FakeAlerts? alerts = null, Func<LauncherSettings, LauncherSettings>? more = null)
     {
-        var f = new LauncherFactory(s => s with
+        var f = new LauncherFactory(s => (more ?? (x => x))(s with
         {
             SetupToken = null,
             Plan = plan,
             Setup = s.Setup with { WorldNamed = true, OwnerCreated = true, Finished = true, Owner = new OwnerInfo("Test", "Owner", TestAuth.OwnerId) },
             Money = money?.Invoke(new MoneySettings(Mode: MoneyMode.Play)) ?? new MoneySettings(Mode: MoneyMode.Play),
             MoneyPort = 0,
-        })
+        }))
         {
             Before = TestAuth.Apply,
             ExtraServices = services =>
@@ -135,11 +249,10 @@ public sealed class MoneyPageTests
                 services.AddSingleton<IMoneyBooks>(books);
                 services.RemoveAll<IVisitorDirectory>();
                 services.AddSingleton<IVisitorDirectory>(visitors ?? new FakeVisitors());
-                if (open)
-                {
-                    services.RemoveAll<MoneyGate>();
-                    services.AddSingleton(sp => new MoneyGate(sp.GetRequiredService<Func<LauncherSettings>>(), MoneyGate.Open));
-                }
+                services.RemoveAll<IMoneyAlerts>();
+                services.AddSingleton<IMoneyAlerts>(alerts ?? new FakeAlerts());
+                services.RemoveAll<MoneyGate>();
+                services.AddSingleton(sp => new MoneyGate(sp.GetRequiredService<Func<LauncherSettings>>(), open ? MoneyGate.Open : MoneyGate.Closed));
             },
         };
         TestAuth.AddStaff(f.Robust);
@@ -177,7 +290,7 @@ public sealed class MoneyPageTests
     {
         ["Mode"] = mode, ["CurrencySymbol"] = symbol, ["CurrencyName"] = "coins", ["StartingBalancePlay"] = "100", ["StartingBalanceReal"] = "0",
         ["WeeklyAllowance"] = "0", ["UploadFee"] = "0", ["ClassifiedFee"] = "0", ["DailyPayoutLimit"] = "5000", ["MaxPayment"] = "1000000",
-        ["ScriptPayouts"] = "true", ["VisitorWallets"] = "true",
+        ["ScriptPayouts"] = "true", ["DailySpendLimit"] = "10000", ["DailyKeySpendLimit"] = "100000", ["DailyKeyPayoutLimit"] = "20000",
     };
 
     private static List<JsonElement> Audit(LauncherFactory f)
@@ -251,6 +364,28 @@ public sealed class MoneyPageTests
 
         Assert.Equal("C$", f.Store.LoadOrCreate().Money.CurrencySymbol);
         Assert.NotNull((await ParseAsync(r)).QuerySelector(".alert-danger"));
+    }
+
+    [Fact]
+    public void The_symbol_error_lists_every_character_the_rule_refuses()
+    {
+        var text = MoneyPageRules.Problem(new MoneySettings(CurrencySymbol: "{C}"), [MoneyMode.Off]);
+
+        Assert.NotNull(text);
+        foreach (var c in MoneySymbolRule.ForbiddenCharacters) Assert.Contains(c.ToString(), text);
+        Assert.Contains("#", MoneySymbolRule.ForbiddenCharacters.Select(c => c.ToString()));
+        Assert.Contains("{", MoneySymbolRule.ForbiddenCharacters.Select(c => c.ToString()));
+        Assert.Contains("}", MoneySymbolRule.ForbiddenCharacters.Select(c => c.ToString()));
+    }
+
+    [Fact]
+    public async Task The_gloebit_help_says_only_the_masked_key_appears()
+    {
+        await using var f = Make(new FakeBooks());
+
+        var doc = await PageAsync(await SignedInAsync(f), "/money");
+
+        Assert.Contains("last four characters of the app key", doc.QuerySelector("#money-gloebit-title")!.TextContent);
     }
 
     [Theory]
@@ -576,6 +711,91 @@ public sealed class MoneyPageTests
     }
 
     [Fact]
+    public async Task A_merge_the_ledger_refuses_is_told_in_plain_words()
+    {
+        var books = new FakeBooks { Outcome = MoneyOutcome.NotAVisitor };
+        var visitors = new FakeVisitors();
+        visitors.Known.Add(new VisitorInfo(Hope, HopeHome, "Hope Visitor"));
+        await using var f = Make(books, visitors: visitors);
+
+        using var r = await PostAsync(await SignedInAsync(f), $"/money/person?id={Hope}&home=" + Uri.EscapeDataString(HopeHome), "Merge",
+            new() { ["NewHome"] = "http://new.example:8002/", ["Reason"] = "grid moved" });
+
+        Assert.Contains("Only a visitor's wallet can move to a new home address.", (await ParseAsync(r)).QuerySelector(".alert-danger")!.TextContent);
+    }
+
+    [Fact]
+    public async Task A_resident_cant_be_merged_from_the_page()
+    {
+        var books = new FakeBooks();
+        await using var f = Make(books);
+
+        using var r = await PostAsync(await SignedInAsync(f), $"/money/person?id={Ann}", "Merge", new() { ["NewHome"] = "http://new.example:8002/", ["Reason"] = "x" });
+
+        Assert.Contains("Only a visitor's wallet can move", (await ParseAsync(r)).QuerySelector(".alert-danger")!.TextContent);
+        Assert.DoesNotContain(books.Calls, x => x.StartsWith("merge"));
+    }
+
+    [Fact]
+    public async Task The_owner_refunds_a_fee_taken_through_a_hold_and_it_is_audited()
+    {
+        var books = new FakeBooks { FeePayeeKind = "Fees" };
+        await using var f = Make(books);
+
+        using var r = await PostAsync(await SignedInAsync(f), $"/money/person?id={Ann}", "RefundFee", new() { ["EntryId"] = "77", ["Reason"] = "charged twice" });
+
+        Assert.Contains($"refund-fee {Ann} 77", books.Calls);
+        Assert.Contains("Refunded. The coins came back from Fees.", MainText(await ParseAsync(r)));
+        Assert.Contains(Audit(f), a => a.GetProperty("action").GetString() == "money-fee-refund" && a.GetProperty("result").GetString()!.Contains("ok"));
+    }
+
+    [Fact]
+    public async Task A_fee_refund_the_founder_cant_cover_says_so()
+    {
+        var books = new FakeBooks { Outcome = MoneyOutcome.NotEnough, FeePayeeKind = "founder" };
+        await using var f = Make(books);
+
+        using var r = await PostAsync(await SignedInAsync(f), $"/money/person?id={Ann}", "RefundFee", new() { ["EntryId"] = "77", ["Reason"] = "charged twice" });
+
+        Assert.Contains("The founder doesn't have the coins to refund this.", (await ParseAsync(r)).QuerySelector(".alert-danger")!.TextContent);
+        Assert.Contains(Audit(f), a => a.GetProperty("action").GetString() == "money-fee-refund" && a.GetProperty("result").GetString()!.Contains("not_enough"));
+    }
+
+    [Theory]
+    [InlineData("admin")]
+    [InlineData("supervisor")]
+    public async Task Admins_and_supervisors_cant_refund_a_fee(string role)
+    {
+        var books = new FakeBooks();
+        await using var f = Make(books);
+        var client = await SignedInAsync(f, role);
+        var token = (await PageAsync(client, $"/money/person?id={Ann}")).QuerySelector("input[name=__RequestVerificationToken]")?.GetAttribute("value") ?? "";
+
+        using var r = await client.PostAsync($"/money/person?id={Ann}&handler=RefundFee",
+            new FormUrlEncodedContent(new Dictionary<string, string> { ["EntryId"] = "77", ["Reason"] = "x", ["__RequestVerificationToken"] = token }), Ct);
+
+        Assert.Equal(HttpStatusCode.Forbidden, r.StatusCode);
+        Assert.DoesNotContain(books.Calls, x => x.StartsWith("refund-fee"));
+    }
+
+    [Fact]
+    public async Task Only_the_owner_sees_a_refund_button_on_a_held_fee()
+    {
+        var books = new FakeBooks();
+        books.History.Add(new HistoryLine(9, DateTimeOffset.UtcNow, EntryType.Hold, null, -10, 90, null, EntryType.UploadFee));
+        books.History.Add(new HistoryLine(8, DateTimeOffset.UtcNow, EntryType.Hold, null, -20, 70, "dress", null));
+        await using var f = Make(books);
+
+        var owner = await PageAsync(await SignedInAsync(f), $"/money/person?id={Ann}");
+        var admin = await PageAsync(await SignedInAsync(f, "admin"), $"/money/person?id={Ann}");
+
+        var forms = owner.QuerySelectorAll("form[action*='handler=RefundFee']");
+        Assert.Single(forms);
+        Assert.Equal("9", forms[0].QuerySelector("input[name=EntryId]")!.GetAttribute("value"));
+        Assert.Empty(admin.QuerySelectorAll("form[action*='handler=RefundFee']"));
+    }
+
+    [Fact]
     public async Task Audit_lines_carry_the_amount()
     {
         await using var f = Make(new FakeBooks());
@@ -725,6 +945,160 @@ public sealed class MoneyPageTests
 
         Assert.Equal(HttpStatusCode.Forbidden, r.StatusCode);
         Assert.Null(f.Grid.CurrentSettings().Money.Gloebit);
+    }
+
+    // Gloebit is real dollars: only the owner turns it on or sets its app, as with real coins (§9.1, §9.2).
+
+    [Theory]
+    // from, to, owner only
+    [InlineData(MoneyMode.Off, MoneyMode.Off, false)]
+    [InlineData(MoneyMode.Off, MoneyMode.Play, false)]
+    [InlineData(MoneyMode.Off, MoneyMode.Real, true)]
+    [InlineData(MoneyMode.Off, MoneyMode.Gloebit, true)]
+    [InlineData(MoneyMode.Play, MoneyMode.Off, false)]
+    [InlineData(MoneyMode.Play, MoneyMode.Play, false)]
+    [InlineData(MoneyMode.Play, MoneyMode.Real, true)]
+    [InlineData(MoneyMode.Play, MoneyMode.Gloebit, true)]
+    [InlineData(MoneyMode.Real, MoneyMode.Off, false)]
+    [InlineData(MoneyMode.Real, MoneyMode.Play, false)]
+    [InlineData(MoneyMode.Real, MoneyMode.Real, false)]
+    [InlineData(MoneyMode.Real, MoneyMode.Gloebit, true)]
+    [InlineData(MoneyMode.Gloebit, MoneyMode.Off, false)]
+    [InlineData(MoneyMode.Gloebit, MoneyMode.Play, false)]
+    [InlineData(MoneyMode.Gloebit, MoneyMode.Real, true)]
+    [InlineData(MoneyMode.Gloebit, MoneyMode.Gloebit, false)]
+    public void Only_the_owner_turns_on_real_dollars(MoneyMode from, MoneyMode to, bool ownerOnly) =>
+        Assert.Equal(ownerOnly, MoneyPageRules.OwnerOnlySwitch(from, to));
+
+    [Fact]
+    public async Task Admin_cannot_save_a_gloebit_app()
+    {
+        await using var f = Make(new FakeBooks());
+
+        using var r = await PostAsync(await SignedInAsync(f, "admin"), "/money", "Gloebit", GloebitForm());
+
+        Assert.Equal(HttpStatusCode.Forbidden, r.StatusCode);
+        Assert.Null(f.Grid.CurrentSettings().Money.Gloebit);
+        var line = Assert.Single(Audit(f), a => a.GetProperty("action").GetString() == "money-gloebit");
+        Assert.Equal("refused: the owner's", line.GetProperty("result").GetString());
+    }
+
+    [Theory]
+    [InlineData(MoneyMode.Play)]
+    [InlineData(MoneyMode.Off)]
+    public async Task Admin_cannot_turn_on_gloebit(MoneyMode from)
+    {
+        await using var f = Make(new FakeBooks(), money: m => m with { Mode = from, Gloebit = GApp });
+        var form = Settings(mode: "Gloebit");
+        form["ConfirmSwitch"] = "true";
+
+        using var r = await PostAsync(await SignedInAsync(f, "admin"), "/money", "Settings", form);
+
+        Assert.Equal(from, f.Grid.CurrentSettings().Money.Mode);
+        var doc = await ParseAsync(r);
+        Assert.Contains("Only the owner can turn on Gloebit.", doc.QuerySelector(".alert-danger")!.TextContent);
+        // The form comes back on the saved mode, which the admin can pick, not on the refused one.
+        Assert.Equal(from.ToString(), doc.QuerySelector("#money-mode option[selected]")?.GetAttribute("value"));
+        var line = Assert.Single(Audit(f), a => a.GetProperty("action").GetString() == "money-settings");
+        Assert.Equal("refused: mode Gloebit is the owner's", line.GetProperty("result").GetString());
+    }
+
+    [Fact]
+    public async Task Admin_without_an_app_is_told_it_is_the_owners_not_to_enter_one()
+    {
+        await using var f = Make(new FakeBooks());
+
+        using var r = await PostAsync(await SignedInAsync(f, "admin"), "/money", "Settings", Settings(mode: "Gloebit"));
+
+        Assert.Equal("Only the owner can turn on Gloebit.", (await ParseAsync(r)).QuerySelector(".alert-danger")!.TextContent.Trim());
+    }
+
+    [Fact]
+    public async Task Admin_can_leave_gloebit_for_coins_with_the_tick()
+    {
+        // Leaving Gloebit puts no dollars at risk; the tick still says coin balances come back.
+        await using var f = Make(new FakeBooks(), money: m => m with { Mode = MoneyMode.Gloebit, Gloebit = GApp });
+        var form = Settings(mode: "Play");
+        form["ConfirmSwitch"] = "true";
+
+        using var r = await PostAsync(await SignedInAsync(f, "admin"), "/money", "Settings", form);
+
+        Assert.Equal(MoneyMode.Play, f.Grid.CurrentSettings().Money.Mode);
+    }
+
+    [Fact]
+    public async Task Admin_can_turn_coins_back_on_after_an_emergency_off()
+    {
+        await using var f = Make(new FakeBooks(), money: m => m with { Mode = MoneyMode.Off, Gloebit = GApp });
+        var c = await SignedInAsync(f, "admin");
+
+        // A Gloebit app was saved once, so the switch asks for the tick, and the admin has the box to tick.
+        Assert.NotNull((await PageAsync(c, "/money")).QuerySelector("#money-confirm-switch"));
+        var form = Settings(mode: "Play");
+        form["ConfirmSwitch"] = "true";
+        using var r = await PostAsync(c, "/money", "Settings", form);
+
+        Assert.Equal(MoneyMode.Play, f.Grid.CurrentSettings().Money.Mode);
+    }
+
+    [Fact]
+    public async Task Admin_can_turn_gloebit_off()
+    {
+        // Turning money off stops payments: any admin may, as an emergency step.
+        await using var f = Make(new FakeBooks(), money: m => m with { Mode = MoneyMode.Gloebit, Gloebit = GApp });
+
+        using var r = await PostAsync(await SignedInAsync(f, "admin"), "/money", "Settings", Settings(mode: "Off"));
+
+        Assert.Equal(MoneyMode.Off, f.Grid.CurrentSettings().Money.Mode);
+    }
+
+    [Fact]
+    public async Task Admin_can_change_other_settings_while_gloebit_runs()
+    {
+        await using var f = Make(new FakeBooks(), money: m => m with { Mode = MoneyMode.Gloebit, Gloebit = GApp });
+        var form = Settings(mode: "Gloebit");
+        form["UploadFee"] = "15";
+
+        using var r = await PostAsync(await SignedInAsync(f, "admin"), "/money", "Settings", form);
+
+        Assert.Null((await ParseAsync(r)).QuerySelector(".alert-danger"));
+        Assert.Equal(15L, f.Grid.CurrentSettings().Money.UploadFee);
+        Assert.Equal(MoneyMode.Gloebit, f.Grid.CurrentSettings().Money.Mode);
+    }
+
+    [Fact]
+    public async Task Admin_sees_gloebit_locked_and_no_app_form()
+    {
+        await using var f = Make(new FakeBooks(), money: m => m with { Gloebit = GApp });
+
+        var doc = await PageAsync(await SignedInAsync(f, "admin"), "/money");
+
+        Assert.True(doc.QuerySelector("#money-mode option[value=Gloebit]")!.HasAttribute("disabled"));
+        Assert.False(doc.QuerySelector("#money-mode option[value=Play]")!.HasAttribute("disabled"));
+        Assert.Null(doc.QuerySelector("form[action*='handler=Gloebit']"));
+        Assert.Contains("Only the owner can turn on Gloebit or change its Gloebit app.", MainText(doc));
+    }
+
+    [Fact]
+    public async Task Admin_in_gloebit_mode_may_pick_any_mode()
+    {
+        await using var f = Make(new FakeBooks(), money: m => m with { Mode = MoneyMode.Gloebit, Gloebit = GApp });
+
+        var doc = await PageAsync(await SignedInAsync(f, "admin"), "/money");
+
+        Assert.All(doc.QuerySelectorAll("#money-mode option"), o => Assert.False(o.HasAttribute("disabled")));
+    }
+
+    [Fact]
+    public async Task Owner_sees_gloebit_open()
+    {
+        await using var f = Make(new FakeBooks(), money: m => m with { Gloebit = GApp });
+
+        var doc = await PageAsync(await SignedInAsync(f), "/money");
+
+        Assert.False(doc.QuerySelector("#money-mode option[value=Gloebit]")!.HasAttribute("disabled"));
+        Assert.NotNull(doc.QuerySelector("form[action*='handler=Gloebit']"));
+        Assert.NotNull(doc.QuerySelector("#money-confirm-switch"));
     }
 
     [Fact]
@@ -925,6 +1299,60 @@ public sealed class MoneyPageTests
     }
 
     [Fact]
+    public async Task Warning_alerts_show_on_the_dashboard_with_a_money_link()
+    {
+        var region = Guid.Parse("e0000000-0000-0000-0000-0000000000e1");
+        var alerts = new FakeAlerts();
+        var at = new DateTime(2026, 11, 15, 12, 0, 0, DateTimeKind.Utc);
+        // A warning from the key's count across its regions: this row has seen one claim only.
+        alerts.Open.Add(new MoneyAlert(7, AlertKind.UnhandedArrival, AlertLevel.Warning, "p1", region, Ann, 1, at, at));
+        alerts.Open.Add(new MoneyAlert(8, AlertKind.KeyLimitReached, AlertLevel.Warning, "p1", null, null, 1, at, at));
+        alerts.Open.Add(new MoneyAlert(9, AlertKind.RegionMoved, AlertLevel.Notice, "p1", region, null, 1, at, at));
+        alerts.Open.Add(new MoneyAlert(10, AlertKind.UnhandedArrival, AlertLevel.Warning, "p2", region, Ann, 1, at, at, OtherKeyId: "p1"));
+        await using var f = Make(new FakeBooks(), alerts: alerts);
+        f.Services.GetRequiredService<MoneyStatus>().ServiceRunning = true;
+
+        var doc = await PageAsync(await SignedInAsync(f), "/dashboard");
+
+        var conflict = doc.QuerySelector("#money-alert-10");
+        Assert.NotNull(conflict);
+        Assert.Contains("the region program p2 and the region program p1 disagree about where Ann Smith is", conflict.TextContent);
+
+        var arrival = doc.QuerySelector("#money-alert-7");
+        Assert.NotNull(arrival);
+        Assert.Contains("alert-danger", arrival.ClassName);
+        Assert.Contains("wasn't handed", arrival.TextContent);
+        Assert.DoesNotContain("once", arrival.TextContent); // a warning's row count would understate it
+        Assert.NotNull(arrival.QuerySelector("a[href='/money']"));
+        var limit = doc.QuerySelector("#money-alert-8");
+        Assert.NotNull(limit);
+        Assert.Contains("reached its daily money limit", limit.TextContent);
+        Assert.NotNull(limit.QuerySelector("a[href='/money']"));
+        Assert.Null(doc.QuerySelector("#money-alert-9")); // notices are for the Money page
+    }
+
+    /// <summary>
+    /// Robust's connection breaks while the dashboard names who a disagreement is about: the person is named by id, as for
+    /// any other Robust failure, and the dashboard still shows.
+    /// </summary>
+    [Fact]
+    public async Task A_broken_Robust_connection_names_the_person_by_id_on_the_dashboard()
+    {
+        var region = Guid.Parse("e0000000-0000-0000-0000-0000000000e1");
+        var alerts = new FakeAlerts();
+        var at = new DateTime(2026, 11, 15, 12, 0, 0, DateTimeKind.Utc);
+        alerts.Open.Add(new MoneyAlert(10, AlertKind.UnhandedArrival, AlertLevel.Warning, "p2", region, Ann, 1, at, at, OtherKeyId: "p1"));
+        await using var f = Make(new FakeBooks(), alerts: alerts);
+        f.Services.GetRequiredService<MoneyStatus>().ServiceRunning = true;
+        var c = await SignedInAsync(f);
+        f.Robust.OnFindAccountById = () => throw new IOException("The connection was reset.");
+
+        var doc = await PageAsync(c, "/dashboard");
+
+        Assert.Contains($"disagree about where avatar {Ann} is", doc.QuerySelector("#money-alert-10")!.TextContent);
+    }
+
+    [Fact]
     public async Task Dashboard_shows_service_failure()
     {
         await using var f = Make(new FakeBooks());
@@ -992,5 +1420,648 @@ public sealed class MoneyPageTests
         var on = await PageAsync(c, $"/people/{Ann}");
 
         Assert.NotNull(on.QuerySelector($"a[href='/money/person?id={Ann}']"));
+    }
+
+    // ---- verified regions, visitors, limits and alerts ----
+
+    private static readonly Guid Sam = Guid.Parse("d0000000-0000-0000-0000-0000000000d5");
+    private static readonly Guid Jo = Guid.Parse("d0000000-0000-0000-0000-0000000000d6");
+    private static readonly Guid Welcome = Guid.Parse("e0000000-0000-0000-0000-000000000001");
+    private static readonly Guid NeonPier = Guid.Parse("e0000000-0000-0000-0000-000000000002");
+    private static readonly Guid Market = Guid.Parse("e0000000-0000-0000-0000-000000000003");
+    private static readonly Guid OldDocks = Guid.Parse("e0000000-0000-0000-0000-000000000004");
+    private static readonly Guid Harbour = Guid.Parse("e0000000-0000-0000-0000-000000000005");
+    private static readonly Guid Quay = Guid.Parse("e0000000-0000-0000-0000-000000000006");
+    private static readonly Guid Pond = Guid.Parse("e0000000-0000-0000-0000-000000000007");
+    private static readonly Guid[] AllRegions = [Welcome, NeonPier, Market, OldDocks, Harbour, Quay, Pond];
+
+    private static string KeyOf(Guid server) => "server:" + server.ToString("N");
+
+    /// <summary>
+    /// A Grid Asset Server running Welcome and Pond (program p1), with Sam's server (10.0.0.5) and Jo's (10.0.0.6) paired.
+    /// Market Square is pinned to Jo's server but now registers from Sam's; Old Docks is at an address nobody paired.
+    /// </summary>
+    private static LauncherFactory MakeGrid(FakeBooks? books = null, FakeAlerts? alerts = null)
+    {
+        var f = Make(books ?? new FakeBooks(), plan: OwnerPlan.GridAsset, alerts: alerts,
+            money: m => m with
+            {
+                PairedServers =
+                [
+                    new PairedServer(Sam, "10.0.0.5", new string('A', 64), DateTimeOffset.UtcNow),
+                    new PairedServer(Jo, "10.0.0.6", new string('B', 64), DateTimeOffset.UtcNow),
+                ],
+            },
+            more: s => s with { Programs = [new ProgramSettings("p1", 9000, 9001)], Regions = [new RegionSettings("p1", "Welcome", Welcome), new RegionSettings("p1", "Pond", Pond)] });
+        f.MoneyRegions.States.AddRange(
+        [
+            new RegionState(Welcome, "Welcome", "127.0.0.1", 9000, "p1", RegionStatus.Verified),
+            new RegionState(NeonPier, "Neon Pier", "10.0.0.5", 9000, KeyOf(Sam), RegionStatus.Verified),
+            new RegionState(Market, "Market Square", "10.0.0.5", 9001, KeyOf(Sam), RegionStatus.Moved, KeyOf(Jo)),
+            new RegionState(OldDocks, "Old Docks", "10.0.0.9", 9000, null, RegionStatus.NotPaired),
+            new RegionState(Harbour, "Harbour", "10.0.0.6", 9000, KeyOf(Jo), RegionStatus.NeedsUpdate),
+            new RegionState(Quay, "Quay", "10.0.0.6", 9001, KeyOf(Jo), RegionStatus.NotHeardFrom),
+            new RegionState(Pond, "Pond", "127.0.0.1", 9002, "p1", RegionStatus.NoGridGateMoney),
+        ]);
+        f.MoneyRegions.Keys[KeyOf(Sam)] = new KeyHeard(2, DateTime.UtcNow, RegionStatus.Verified);
+        f.MoneyRegions.Keys[KeyOf(Jo)] = new KeyHeard(1, DateTime.UtcNow, RegionStatus.NeedsUpdate);
+        return f;
+    }
+
+    private static string? ErrorText(IHtmlDocument d) => d.QuerySelector(".alert-danger")?.TextContent;
+
+    private static List<string> Results(LauncherFactory f, string action) =>
+        Audit(f).Where(a => a.GetProperty("action").GetString() == action).Select(a => a.GetProperty("result").GetString()!).ToList();
+
+    private static List<string> Targets(LauncherFactory f, string action) =>
+        Audit(f).Where(a => a.GetProperty("action").GetString() == action).Select(a => a.GetProperty("target").GetString()!).ToList();
+
+    [Fact]
+    public async Task Regions_section_lists_every_region_with_its_status()
+    {
+        await using var f = MakeGrid();
+
+        var doc = await PageAsync(await SignedInAsync(f, "supervisor"), "/money");
+
+        string Row(Guid id) => doc.QuerySelector($"#money-region-{id}")!.TextContent;
+        Assert.Contains("Welcome", Row(Welcome));
+        Assert.Contains("This computer", Row(Welcome));
+        Assert.Contains("Verified", Row(Welcome));
+        Assert.Contains("Region Server at 10.0.0.5", Row(NeonPier));
+        Assert.Contains("Verified", Row(NeonPier));
+        Assert.Contains("Moved here from Region Server at 10.0.0.6, waiting for you", Row(Market));
+        Assert.Contains("10.0.0.9", Row(OldDocks));
+        Assert.Contains("Not paired", Row(OldDocks));
+        Assert.Contains("Needs an update", Row(Harbour));
+        Assert.Contains("Not heard from", Row(Quay));
+        Assert.Contains("No GridGate money", Row(Pond));
+        // Every status says what it means, and every reason money is off links to the owner's guide.
+        foreach (var id in AllRegions)
+        {
+            var row = doc.QuerySelector($"#money-region-{id}")!;
+            Assert.NotNull(row.QuerySelector(".help-tip"));
+            if (id != Welcome && id != NeonPier) Assert.NotNull(row.QuerySelector("a[href*='money-verification.md#']"));
+        }
+        Assert.NotNull(doc.QuerySelector("#money-regions-title .help-tip"));
+
+        // Region Servers: each one's status and the money protocol its module speaks.
+        Assert.Contains("Verified", doc.QuerySelector($"#money-server-{Sam}")!.TextContent);
+        Assert.Contains("money protocol 2", doc.QuerySelector($"#money-server-{Sam}")!.TextContent);
+        Assert.Contains("Needs an update", doc.QuerySelector($"#money-server-{Jo}")!.TextContent);
+        Assert.Contains("money protocol 1", doc.QuerySelector($"#money-server-{Jo}")!.TextContent);
+    }
+
+    [Fact]
+    public async Task Moved_region_shows_approve_and_keep_off_to_the_owner_only()
+    {
+        var alerts = new FakeAlerts();
+        var at = DateTime.UtcNow;
+        alerts.Open.Add(new MoneyAlert(4, AlertKind.RegionMoved, AlertLevel.Notice, KeyOf(Sam), Market, null, 1, at, at));
+        await using var f = MakeGrid(alerts: alerts);
+        var owner = await SignedInAsync(f);
+
+        var row = (await PageAsync(owner, "/money")).QuerySelector($"#money-region-{Market}")!;
+        var approve = row.QuerySelector("form[action*='handler=ApproveMove']");
+        Assert.NotNull(approve);
+        Assert.Equal(Market.ToString(), approve.QuerySelector("input[name=Region]")?.GetAttribute("value"));
+        Assert.Equal(Sam.ToString(), approve.QuerySelector("input[name=Server]")?.GetAttribute("value"));
+        Assert.NotNull(row.QuerySelector("form[action*='handler=KeepOff']"));
+
+        foreach (var role in new[] { "admin", "supervisor" })
+        {
+            var c = await SignedInAsync(f, role);
+            Assert.Empty((await PageAsync(c, "/money")).QuerySelector($"#money-region-{Market}")!.QuerySelectorAll("form"));
+            using var a = await PostAsync(c, "/money", "ApproveMove", new() { ["Region"] = Market.ToString(), ["Server"] = Sam.ToString() });
+            using var k = await PostAsync(c, "/money", "KeepOff", new() { ["Region"] = Market.ToString() });
+            Assert.Equal(HttpStatusCode.Forbidden, a.StatusCode);
+            Assert.Equal(HttpStatusCode.Forbidden, k.StatusCode);
+        }
+        Assert.DoesNotContain(f.MoneyRegions.Calls, x => x.StartsWith("approve"));
+        Assert.Single(alerts.Open);
+
+        // Keeping it off changes no pin: it only clears the notice and is audited.
+        using (var kept = await PostAsync(owner, "/money", "KeepOff", new() { ["Region"] = Market.ToString() }))
+            Assert.Equal(HttpStatusCode.OK, kept.StatusCode);
+        Assert.DoesNotContain(f.MoneyRegions.Calls, x => x.StartsWith("approve"));
+        Assert.Contains("clear 4 Test Owner", alerts.Calls);
+
+        // A region that isn't waiting for a move can't be approved.
+        using (var stale = await PostAsync(owner, "/money", "ApproveMove", new() { ["Region"] = Welcome.ToString(), ["Server"] = Sam.ToString() }))
+            Assert.NotNull(ErrorText(await ParseAsync(stale)));
+        Assert.DoesNotContain(f.MoneyRegions.Calls, x => x.StartsWith("approve"));
+
+        using var ok = await PostAsync(owner, "/money", "ApproveMove", new() { ["Region"] = Market.ToString(), ["Server"] = Sam.ToString() });
+
+        Assert.Equal(HttpStatusCode.OK, ok.StatusCode);
+        Assert.Contains($"approve {Market} {Sam}", f.MoneyRegions.Calls);
+        Assert.Equal(["kept off", "approved"], Results(f, "money-region-move"));
+        Assert.All(Targets(f, "money-region-move"), t => Assert.Equal("Market Square", t));
+    }
+
+    private static readonly Guid Cove = Guid.Parse("e0000000-0000-0000-0000-000000000011");
+    private static readonly Guid Reef = Guid.Parse("e0000000-0000-0000-0000-000000000012");
+    private static readonly Guid Lagoon = Guid.Parse("e0000000-0000-0000-0000-000000000013");
+
+    private static LauncherFactory MakeGridWithWaiting()
+    {
+        var f = MakeGrid();
+        f.MoneyRegions.States.AddRange(
+        [
+            new RegionState(Cove, "Cove", "10.0.0.5", 9002, KeyOf(Sam), RegionStatus.Waiting, FirstSeen: new DateTime(2026, 11, 17, 9, 30, 0, DateTimeKind.Utc)),
+            new RegionState(Reef, "Reef", "10.0.0.5", 9003, KeyOf(Sam), RegionStatus.Waiting),
+            new RegionState(Lagoon, "Lagoon", "10.0.0.6", 9002, KeyOf(Jo), RegionStatus.Waiting),
+        ]);
+        return f;
+    }
+
+    [Fact]
+    public async Task Waiting_regions_show_a_confirm_button_to_the_owner_only()
+    {
+        await using var f = MakeGridWithWaiting();
+
+        var doc = await PageAsync(await SignedInAsync(f), "/money");
+
+        var sam = doc.QuerySelector($"#money-server-{Sam} form[action*='handler=ConfirmRegions']")!;
+        Assert.Equal(Sam.ToString(), sam.QuerySelector("input[name=Server]")?.GetAttribute("value"));
+        Assert.Equal("Confirm its 2 regions", sam.QuerySelector("button")!.TextContent.Trim());
+        Assert.Equal("Confirm its region", doc.QuerySelector($"#money-server-{Jo} form[action*='handler=ConfirmRegions'] button")!.TextContent.Trim());
+        // A server with nothing waiting has no button.
+        await using var clear = MakeGrid();
+        Assert.Null((await PageAsync(await SignedInAsync(clear), "/money")).QuerySelector("form[action*='handler=ConfirmRegions']"));
+        // The region rows say what they wait for, and offer no keep-off.
+        var row = doc.QuerySelector($"#money-region-{Cove}")!;
+        Assert.Contains("Cove", row.TextContent);
+        Assert.Contains("Waiting for you to confirm: first seen at Region Server at 10.0.0.5 on 2026-11-17 09:30 UTC", row.TextContent);
+        Assert.Empty(row.QuerySelectorAll("form"));
+        // A region whose first sight isn't known still says where it waits.
+        Assert.Contains("Waiting for you to confirm: first seen at Region Server at 10.0.0.5", doc.QuerySelector($"#money-region-{Reef}")!.TextContent);
+        Assert.DoesNotContain(" on 20", doc.QuerySelector($"#money-region-{Reef}")!.TextContent);
+
+        foreach (var role in new[] { "admin", "supervisor" })
+            Assert.Empty((await PageAsync(await SignedInAsync(f, role), "/money")).QuerySelectorAll("form[action*='handler=ConfirmRegions']"));
+    }
+
+    [Fact]
+    public async Task Confirming_one_region_is_audited_as_one_region()
+    {
+        await using var f = MakeGridWithWaiting();
+
+        using var ok = await PostAsync(await SignedInAsync(f), "/money", "ConfirmRegions", new() { ["Server"] = Jo.ToString() });
+
+        Assert.Equal(["1 region"], Results(f, "money-region-confirm"));
+    }
+
+    [Fact]
+    public async Task Confirming_regions_is_audited_and_refused_to_admins()
+    {
+        await using var f = MakeGridWithWaiting();
+        foreach (var role in new[] { "admin", "supervisor" })
+        {
+            using var denied = await PostAsync(await SignedInAsync(f, role), "/money", "ConfirmRegions", new() { ["Server"] = Sam.ToString() });
+            Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
+        }
+        Assert.DoesNotContain(f.MoneyRegions.Calls, x => x.StartsWith("confirm"));
+        var owner = await SignedInAsync(f);
+
+        // A server that isn't paired, or has nothing waiting, confirms nothing.
+        using (var gone = await PostAsync(owner, "/money", "ConfirmRegions", new() { ["Server"] = Guid.NewGuid().ToString() }))
+            Assert.NotNull(ErrorText(await ParseAsync(gone)));
+        f.MoneyRegions.States.RemoveAll(r => r.Status == RegionStatus.Waiting && r.KeyId == KeyOf(Jo));
+        using (var none = await PostAsync(owner, "/money", "ConfirmRegions", new() { ["Server"] = Jo.ToString() }))
+            Assert.NotNull(ErrorText(await ParseAsync(none)));
+        Assert.DoesNotContain(f.MoneyRegions.Calls, x => x.StartsWith("confirm"));
+
+        using var ok = await PostAsync(owner, "/money", "ConfirmRegions", new() { ["Server"] = Sam.ToString() });
+
+        Assert.Equal(HttpStatusCode.OK, ok.StatusCode);
+        Assert.Contains($"confirm {Sam}", f.MoneyRegions.Calls);
+        Assert.Equal(["2 regions"], Results(f, "money-region-confirm"));
+        Assert.Equal(["10.0.0.5"], Targets(f, "money-region-confirm"));
+    }
+
+    [Fact]
+    public async Task Removing_a_server_no_longer_touches_the_money_database()
+    {
+        await using var f = MakeGrid();
+        f.MoneyRegions.Down = true; // every money call fails; the page's own region list reads fail too, so removal must not need them
+        var owner = await SignedInAsync(f);
+        f.MoneyRegions.Calls.Clear();
+
+        using var r = await PostAsync(owner, "/money", "RemoveServer", new() { ["Server"] = Sam.ToString() });
+
+        Assert.DoesNotContain(f.Grid.CurrentSettings().Money.PairedServers!, p => p.Id == Sam);
+        Assert.DoesNotContain("pins were kept", await r.Content.ReadAsStringAsync(Ct));
+        Assert.Contains(Audit(f), a => a.GetProperty("action").GetString() == "money-pairing-remove");
+    }
+
+    [Fact]
+    public async Task Admin_cannot_set_key_or_person_limits()
+    {
+        var books = new FakeBooks();
+        await using var f = MakeGrid(books);
+        var admin = await SignedInAsync(f, "admin");
+        Assert.Empty((await PageAsync(admin, "/money")).QuerySelectorAll("form[action*='handler=KeyLimits']"));
+        Assert.Empty((await PageAsync(admin, $"/money/person?id={Ann}")).QuerySelectorAll("form[action*='handler=Limits']"));
+
+        using var k = await PostAsync(admin, "/money", "KeyLimits", new() { ["KeyId"] = KeyOf(Sam), ["DailySpend"] = "5", ["Reason"] = "x" });
+        using var p = await PostAsync(admin, $"/money/person?id={Ann}", "Limits", new() { ["DailySpend"] = "5", ["Reason"] = "x" });
+
+        Assert.Equal(HttpStatusCode.Forbidden, k.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, p.StatusCode);
+        Assert.DoesNotContain(books.Calls, x => x.StartsWith("set-"));
+    }
+
+    [Fact]
+    public async Task Supervisor_sees_limits_but_no_forms()
+    {
+        var books = new FakeBooks { Limits = new LimitView(250_000, 20_000, true, false, null, 1234, 0) };
+        await using var f = MakeGrid(books);
+        var c = await SignedInAsync(f, "supervisor");
+
+        var doc = await PageAsync(c, "/money");
+
+        var limits = doc.QuerySelector("#money-limits")!;
+        Assert.Contains("10,000", limits.TextContent);
+        Assert.Contains("100,000", limits.TextContent);
+        Assert.Contains("20,000", limits.TextContent);
+        var sam = limits.QuerySelector($"tr[data-key='{KeyOf(Sam)}']")!;
+        Assert.Contains("Region Server at 10.0.0.5", sam.TextContent);
+        Assert.Contains("250,000", sam.TextContent);
+        Assert.Contains("own limit", sam.TextContent);
+        Assert.Contains("1,234", sam.TextContent);
+        Assert.NotNull(limits.QuerySelector("tr[data-key='p1']"));
+        Assert.Empty(limits.QuerySelectorAll("form"));
+
+        var person = await PageAsync(c, $"/money/person?id={Ann}");
+        var line = person.QuerySelector("#person-limits")!.TextContent;
+        Assert.Contains("Daily spending: 1,234 of 250,000 used (own limit).", line);
+        Assert.Contains("Daily script payouts: 0 of 20,000 used (grid default).", line);
+        Assert.Empty(person.QuerySelectorAll("form[action*='handler=Limits']"));
+    }
+
+    [Fact]
+    public async Task Owner_sets_a_person_limit_higher_and_lower_with_reason_and_audit()
+    {
+        var books = new FakeBooks();
+        await using var f = Make(books);
+        var c = await SignedInAsync(f);
+        var page = $"/money/person?id={Ann}";
+        Assert.NotNull((await PageAsync(c, page)).QuerySelector("form[action*='handler=Limits']"));
+
+        using (var none = await PostAsync(c, page, "Limits", new() { ["DailySpend"] = "50000", ["Reason"] = " " }))
+            Assert.Contains("Say why", ErrorText(await ParseAsync(none)));
+        using (var big = await PostAsync(c, page, "Limits", new() { ["DailySpend"] = "100000001", ["Reason"] = "x" }))
+            Assert.Contains("0 to 100,000,000", ErrorText(await ParseAsync(big)));
+        var today = f.Time.GetUtcNow().UtcDateTime.Date; // midnight UTC today has passed
+        using (var old = await PostAsync(c, page, "Limits", new() { ["DailySpend"] = "500", ["Until"] = today.ToString("yyyy-MM-dd"), ["Reason"] = "x" }))
+            Assert.Contains("end date", ErrorText(await ParseAsync(old)));
+        Assert.DoesNotContain(books.Calls, x => x.StartsWith("set-person-limits"));
+
+        var end = today.AddDays(7);
+        using var higher = await PostAsync(c, page, "Limits", new() { ["DailySpend"] = "50000", ["DailyPayout"] = "", ["Reason"] = "land sale" });
+        using var lower = await PostAsync(c, page, "Limits",
+            new() { ["DailySpend"] = "500", ["DailyPayout"] = "100", ["Until"] = end.ToString("yyyy-MM-dd"), ["Reason"] = "asked for less" });
+        using var back = await PostAsync(c, page, "Limits", new() { ["DailySpend"] = "", ["DailyPayout"] = "", ["Reason"] = "back to normal" });
+
+        Assert.Equal([$"set-person-limits {Ann} 50000  ", $"set-person-limits {Ann} 500 100 {end:O}", $"set-person-limits {Ann}   "],
+            books.Calls.Where(x => x.StartsWith("set-person-limits")));
+        Assert.Equal([new StaffAction("Test Owner", "land sale"), new StaffAction("Test Owner", "asked for less"), new StaffAction("Test Owner", "back to normal")],
+            books.Staff);
+        Assert.Equal(["ok spend 50000 payout default", $"ok spend 500 payout 100 until {end:yyyy-MM-dd}", "ok default"], Results(f, "money-person-limits"));
+        Assert.All(Targets(f, "money-person-limits"), t => Assert.Equal("Ann Smith", t));
+    }
+
+    [Fact]
+    public async Task Owner_sets_a_server_limit_and_back_to_default()
+    {
+        var books = new FakeBooks();
+        await using var f = MakeGrid(books);
+        var c = await SignedInAsync(f);
+        var row = (await PageAsync(c, "/money")).QuerySelector($"#money-limits tr[data-key='{KeyOf(Sam)}']")!;
+        Assert.NotNull(row.QuerySelector("form[action*='handler=KeyLimits']"));
+
+        using var up = await PostAsync(c, "/money", "KeyLimits", new() { ["KeyId"] = KeyOf(Sam), ["DailySpend"] = "250000", ["DailyPayout"] = "", ["Reason"] = "busy mall" });
+        using var back = await PostAsync(c, "/money", "KeyLimits", new() { ["KeyId"] = KeyOf(Sam), ["DailySpend"] = "", ["DailyPayout"] = "", ["Reason"] = "back to normal" });
+        using var local = await PostAsync(c, "/money", "KeyLimits", new() { ["KeyId"] = "p1", ["DailySpend"] = "", ["DailyPayout"] = "1000", ["Reason"] = "quiet" });
+        using (var unknown = await PostAsync(c, "/money", "KeyLimits",
+                   new() { ["KeyId"] = "server:" + Guid.NewGuid().ToString("N"), ["DailySpend"] = "5", ["Reason"] = "x" }))
+            Assert.NotNull(ErrorText(await ParseAsync(unknown)));
+        using (var none = await PostAsync(c, "/money", "KeyLimits", new() { ["KeyId"] = KeyOf(Sam), ["DailySpend"] = "5", ["Reason"] = "" }))
+            Assert.Contains("Say why", ErrorText(await ParseAsync(none)));
+
+        Assert.Equal([$"set-limits Key {KeyOf(Sam)} 250000  ", $"set-limits Key {KeyOf(Sam)}   ", "set-limits Key p1  1000 "],
+            books.Calls.Where(x => x.StartsWith("set-limits")));
+        Assert.Equal(["ok spend 250000 payout default", "ok default", "ok spend default payout 1000"], Results(f, "money-key-limits"));
+        Assert.Equal(["Region Server at 10.0.0.5", "Region Server at 10.0.0.5", "region program p1"], Targets(f, "money-key-limits"));
+    }
+
+    [Fact]
+    public async Task Visitor_money_defaults_to_only_grids_I_list()
+    {
+        await using var f = Make(new FakeBooks());
+        var c = await SignedInAsync(f);
+
+        var visitors = (await PageAsync(c, "/money")).QuerySelector("#money-visitors")!;
+
+        Assert.Equal("Listed", visitors.QuerySelector("input[name=Visitors][checked]")?.GetAttribute("value"));
+        Assert.Contains("Only grids I list", visitors.TextContent);
+        Assert.Contains("People arriving from another grid straight into a Region Server's region can visit, but money is paused for that visit. " +
+            "Keep your hypergrid welcome region on this computer.", visitors.TextContent);
+        Assert.NotNull(visitors.QuerySelector("#money-no-grids"));
+        Assert.NotNull(visitors.QuerySelector("a[href*='money-verification.md#']"));
+
+        using (var bad = await PostAsync(c, "/money", "Visitors", new() { ["Visitors"] = "Sometimes" }))
+            Assert.NotNull(ErrorText(await ParseAsync(bad)));
+        Assert.Null(f.Grid.CurrentSettings().Money.Visitors);
+
+        using var all = await PostAsync(c, "/money", "Visitors", new() { ["Visitors"] = "All" });
+
+        Assert.Equal(VisitorMoney.All, f.Grid.CurrentSettings().Money.Visitors);
+        Assert.Equal(["all"], Results(f, "money-visitors"));
+        Assert.Equal("All", (await ParseAsync(all)).QuerySelector("#money-visitors input[name=Visitors][checked]")?.GetAttribute("value"));
+    }
+
+    [Fact]
+    public async Task Adding_a_bad_grid_address_is_refused()
+    {
+        await using var f = Make(new FakeBooks());
+        var c = await SignedInAsync(f);
+
+        foreach (var bad in new[] { "", "not an address", "ftp://grid.example:8002/", "/a/path", "http://" })
+        {
+            using var r = await PostAsync(c, "/money", "AddGrid", new() { ["Address"] = bad });
+            Assert.NotNull(ErrorText(await ParseAsync(r)));
+        }
+        Assert.Empty(f.Grid.CurrentSettings().Money.ListedGrids ?? []);
+        Assert.Empty(Results(f, "money-grid-add"));
+
+        using (var ok = await PostAsync(c, "/money", "AddGrid", new() { ["Address"] = "http://HG.FriendGrid.net:8002/" }))
+            Assert.Contains("http://hg.friendgrid.net:8002", (await ParseAsync(ok)).QuerySelector("#money-grids")!.TextContent);
+        using (var twice = await PostAsync(c, "/money", "AddGrid", new() { ["Address"] = "http://hg.friendgrid.net:8002" })) { }
+        Assert.Equal(["http://hg.friendgrid.net:8002"], f.Grid.CurrentSettings().Money.ListedGrids);
+
+        using var gone = await PostAsync(c, "/money", "RemoveGrid", new() { ["Address"] = "http://hg.friendgrid.net:8002" });
+
+        Assert.Empty(f.Grid.CurrentSettings().Money.ListedGrids ?? []);
+        Assert.Equal(["http://hg.friendgrid.net:8002"], Targets(f, "money-grid-add"));
+        Assert.Equal(["http://hg.friendgrid.net:8002"], Targets(f, "money-grid-remove"));
+    }
+
+    [Fact]
+    public async Task Settings_post_saves_the_three_new_limits()
+    {
+        await using var f = Make(new FakeBooks(), money: m => m with { Visitors = VisitorMoney.All });
+        var c = await SignedInAsync(f);
+        var form = Settings();
+        form["DailySpendLimit"] = "12000";
+        form["DailyKeySpendLimit"] = "150000";
+        form["DailyKeyPayoutLimit"] = "30000";
+
+        using (var r = await PostAsync(c, "/money", "Settings", form))
+            Assert.Equal("150000", (await ParseAsync(r)).QuerySelector("input[name=DailyKeySpendLimit]")?.GetAttribute("value"));
+
+        var m = f.Grid.CurrentSettings().Money;
+        Assert.Equal((12_000L, 150_000L, 30_000L), (m.DailySpendLimit, m.DailyKeySpendLimit, m.DailyKeyPayoutLimit));
+        Assert.Equal(VisitorMoney.All, m.Visitors); // the Visitors section owns visitor money now
+
+        form["DailyKeyPayoutLimit"] = "100000001";
+        using var refused = await PostAsync(c, "/money", "Settings", form);
+
+        Assert.NotNull(ErrorText(await ParseAsync(refused)));
+        Assert.Equal(30_000, f.Grid.CurrentSettings().Money.DailyKeyPayoutLimit);
+    }
+
+    [Fact]
+    public async Task Person_page_explains_why_money_is_off()
+    {
+        await using var f = MakeGrid();
+        var c = await SignedInAsync(f, "supervisor");
+        var page = $"/money/person?id={Ann}";
+        string Here(IHtmlDocument d) => d.QuerySelector("#person-money-here")!.TextContent;
+
+        f.MoneyRegions.Where[Ann] = new SessionLocation(Guid.NewGuid(), Ann, OldDocks, "p1", LocationState.Unverified, DateTime.UtcNow);
+        var off = await PageAsync(c, page);
+        Assert.Contains("Off.", Here(off));
+        Assert.Contains("Old Docks", Here(off));
+        Assert.Contains("can't verify", Here(off));
+        Assert.Contains("next login", Here(off));
+        Assert.NotNull(off.QuerySelector("#person-money-here a[href*='money-verification.md#']"));
+
+        f.MoneyRegions.Where[Ann] = new SessionLocation(Guid.NewGuid(), Ann, NeonPier, KeyOf(Sam), LocationState.Verified, DateTime.UtcNow);
+        var on = await PageAsync(c, page);
+        Assert.Contains("On.", Here(on));
+        Assert.Contains("Neon Pier", Here(on));
+
+        // Verified where they are, but that region has stopped checking in: payments there are refused.
+        f.MoneyRegions.Where[Ann] = new SessionLocation(Guid.NewGuid(), Ann, Quay, KeyOf(Jo), LocationState.Verified, DateTime.UtcNow);
+        var stale = await PageAsync(c, page);
+        Assert.Contains("Off.", Here(stale));
+        Assert.Contains("Quay", Here(stale));
+        Assert.Contains("Not heard from", Here(stale));
+        Assert.DoesNotContain("On.", Here(stale));
+
+        // Handed on to a region that hasn't reported them (it can't verify anyone): paused, like unverified.
+        f.MoneyRegions.Where[Ann] = new SessionLocation(Guid.NewGuid(), Ann, OldDocks, "p1", LocationState.Handed, DateTime.UtcNow);
+        var handed = await PageAsync(c, page);
+        Assert.Contains("Off.", Here(handed));
+        Assert.Contains("Moved to Old Docks", Here(handed));
+        Assert.Contains("can't verify", Here(handed));
+        Assert.NotNull(handed.QuerySelector("#person-money-here a[href*='money-verification.md#']"));
+
+        f.MoneyRegions.Where.Remove(Ann);
+        Assert.Contains("Not in the world", Here(await PageAsync(c, page)));
+        Assert.Contains($"where {Ann}", f.MoneyRegions.Calls);
+    }
+
+    [Fact]
+    public async Task My_coins_shows_paused_line_when_unverified()
+    {
+        await using var f = Make(new FakeBooks());
+        var c = f.CreateClient(new() { AllowAutoRedirect = false });
+        (await c.GetAsync("/__test/guest-signin", Ct)).Dispose();
+
+        f.MoneyRegions.Where[TestAuth.GuestId] = new SessionLocation(Guid.NewGuid(), TestAuth.GuestId, OldDocks, "p1", LocationState.Unverified, DateTime.UtcNow);
+        Assert.Equal("Money is paused for you until you next log in, because you came from a region that can't check where you are.",
+            (await PageAsync(c, "/guest/coins")).QuerySelector("#coins-paused")?.TextContent.Trim());
+
+        f.MoneyRegions.Where[TestAuth.GuestId] = new SessionLocation(Guid.NewGuid(), TestAuth.GuestId, OldDocks, "p1", LocationState.Handed, DateTime.UtcNow);
+        Assert.Equal("Money is paused for you until you next log in, because you moved to a region that can't check where you are.",
+            (await PageAsync(c, "/guest/coins")).QuerySelector("#coins-paused")?.TextContent.Trim());
+
+        f.MoneyRegions.Where[TestAuth.GuestId] = new SessionLocation(Guid.NewGuid(), TestAuth.GuestId, Welcome, "p1", LocationState.Verified, DateTime.UtcNow);
+        Assert.Null((await PageAsync(c, "/guest/coins")).QuerySelector("#coins-paused"));
+
+        f.MoneyRegions.Down = true; // the rest of the page doesn't depend on it
+        Assert.NotNull((await PageAsync(c, "/guest/coins")).QuerySelector("#coins-balance"));
+    }
+
+    [Fact]
+    public async Task Alerts_show_and_clear()
+    {
+        var alerts = new FakeAlerts();
+        var at = new DateTime(2026, 11, 15, 1, 2, 0, DateTimeKind.Utc);
+        alerts.Open.Add(new MoneyAlert(7, AlertKind.UnhandedArrival, AlertLevel.Warning, KeyOf(Sam), NeonPier, Ann, 14, at, at, Repeated: true));
+        alerts.Open.Add(new MoneyAlert(8, AlertKind.KeyLimitReached, AlertLevel.Notice, "p1", null, null, 2, at, at));
+        alerts.Open.Add(new MoneyAlert(9, AlertKind.UnhandedArrival, AlertLevel.Notice, KeyOf(Sam), NeonPier, Ann, 1, at, at));
+        alerts.Open.Add(new MoneyAlert(10, AlertKind.PersonLimitRepeated, AlertLevel.Notice, "p1", Welcome, Ann, 3, at, at));
+        // Sam's Neon Pier claimed Ann while the region program p1 had her: one of the two is wrong.
+        alerts.Open.Add(new MoneyAlert(11, AlertKind.UnhandedArrival, AlertLevel.Warning, KeyOf(Sam), NeonPier, Ann, 1, at, at, OtherKeyId: "p1"));
+        await using var f = MakeGrid(alerts: alerts);
+        var c = await SignedInAsync(f);
+
+        var doc = await PageAsync(c, "/money");
+
+        var conflict = doc.QuerySelector("#money-alert-11")!;
+        Assert.Contains("Region Server at 10.0.0.5", conflict.TextContent);
+        Assert.Contains("and region program p1 disagree about where Ann Smith is", conflict.TextContent);
+        // Either may be the honest one: no offer to remove the claimer.
+        Assert.Null(conflict.QuerySelector("form[action*='handler=RemoveServer']"));
+
+        var warning = doc.QuerySelector("#money-alert-7")!;
+        Assert.Contains("Neon Pier", warning.TextContent);
+        Assert.Contains("Region Server at 10.0.0.5", warning.TextContent);
+        Assert.Contains("Ann Smith", warning.TextContent);
+        Assert.NotNull(warning.QuerySelector($"a[href='/money/person?id={Ann}']"));
+        Assert.Equal(Sam.ToString(), warning.QuerySelector("form[action*='handler=RemoveServer'] input[name=Server]")?.GetAttribute("value"));
+        Assert.Contains("Remove this server", warning.TextContent);
+        // Only a warning about a paired server offers to remove it.
+        Assert.Null(doc.QuerySelector("#money-alert-9 form[action*='handler=RemoveServer']"));
+        Assert.Contains("Neon Pier", doc.QuerySelector("#money-alert-9")!.TextContent);
+        var limit = doc.QuerySelector("#money-alert-8")!;
+        Assert.Contains("region program p1", limit.TextContent);
+        Assert.NotNull(limit.QuerySelector("a[href='#money-limits']"));
+        Assert.Null(limit.QuerySelector("form[action*='handler=RemoveServer']"));
+        Assert.Contains("Ann Smith", doc.QuerySelector("#money-alert-10")!.TextContent);
+        Assert.Equal(5, doc.QuerySelectorAll("#money-alerts form[action*='handler=ClearAlert']").Length);
+
+        var supervisor = await PageAsync(await SignedInAsync(f, "supervisor"), "/money");
+        Assert.NotNull(supervisor.QuerySelector("#money-alert-7"));
+        Assert.Empty(supervisor.QuerySelectorAll("#money-alerts form"));
+
+        using var r = await PostAsync(c, "/money", "ClearAlert", new() { ["Id"] = "8" });
+
+        Assert.Contains("clear 8 Test Owner", alerts.Calls);
+        Assert.Null((await ParseAsync(r)).QuerySelector("#money-alert-8"));
+        Assert.Equal(["ok"], Results(f, "money-alert-clear"));
+    }
+
+    [Fact]
+    public async Task Refused_handoffs_and_uncovered_arrivals_show_as_notices_without_a_remove_button()
+    {
+        var alerts = new FakeAlerts();
+        var at = new DateTime(2026, 11, 15, 1, 2, 0, DateTimeKind.Utc);
+        alerts.Open.Add(new MoneyAlert(21, AlertKind.RefusedHandoff, AlertLevel.Notice, KeyOf(Sam), NeonPier, Ann, 9, at, at));
+        alerts.Open.Add(new MoneyAlert(22, AlertKind.ArrivalNotCovered, AlertLevel.Notice, KeyOf(Sam), Cove, Ann, 4, at, at));
+        await using var f = MakeGrid(alerts: alerts);
+
+        var doc = await PageAsync(await SignedInAsync(f), "/money");
+
+        var refused = doc.QuerySelector("#money-alert-21")!;
+        Assert.Contains("Notice", refused.TextContent);
+        Assert.Contains("9 times in a day", refused.TextContent);
+        Assert.DoesNotContain("claimed", refused.TextContent);
+        Assert.Null(refused.QuerySelector("form[action*='handler=RemoveServer']"));
+        var uncovered = doc.QuerySelector("#money-alert-22")!;
+        Assert.Contains("doesn't cover", uncovered.TextContent);
+        Assert.Contains("4 times in a day", uncovered.TextContent);
+        Assert.NotNull(uncovered.QuerySelector("a[href='#money-regions']"));
+        Assert.Null(uncovered.QuerySelector("form[action*='handler=RemoveServer']"));
+    }
+
+    [Fact]
+    public async Task Robust_outage_still_shows_the_money_page_with_freeze()
+    {
+        var alerts = new FakeAlerts();
+        var at = DateTime.UtcNow;
+        alerts.Open.Add(new MoneyAlert(7, AlertKind.UnhandedArrival, AlertLevel.Warning, KeyOf(Sam), NeonPier, Ann, 3, at, at));
+        alerts.Open.Add(new MoneyAlert(10, AlertKind.PersonLimitRepeated, AlertLevel.Notice, "p1", Welcome, Ann, 3, at, at));
+        await using var f = MakeGrid(alerts: alerts);
+        var c = await SignedInAsync(f);
+        f.Robust.Down = true;
+        var before = f.Robust.Lookups;
+
+        var doc = await PageAsync(c, "/money");
+
+        Assert.NotNull(doc.QuerySelector("form[action*='handler=Freeze']"));
+        Assert.Contains($"avatar {Ann}", doc.QuerySelector("#money-alert-7")!.TextContent);
+        Assert.Contains($"avatar {Ann}", doc.QuerySelector("#money-alert-10")!.TextContent);
+        Assert.Null(doc.QuerySelector($"#money-alerts a[href='/money/person?id={Ann}']"));
+        Assert.Equal(1, f.Robust.Lookups - before); // one look per person, however many alerts name them
+    }
+
+    /// <summary>Robust's connection breaks while the Money page names who an alert is about: named by id, and Freeze stays.</summary>
+    [Fact]
+    public async Task A_broken_Robust_connection_still_shows_the_money_page_with_freeze()
+    {
+        var alerts = new FakeAlerts();
+        var at = DateTime.UtcNow;
+        alerts.Open.Add(new MoneyAlert(7, AlertKind.UnhandedArrival, AlertLevel.Warning, KeyOf(Sam), NeonPier, Ann, 3, at, at));
+        await using var f = MakeGrid(alerts: alerts);
+        var c = await SignedInAsync(f);
+        f.Robust.OnFindAccountById = () => throw new IOException("The connection was reset.");
+
+        var doc = await PageAsync(c, "/money");
+
+        Assert.NotNull(doc.QuerySelector("form[action*='handler=Freeze']"));
+        Assert.Contains($"avatar {Ann}", doc.QuerySelector("#money-alert-7")!.TextContent);
+    }
+
+    [Fact]
+    public async Task Approved_move_is_audited_even_when_its_notice_cant_be_cleared()
+    {
+        var alerts = new FakeAlerts { ClearDown = true };
+        var at = DateTime.UtcNow;
+        alerts.Open.Add(new MoneyAlert(4, AlertKind.RegionMoved, AlertLevel.Notice, KeyOf(Sam), Market, null, 1, at, at));
+        await using var f = MakeGrid(alerts: alerts);
+
+        using var r = await PostAsync(await SignedInAsync(f), "/money", "ApproveMove", new() { ["Region"] = Market.ToString(), ["Server"] = Sam.ToString() });
+
+        Assert.Equal(HttpStatusCode.OK, r.StatusCode);
+        Assert.Contains($"approve {Market} {Sam}", f.MoneyRegions.Calls);
+        Assert.Contains("clear 4 Test Owner", alerts.Calls);
+        Assert.Equal(["approved"], Results(f, "money-region-move"));
+        Assert.Contains("couldn't be cleared", MainText(await ParseAsync(r)));
+    }
+
+    [Fact]
+    public async Task Settings_without_the_new_limits_is_refused()
+    {
+        // A Money tab opened before the update posts no daily limits: saving 0 would stop every payment.
+        await using var f = Make(new FakeBooks());
+        var form = Settings(symbol: "GG");
+        form.Remove("DailySpendLimit");
+        form.Remove("DailyKeySpendLimit");
+        form.Remove("DailyKeyPayoutLimit");
+
+        using var r = await PostAsync(await SignedInAsync(f), "/money", "Settings", form);
+
+        Assert.Contains("daily limits", ErrorText(await ParseAsync(r)));
+        var m = f.Grid.CurrentSettings().Money;
+        Assert.Equal(("C$", 10_000L, 100_000L, 20_000L), (m.CurrencySymbol, m.DailySpendLimit, m.DailyKeySpendLimit, m.DailyKeyPayoutLimit));
+        Assert.Empty(Results(f, "money-settings"));
+    }
+
+    [Theory]
+    [InlineData(MoneyOutcome.OverDailyLimit)]
+    [InlineData(MoneyOutcome.OverKeyLimit)]
+    [InlineData(MoneyOutcome.OutcomeUnknown)]
+    public void Limit_outcomes_have_their_own_words(MoneyOutcome o) =>
+        Assert.DoesNotContain("(", MoneyPageRules.Words(o));
+
+    [Fact]
+    public void A_refund_that_cant_be_done_says_which_way()
+    {
+        Assert.Equal("There is no entry with that number.", MoneyPageRules.Words(MoneyOutcome.UnknownEntry));
+        Assert.Equal("That entry was already refunded.", MoneyPageRules.Words(MoneyOutcome.AlreadyRefunded));
+    }
+
+    [Fact]
+    public void An_answer_that_may_have_gone_through_tells_staff_to_check_the_history()
+    {
+        var words = MoneyPageRules.Words(MoneyOutcome.OutcomeUnknown);
+
+        Assert.Contains("may have gone through", words);
+        Assert.Contains("history", words);
+        Assert.DoesNotContain("couldn't be done", words);
     }
 }

@@ -34,11 +34,13 @@ using System.Net;
 using System.Net.Http;
 using System.Reflection;
 using System.Text.RegularExpressions;
+using System.Threading;
 
 using log4net;
 using Nini.Config;
 using OpenMetaverse;
 
+using OpenSim.Data;
 using OpenSim.Framework;
 using OpenSim.Server.Base;
 using OpenSim.Services.Connectors.InstantMessage;
@@ -69,6 +71,9 @@ namespace OpenSim.Services.LLLoginService
         protected IFriendsService m_FriendsService;
         protected IAvatarService m_AvatarService;
         protected IUserAgentService m_UserAgentService;
+        // GridGate: where each session starts; null means "don't record". See MERGING.md.
+        protected ISessionStartsData m_SessionStarts;
+        private long m_SessionStartsCleanedAt = long.MinValue;
 
         protected GatekeeperServiceConnector m_GatekeeperConnector;
 
@@ -242,6 +247,22 @@ namespace OpenSim.Services.LLLoginService
             if (!string.IsNullOrWhiteSpace(agentService))
                 m_UserAgentService = ServerUtils.LoadPlugin<IUserAgentService>(agentService, args);
 
+            // GridGate: the table the money service reads to learn where a session started.
+            IConfig sessionDb = config.Configs["DatabaseService"];
+            string sessionDll = sessionDb?.GetString("StorageProvider", string.Empty);
+            string sessionConn = sessionDb?.GetString("ConnectionString", string.Empty);
+            if (!string.IsNullOrWhiteSpace(sessionDll) && !string.IsNullOrWhiteSpace(sessionConn))
+            {
+                try
+                {
+                    m_SessionStarts = ServerUtils.LoadPlugin<ISessionStartsData>(sessionDll, [sessionConn, "gridgate_session_starts"]);
+                }
+                catch (Exception e)
+                {
+                    m_log.WarnFormat("[LLOGIN SERVICE]: Session starts are not recorded: {0}", e.GetType().Name);
+                }
+            }
+
             // Get the Hypergrid inventory service (exists only if Hypergrid is enabled)
             string hgInvServicePlugin = m_LoginServerConfig.GetString("HGInventoryServicePlugin", string.Empty);
             if (!string.IsNullOrWhiteSpace(hgInvServicePlugin))
@@ -334,6 +355,29 @@ namespace OpenSim.Services.LLLoginService
 
             response["success"] = true;
             return response;
+        }
+
+        // GridGate: writes the session-start row, with the address the session was sent to (the destination's
+        // ExternalHostName and UDP port, as Robust's regions table lists them); logs without ids and never throws.
+        private void RecordSessionStart(UUID sessionID, UUID userID, GridRegion destination)
+        {
+            ISessionStartsData starts = m_SessionStarts;
+            if (starts is null)
+                return;
+            try
+            {
+                starts.Record(sessionID, userID, destination.RegionID, destination.ExternalHostName, destination.InternalEndPoint?.Port, "login");
+
+                long now = Environment.TickCount64;
+                long last = Interlocked.Read(ref m_SessionStartsCleanedAt);
+                if ((last == long.MinValue || now - last >= 3600000L) &&
+                    Interlocked.CompareExchange(ref m_SessionStartsCleanedAt, now, last) == last)
+                    starts.DeleteOld();
+            }
+            catch (Exception e)
+            {
+                m_log.WarnFormat("[LLOGIN SERVICE]: Could not record where a session starts: {0}", e.GetType().Name);
+            }
         }
 
         public LoginResponse Login(string firstName, string lastName, string passwd, string startLocation, UUID scopeID,
@@ -631,6 +675,9 @@ namespace OpenSim.Services.LLLoginService
                     return new LLFailedLoginResponse("key", reason, "false");
 
                 }
+
+                // GridGate: record where this session starts. It must never fail the login.
+                RecordSessionStart(session, account.PrincipalID, destination);
 
                 // only now we can assume a login
                 guinfo = m_GridUserService.LoggedIn(PrincipalIDstr);

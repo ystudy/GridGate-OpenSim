@@ -78,6 +78,12 @@ namespace OpenSim.Region.OptionalModules.Avatar.XmlRpcGroups
 
         private IMessageTransferModule m_msgTransferModule;
 
+        // GridGate: the join fee each invitation showed (see JoinFeeOffers), and the joins under way (see JoinsInProgress).
+        private readonly JoinFeeOffers m_joinFeeOffers = new JoinFeeOffers();
+        // GridGate: the fee each person was last shown in a group's profile: a direct join charges no more than that.
+        private readonly ShownPrices m_shownJoinFees = new ShownPrices();
+        private readonly JoinsInProgress m_joinsInProgress = new JoinsInProgress();
+
         private IGroupsMessagingModule m_groupsMessagingModule;
 
         private IGroupsServicesConnector m_groupData;
@@ -438,8 +444,83 @@ namespace OpenSim.Region.OptionalModules.Avatar.XmlRpcGroups
                         if (m_debugEnabled)
                             m_log.DebugFormat("[xmlGROUPS]: Received an accept invite notice.");
 
-                        // and the sessionid is the role
-                        m_groupData.AddAgentToGroup(remoteAgentID, inviteInfo.AgentID, inviteInfo.GroupID, inviteInfo.RoleID);
+                        // GridGate: joining through an invitation pays the group's join fee too, held before the member is
+                        // added and settled as JoinGroupRequest settles it (OpenSim charged nothing here). It charges at
+                        // most the fee the invitation showed (this module remembers it), never a member who is already in
+                        // the group, and one join at a time per person and group.
+                        IFeeHold fee = null;
+                        GroupRecord group = m_groupData.GetGroupRecord(remoteAgentID, inviteInfo.GroupID, null);
+                        IMoneyModule money = scene.RequestModuleInterface<IMoneyModule>();
+                        // GridGate: a money module that never charges leaves joins as OpenSim has them
+                        if (!FeeHolds.Charges(money))
+                            money = null;
+                        // GridGate: with a money module that charges, a group whose record can't be read has no known fee: nobody joins it free
+                        if (group == null && money != null)
+                        {
+                            if (remoteAgentID == inviteInfo.AgentID)
+                                remoteClient.SendAgentAlertMessage("You can't join the group right now: its details couldn't be read. Please try again in a moment.", false);
+                            return;
+                        }
+                        int current = group == null || money == null ? 0 : JoinFeeOnAccept(group);
+                        bool joinBegun = false;
+                        bool added;
+                        try
+                        {
+                            if (current > 0)
+                            {
+                                // Only the invitee accepts for themselves: a forged sender id charges nobody and changes nothing.
+                                if (remoteAgentID != inviteInfo.AgentID)
+                                    return;
+
+                                if (!m_joinsInProgress.TryBegin(remoteAgentID, inviteInfo.GroupID))
+                                {
+                                    remoteClient.SendAgentAlertMessage(string.Format("Your request to join {0} is still being handled.", group.GroupName), false);
+                                    return; // another join of theirs to this group is answering already
+                                }
+                                joinBegun = true;
+
+                                if (m_groupData.GetAgentGroupMembership(remoteAgentID, inviteInfo.AgentID, inviteInfo.GroupID) != null)
+                                {
+                                    m_groupData.RemoveAgentToGroupInvite(GetRequestingAgentID(remoteClient), inviteID);
+                                    m_joinFeeOffers.Forget(inviteID);
+                                    remoteClient.SendAgentAlertMessage(string.Format("You are already a member of {0}.", group.GroupName), false);
+                                    return;
+                                }
+
+                                // The fee this invitation showed: only what this module offered, so an invitation made by
+                                // another program offers the fee first.
+                                int? offered = m_joinFeeOffers.Find(inviteID);
+                                if (offered == null || current > offered.Value)
+                                {
+                                    // The fee is not the one shown: add nobody, hold nothing, and ask again at today's fee.
+                                    m_joinFeeOffers.Remember(inviteID, current);
+                                    SendFeeOffer(inviteID, group, inviteInfo.RoleID, inviteInfo.AgentID, current);
+                                    return;
+                                }
+
+                                // GridGate: the group is named by its id, which finds its founder
+                                fee = FeeHolds.Take(money, remoteAgentID, current, MoneyTransactionType.GroupJoin, inviteInfo.GroupID.ToString());
+                                if (fee == null)
+                                {
+                                    remoteClient.SendAgentAlertMessage("You have insufficient funds to join the group.", false);
+                                    return;
+                                }
+                            }
+
+                            // and the sessionid is the role
+                            added = AddMemberAndSettle(remoteAgentID, inviteInfo.AgentID, inviteInfo.GroupID, inviteInfo.RoleID, fee);
+                        }
+                        finally
+                        {
+                            if (joinBegun)
+                                m_joinsInProgress.End(remoteAgentID, inviteInfo.GroupID);
+                        }
+
+                        if (!added)
+                        {
+                            remoteClient.SendAgentAlertMessage("Unable to add you to the group.", false);
+                            return;
+                        }
 
                         GridInstantMessage msg = new GridInstantMessage();
                         msg.imSessionID = UUID.Zero.Guid;
@@ -464,6 +545,7 @@ namespace OpenSim.Region.OptionalModules.Avatar.XmlRpcGroups
                             SendAgentGroupDataUpdate(inviteeClient,true);
                         }
                         m_groupData.RemoveAgentToGroupInvite(GetRequestingAgentID(remoteClient), inviteID);
+                        m_joinFeeOffers.Forget(inviteID); // GridGate
                     }
 
                     // Reject
@@ -472,6 +554,7 @@ namespace OpenSim.Region.OptionalModules.Avatar.XmlRpcGroups
                         if (m_debugEnabled)
                             m_log.DebugFormat("[xmlGROUPS]: Received a reject invite notice.");
                         m_groupData.RemoveAgentToGroupInvite(remoteAgentID, inviteID);
+                        m_joinFeeOffers.Forget(inviteID); // GridGate: a declined invitation's fee is forgotten
                     }
                 }
                 return;
@@ -942,6 +1025,8 @@ namespace OpenSim.Region.OptionalModules.Avatar.XmlRpcGroups
                 profile.InsigniaID = groupInfo.GroupPicture;
                 profile.MaturePublish = groupInfo.MaturePublish;
                 profile.MembershipFee = groupInfo.MembershipFee;
+                // GridGate: this is the fee the viewer's join dialog will show.
+                m_shownJoinFees.Remember(remoteClient.AgentId, groupID, groupInfo.MembershipFee);
                 profile.Money = 0; // TODO: Get this from the currency server?
                 profile.Name = groupInfo.GroupName;
                 profile.OpenEnrollment = groupInfo.OpenEnrollment;
@@ -1232,26 +1317,93 @@ namespace OpenSim.Region.OptionalModules.Avatar.XmlRpcGroups
         {
             if (m_debugEnabled) m_log.DebugFormat("[GROUPS]: {0} called", System.Reflection.MethodBase.GetCurrentMethod().Name);
 
-            // Should check to see if OpenEnrollment, or if there's an outstanding invitation
-            m_groupData.AddAgentToGroup(GetRequestingAgentID(remoteClient), GetRequestingAgentID(remoteClient), groupID, UUID.Zero);
-
-            // check funds
-            // is there a money module present ?
-            GroupRecord groupRecord = m_groupData.GetGroupRecord(GetRequestingAgentID(remoteClient), groupID, null);
+            // GridGate: the join fee is held before the member is added, then taken once they are a member or given back if
+            // not. OpenSim added them first and checked the fee after, so someone who couldn't pay still joined.
+            UUID agentID = GetRequestingAgentID(remoteClient);
+            GroupRecord groupRecord = m_groupData.GetGroupRecord(agentID, groupID, null);
             IMoneyModule money = remoteClient.Scene.RequestModuleInterface<IMoneyModule>();
-            if (money != null && groupRecord.MembershipFee > 0)
+            // GridGate: a money module that never charges leaves joins as OpenSim has them
+            if (!FeeHolds.Charges(money))
+                money = null;
+            // Someone who is a member already pays nothing again (the reply says the join worked), and only one paid join of
+            // theirs to a group goes on at a time.
+            IFeeHold fee = null;
+            // GridGate: with money on, a group whose record can't be read has no known fee: nobody joins it free
+            if (groupRecord == null && money != null)
             {
-                // do the transaction, that is if the agent has sufficient funds
-                if (!money.AmountCovered(GetRequestingAgentID(remoteClient), groupRecord.MembershipFee)) {
-                    remoteClient.SendCreateGroupReply(UUID.Zero, false, "You have insufficient funds to join the group.");
-                    return;
+                remoteClient.SendCreateGroupReply(UUID.Zero, false, "You can't join the group right now: its details couldn't be read. Please try again in a moment.");
+                remoteClient.SendJoinGroupReply(groupID, false);
+                return;
+            }
+            bool paid = money != null && groupRecord != null && groupRecord.MembershipFee > 0;
+            bool added;
+            if (paid && !m_joinsInProgress.TryBegin(agentID, groupID))
+                return; // the join already going on answers for both
+            try
+            {
+                if (paid)
+                {
+                    if (m_groupData.GetAgentGroupMembership(agentID, agentID, groupID) != null)
+                    {
+                        remoteClient.SendJoinGroupReply(groupID, true);
+                        return;
+                    }
+
+                    // GridGate: a join charges no more than the fee the viewer was shown; a higher fee, or none shown, is
+                    // refused with the current fee, and the next click pays it.
+                    if (!m_shownJoinFees.MayCharge(agentID, groupID, groupRecord.MembershipFee))
+                    {
+                        remoteClient.SendAlertMessage(string.Format("The fee to join this group is now {0}, not the one shown. Click Join again to pay it.", groupRecord.MembershipFee));
+                        remoteClient.SendJoinGroupReply(groupID, false);
+                        return;
+                    }
+
+                    // GridGate: the group is named by its id, which finds its founder
+                    fee = FeeHolds.Take(money, agentID, groupRecord.MembershipFee, MoneyTransactionType.GroupJoin, groupID.ToString());
+                    if (fee == null)
+                    {
+                        remoteClient.SendCreateGroupReply(UUID.Zero, false, "You have insufficient funds to join the group.");
+                        return;
+                    }
                 }
-                money.ApplyCharge(GetRequestingAgentID(remoteClient), groupRecord.MembershipFee, MoneyTransactionType.GroupJoin, groupRecord.GroupName);
+
+                // Should check to see if OpenEnrollment, or if there's an outstanding invitation
+                added = AddMemberAndSettle(agentID, agentID, groupID, UUID.Zero, fee);
+            }
+            finally
+            {
+                if (paid)
+                    m_joinsInProgress.End(agentID, groupID);
+            }
+
+            if (!added)
+            {
+                remoteClient.SendJoinGroupReply(groupID, false);
+                return;
             }
 
             remoteClient.SendJoinGroupReply(groupID, true);
 
             SendAgentGroupDataUpdate(remoteClient, true);
+        }
+
+        /// <summary>
+        /// GridGate: adds the member, then settles their held join fee: taken once they are a member, given back otherwise
+        /// (this connector's AddAgentToGroup says nothing of how it went). Without a fee nothing is checked, as before.
+        /// </summary>
+        private bool AddMemberAndSettle(UUID requestingAgentID, UUID agentID, UUID groupID, UUID roleID, IFeeHold fee)
+        {
+            bool added = false;
+            try
+            {
+                m_groupData.AddAgentToGroup(requestingAgentID, agentID, groupID, roleID);
+                added = fee == null || m_groupData.GetAgentGroupMembership(requestingAgentID, agentID, groupID) != null;
+            }
+            finally
+            {
+                fee?.Settle(added);
+            }
+            return added;
         }
 
         public void LeaveGroupRequest(IClientAPI remoteClient, UUID groupID)
@@ -1444,6 +1596,10 @@ namespace OpenSim.Region.OptionalModules.Avatar.XmlRpcGroups
 
             if (inviteInfo != null)
             {
+                // GridGate: the fee the invitation shows is remembered, so accepting charges no more than that.
+                int fee = JoinFeeOnAccept(m_groupData.GetGroupRecord(agentID, groupID, null));
+                m_joinFeeOffers.Remember(InviteID, fee);
+
                 if (m_msgTransferModule != null)
                 {
                     Guid inviteUUID = InviteID.Guid;
@@ -1458,18 +1614,72 @@ namespace OpenSim.Region.OptionalModules.Avatar.XmlRpcGroups
                     //msg.timestamp = (uint)Util.UnixTimeSinceEpoch();
                     msg.timestamp = 0;
                     msg.fromAgentName = agentName;
-                    msg.message = string.Format("{0} has invited you to join a group. There is no cost to join this group.", agentName);
+                    // GridGate: accepting pays the join fee now, so a paid group's invitation says what it costs and puts the
+                    // fee and the role the accept gives in the bucket, where viewers read them to ask before the invitee
+                    // pays. A free group's invitation is as OpenSim sent it.
+                    msg.message = fee > 0
+                        ? string.Format("{0} has invited you to join a group. There is a fee of {1} to join this group.", agentName, fee)
+                        : string.Format("{0} has invited you to join a group. There is no cost to join this group.", agentName);
                     msg.dialog = (byte)OpenMetaverse.InstantMessageDialog.GroupInvitation;
                     msg.fromGroup = true;
                     msg.offline = (byte)0;
                     msg.ParentEstateID = 0;
                     msg.Position = Vector3.Zero;
                     msg.RegionID = regionInfo.RegionID.Guid;
-                    msg.binaryBucket = new byte[20];
+                    msg.binaryBucket = InvitationBucket(fee, inviteInfo.RoleID);
 
                     OutgoingInstantMessage(msg, invitedAgentID);
                 }
             }
+        }
+
+        /// <summary>
+        /// GridGate: asks the invitee again, for the same invitation, at the fee the group charges now: an accept found it
+        /// higher than the one shown, or not known. Accepting this one agrees to it.
+        /// </summary>
+        private void SendFeeOffer(UUID inviteID, GroupRecord group, UUID roleID, UUID invitee, int fee)
+        {
+            GridInstantMessage msg = new GridInstantMessage();
+            msg.imSessionID = inviteID.Guid;
+            msg.fromAgentID = group.GroupID.Guid;
+            msg.toAgentID = invitee.Guid;
+            msg.timestamp = 0;
+            msg.fromAgentName = group.GroupName;
+            msg.message = string.Format("The fee to join {0} is now {1}. There is a fee of {1} to join this group.", group.GroupName, fee);
+            msg.dialog = (byte)OpenMetaverse.InstantMessageDialog.GroupInvitation;
+            msg.fromGroup = true;
+            msg.offline = (byte)0;
+            msg.ParentEstateID = 0;
+            msg.Position = Vector3.Zero;
+            msg.RegionID = m_sceneList[0].RegionInfo.RegionID.Guid;
+            msg.binaryBucket = InvitationBucket(fee, roleID);
+            OutgoingInstantMessage(msg, invitee);
+        }
+
+        /// <summary>
+        /// GridGate: what accepting an invitation to <paramref name="group"/> charges: its join fee while a money module
+        /// is loaded (the accept takes it then), otherwise nothing.
+        /// </summary>
+        private int JoinFeeOnAccept(GroupRecord group)
+        {
+            if (group == null || group.MembershipFee <= 0 || !FeeHolds.Charges(m_sceneList[0].RequestModuleInterface<IMoneyModule>()))
+                return 0;
+            return group.MembershipFee;
+        }
+
+        /// <summary>
+        /// GridGate: an invitation's binary bucket as viewers read it: the join fee as a 4-byte signed number, high byte
+        /// first, then the 16-byte role the invitation gives. All zeros for a free group, as OpenSim sent it.
+        /// </summary>
+        private static byte[] InvitationBucket(int fee, UUID roleID)
+        {
+            byte[] bucket = new byte[20];
+            if (fee > 0)
+            {
+                System.Buffers.Binary.BinaryPrimitives.WriteInt32BigEndian(bucket, fee);
+                roleID.ToBytes(bucket, 4);
+            }
+            return bucket;
         }
 
         public List<DirGroupsReplyData> FindGroups(IClientAPI remoteClient, string query)

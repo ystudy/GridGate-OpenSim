@@ -37,13 +37,16 @@ public sealed partial class MoneyLedger(
             return new MoneyResult(MoneyOutcome.Ok, account.Balance);
         }, ct);
 
-    /// <summary>One avatar paying another (or an object's owner).</summary>
+    /// <summary>One avatar paying another (or an object's owner), within the payer's and the key's daily limits.</summary>
     public Task<MoneyResult> TransferAsync(TransferRequest r, CancellationToken ct)
     {
         if (!AmountOk(r.Amount)) return Task.FromResult(MoneyResult.Of(MoneyOutcome.BadAmount));
         if (Same(r.From, r.To)) return Task.FromResult(MoneyResult.Of(MoneyOutcome.NotAllowed));
-        return Idempotent(r.TxnId, "transfer", r, (conn, tx) =>
-            MoveAsync(conn, tx, r.From, r.To, r.Amount, new Entry(r.Type, r.RegionId, r.ObjectId, r.ObjectName), ct), ct);
+        return Idempotent(r.TxnId, "transfer", r, async (conn, tx) =>
+        {
+            if (r.KeyId is { } key) await LockKeyAsync(conn, tx, key, ct);
+            return await MoveAsync(conn, tx, r.From, r.To, r.Amount, new Entry(r.Type, r.RegionId, r.ObjectId, r.ObjectName, KeyId: r.KeyId), ct);
+        }, ct);
     }
 
     // ---------------------------------------------------------------------------------------------------------------
@@ -59,7 +62,8 @@ public sealed partial class MoneyLedger(
         string? Reason = null,
         string? PaymentRef = null,
         long? Reverses = null,
-        long? HoldId = null);
+        long? HoldId = null,
+        string? KeyId = null);
 
     private bool AmountOk(long amount) => amount > 0 && amount <= settings().MaxPayment;
 
@@ -74,7 +78,7 @@ public sealed partial class MoneyLedger(
     /// </summary>
     private const string UnreadableHome = "system:unreadable";
 
-    /// <summary>Resolves both accounts and moves the coins from <paramref name="from"/> to <paramref name="to"/>, guarded.</summary>
+    /// <summary>Resolves both accounts and moves the coins from <paramref name="from"/> to <paramref name="to"/>, guarded and within the daily limits.</summary>
     private async Task<MoneyResult> MoveAsync(MySqlConnection conn, MySqlTransaction tx, AccountRef from, AccountRef to, long amount, Entry entry, CancellationToken ct)
     {
         if (await GridFrozenAsync(conn, tx, ct)) return MoneyResult.Of(MoneyOutcome.Frozen);
@@ -82,17 +86,19 @@ public sealed partial class MoneyLedger(
         if (payer is null) return MoneyResult.Of(r1);
         var (payee, r2) = await ResolveAsync(conn, tx, to, ct);
         if (payee is null) return MoneyResult.Of(r2);
-        return await MoveBetweenAsync(conn, tx, payer.Id, payee.Id, amount, entry, guarded: true, ct);
+        return await MoveBetweenAsync(conn, tx, payer.Id, payee.Id, amount, entry, guarded: true, ct, limited: true);
     }
 
     /// <summary>
     /// Locks both accounts in id order, applies any allowance due, then debits (guarded unless <paramref name="guarded"/> is
     /// false: settling a hold), credits and writes the entry. <paramref name="staffTakes"/> is staff taking coins back or
     /// refunding: the balance is still checked, but a frozen account isn't refused, since freezing an account is how staff
-    /// stop it spending while they claw coins back (money review 2026-11-15, L-7).
+    /// stop it spending while they claw coins back. <paramref name="limited"/> is a region
+    /// spending from the payer: it must fit the payer's daily limit and, with <see cref="Entry.KeyId"/>, the key's, checked
+    /// once both accounts are locked (and the key before them).
     /// </summary>
     private async Task<MoneyResult> MoveBetweenAsync(MySqlConnection conn, MySqlTransaction tx, long fromId, long toId, long amount, Entry entry, bool guarded, CancellationToken ct,
-        bool staffTakes = false)
+        bool staffTakes = false, bool limited = false)
     {
         var first = await LockAsync(conn, tx, Math.Min(fromId, toId), ct);
         var second = await LockAsync(conn, tx, Math.Max(fromId, toId), ct);
@@ -102,6 +108,8 @@ public sealed partial class MoneyLedger(
         if (guarded)
         {
             if (payer.Frozen && !staffTakes) return MoneyResult.Of(MoneyOutcome.AccountFrozen);
+            if (limited && await SpendAllowedAsync(conn, tx, payer.Id, entry.KeyId, amount, ct) is not MoneyOutcome.Ok and var over)
+                return MoneyResult.Of(over);
             var debited = await ExecAsync(conn, tx,
                 "UPDATE accounts SET balance = balance - @amt WHERE id = @id AND (frozen = 0 OR @staff) AND (kind = 'Bank' OR balance >= @amt)",
                 ct, ("@amt", amount), ("@id", payer.Id), ("@staff", staffTakes));
@@ -121,8 +129,8 @@ public sealed partial class MoneyLedger(
     private async Task<long> WriteEntryAsync(MySqlConnection conn, MySqlTransaction tx, long fromId, long toId, long amount, long fromAfter, long toAfter, Entry e, CancellationToken ct)
     {
         await using var cmd = new MySqlCommand("""
-            INSERT INTO entries (at, type, from_id, to_id, amount, from_after, to_after, region_id, object_id, object_name, staff, reason, payment_ref, reverses, hold_id)
-            VALUES (@at, @type, @from, @to, @amt, @fa, @ta, @region, @object, @name, @staff, @reason, @ref, @rev, @hold)
+            INSERT INTO entries (at, type, from_id, to_id, amount, from_after, to_after, region_id, object_id, object_name, staff, reason, payment_ref, reverses, hold_id, key_id)
+            VALUES (@at, @type, @from, @to, @amt, @fa, @ta, @region, @object, @name, @staff, @reason, @ref, @rev, @hold, @key)
             """, conn, tx);
         cmd.Parameters.AddWithValue("@at", Now);
         cmd.Parameters.AddWithValue("@type", e.Type);
@@ -139,6 +147,7 @@ public sealed partial class MoneyLedger(
         cmd.Parameters.AddWithValue("@ref", Trim(e.PaymentRef, 128));
         cmd.Parameters.AddWithValue("@rev", e.Reverses);
         cmd.Parameters.AddWithValue("@hold", e.HoldId);
+        cmd.Parameters.AddWithValue("@key", e.KeyId);
         await cmd.ExecuteNonQueryAsync(ct);
         return cmd.LastInsertedId;
     }
@@ -158,9 +167,13 @@ public sealed partial class MoneyLedger(
         if (who.AgentId == Guid.Empty || home.StartsWith("system:", StringComparison.Ordinal) || home.Length > 255)
             return (null, MoneyOutcome.NoWallet);
         var resident = home.Length == 0;
-        var visitorsOn = settings().VisitorWallets;
-        if (!resident && !visitorsOn && !staff)
-            return (null, MoneyOutcome.VisitorsOff);
+        var s = settings();
+        var visitorsOn = s.EffectiveVisitors != VisitorMoney.Off;
+        if (!resident && !staff)
+        {
+            if (!visitorsOn) return (null, MoneyOutcome.VisitorsOff);
+            if (s.EffectiveVisitors == VisitorMoney.Listed && !s.GridListed(home)) return (null, MoneyOutcome.VisitorGridNotListed);
+        }
 
         if (await FindAsync(conn, tx, who.AgentId, home, ct) is { } found)
             return (found, MoneyOutcome.Ok);
@@ -234,7 +247,7 @@ public sealed partial class MoneyLedger(
     /// </summary>
     private Task<MoneyResult> Idempotent(Guid txnId, string op, object request, Func<MySqlConnection, MySqlTransaction, Task<MoneyResult>> work, CancellationToken ct)
     {
-        var fingerprint = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(op + "\n" + JsonSerializer.Serialize(request))));
+        var fingerprint = Fingerprint(op, request);
         return RunAsync(async (conn, tx) =>
         {
             if (await StoredAsync(conn, tx, txnId, ct) is { } earlier)
@@ -245,6 +258,80 @@ public sealed partial class MoneyLedger(
                     ct, ("@txn", txnId.ToString()), ("@op", op), ("@fp", fingerprint), ("@resp", JsonSerializer.Serialize(result)), ("@now", Now));
             return result;
         }, ct, (txnId, fingerprint));
+    }
+
+    /// <summary>One operation and all its values, as <see cref="Idempotent"/> stores them.</summary>
+    private static string Fingerprint(string op, object request)
+    {
+        // Not by which key asked: a computer's transaction ids are the same under each key it has had, so a retry that spans a
+        // re-pairing is the same request. (Ids of two keys that aren't one computer never meet: the service scopes them apart.)
+        object unkeyed = request switch
+        {
+            TransferRequest t => t with { KeyId = null },
+            PayoutRequest p => p with { KeyId = null },
+            ChargeRequest c => c with { KeyId = null },
+            HoldRequest h => h with { KeyId = null },
+            _ => request,
+        };
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(op + "\n" + JsonSerializer.Serialize(unkeyed))));
+    }
+
+    /// <summary>
+    /// Drops the stored answers older than <see cref="MoneyRules.RequestKeep"/>; how many. A retry of a payment older than that
+    /// is not a retry. Done in slices so a long backlog never holds the table. A database failure is <see cref="MoneyUnavailableException"/>.
+    /// </summary>
+    public async Task<int> PruneRequestsAsync(CancellationToken ct)
+    {
+        var dropped = 0;
+        try
+        {
+            await using var conn = await open(ct);
+            while (true)
+            {
+                await using var cmd = new MySqlCommand("DELETE FROM requests WHERE at < @cutoff LIMIT 2000", conn);
+                cmd.Parameters.AddWithValue("@cutoff", Now - MoneyRules.RequestKeep);
+                var n = await cmd.ExecuteNonQueryAsync(ct);
+                dropped += n;
+                if (n < 2000) return dropped;
+            }
+        }
+        catch (Exception e) when (e is MySqlException or TimeoutException or InvalidOperationException)
+        {
+            throw new MoneyUnavailableException(e);
+        }
+    }
+
+    /// <summary>
+    /// The stored Ok answer for this transfer's id when the operation and every value match; null otherwise or when the
+    /// database fails. Lets the service answer a repeat before checks that may no longer pass (the payer moved on, the
+    /// region lost its verification) although the first attempt went through.
+    /// </summary>
+    public Task<MoneyResult?> EarlierAsync(TransferRequest r, CancellationToken ct) => EarlierAsync(r.TxnId, "transfer", r, ct);
+
+    /// <inheritdoc cref="EarlierAsync(TransferRequest, CancellationToken)"/>
+    public Task<MoneyResult?> EarlierAsync(PayoutRequest r, CancellationToken ct) => EarlierAsync(r.TxnId, "payout", r, ct);
+
+    /// <inheritdoc cref="EarlierAsync(TransferRequest, CancellationToken)"/>
+    public Task<MoneyResult?> EarlierAsync(ChargeRequest r, CancellationToken ct) => EarlierAsync(r.TxnId, "charge", r, ct);
+
+    /// <inheritdoc cref="EarlierAsync(TransferRequest, CancellationToken)"/>
+    public Task<MoneyResult?> EarlierAsync(HoldRequest r, CancellationToken ct) => EarlierAsync(r.TxnId, "hold", r, ct);
+
+    /// <inheritdoc cref="EarlierAsync(TransferRequest, CancellationToken)"/>
+    public Task<MoneyResult?> EarlierAsync(Guid txnId, long holdId, bool complete, CancellationToken ct) =>
+        EarlierAsync(txnId, complete ? "hold_complete" : "hold_return", holdId, ct);
+
+    private async Task<MoneyResult?> EarlierAsync(Guid txnId, string op, object request, CancellationToken ct)
+    {
+        try
+        {
+            await using var conn = await open(ct);
+            return await StoredAsync(conn, null, txnId, ct) is { } stored && stored.Fingerprint == Fingerprint(op, request) ? stored.Result : null;
+        }
+        catch (Exception e) when (e is MySqlException or TimeoutException or InvalidOperationException)
+        {
+            return null;
+        }
     }
 
     private static async Task<(string Fingerprint, MoneyResult Result)?> StoredAsync(MySqlConnection conn, MySqlTransaction? tx, Guid txnId, CancellationToken ct)
@@ -271,10 +358,32 @@ public sealed partial class MoneyLedger(
                 await using var conn = await open(ct);
                 await using var tx = await conn.BeginTransactionAsync(IsolationLevel.ReadCommitted, ct);
                 var result = await work(conn, tx);
-                if (result.Outcome == MoneyOutcome.Ok)
-                    await tx.CommitAsync(ct);
-                else
+                if (result.Outcome != MoneyOutcome.Ok)
+                {
                     await tx.RollbackAsync(ct);
+                    return result;
+                }
+                try
+                {
+                    await CommitForTests(tx, ct);
+                }
+                catch (Exception e) when (e is MySqlException or TimeoutException or InvalidOperationException)
+                {
+                    // The commit may have landed before the connection failed: look the transaction up again. The failed
+                    // transaction and connection close first. While the session is still up, that puts a commit the server is still
+                    // finishing ahead of the lookup; after a timeout or a broken connection the server may still be finishing it, so
+                    // a lookup that finds nothing proves nothing: that answers outcome unknown, never "nothing moved".
+                    try
+                    {
+                        await tx.DisposeAsync();
+                        await conn.DisposeAsync();
+                    }
+                    catch (Exception closing) when (closing is MySqlException or TimeoutException or InvalidOperationException)
+                    {
+                        // Closing a broken connection may fail; the lookup below uses a new one.
+                    }
+                    return await AfterFailedCommitAsync(txn, ct);
+                }
                 return result;
             }
             catch (MySqlException e) when (e.Number is ErDeadlock or ErLockWaitTimeout or ErCheckRead && attempt < DeadlockRetries)
@@ -287,10 +396,34 @@ public sealed partial class MoneyLedger(
                     ? stored.Fingerprint == t.Fingerprint ? stored.Result : MoneyResult.Of(MoneyOutcome.DuplicateTxn)
                     : MoneyResult.Unavailable;
             }
-            catch (Exception e) when (e is MySqlException or TimeoutException or InvalidOperationException { Source: "MySqlConnector" })
+            catch (Exception e) when (e is MySqlException or TimeoutException or InvalidOperationException)
             {
                 return MoneyResult.Unavailable;
             }
+        }
+    }
+
+    /// <summary>Test-only: what runs the commit, so a test can make it fail after it landed or before.</summary>
+    internal Func<MySqlTransaction, CancellationToken, Task> CommitForTests { get; set; } = (tx, ct) => tx.CommitAsync(ct);
+
+    /// <summary>
+    /// What a failed commit answers. The commit may have landed, so the stored answer for the transaction id is read on a
+    /// fresh connection: found, that answer. Not found, a failed read, or no transaction id to look up are all
+    /// <see cref="MoneyOutcome.OutcomeUnknown"/>: the server may still be finishing the commit, so "nothing found" doesn't mean nothing moved.
+    /// </summary>
+    private async Task<MoneyResult> AfterFailedCommitAsync((Guid Id, string Fingerprint)? txn, CancellationToken ct)
+    {
+        if (txn is not { } t) return MoneyResult.Of(MoneyOutcome.OutcomeUnknown);
+        try
+        {
+            await using var conn = await open(ct);
+            return await StoredAsync(conn, null, t.Id, ct) is { } stored
+                ? stored.Fingerprint == t.Fingerprint ? stored.Result : MoneyResult.Of(MoneyOutcome.DuplicateTxn)
+                : MoneyResult.Of(MoneyOutcome.OutcomeUnknown);
+        }
+        catch (Exception e) when (e is MySqlException or TimeoutException or InvalidOperationException)
+        {
+            return MoneyResult.Of(MoneyOutcome.OutcomeUnknown);
         }
     }
 
