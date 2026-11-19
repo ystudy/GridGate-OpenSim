@@ -19,6 +19,16 @@ namespace OpenSim.Framework
         IFeeHold HoldFee(UUID agentID, int amount, MoneyTransactionType type, string extraData = "");
     }
 
+    /// <summary>
+    /// GridGate: a money module that can say whether it knows the upload fee yet (it learns it from a money service that may
+    /// not have answered). While it doesn't, <see cref="IMoneyModule.UploadCharge"/> reads 0, which must not be taken for
+    /// "uploads are free": a caps upload request is refused, and so are item updates carrying texture or sound data.
+    /// </summary>
+    public interface IUploadFeeKnown
+    {
+        bool UploadFeeKnown { get; }
+    }
+
     /// <summary>GridGate: a fee held before its action.</summary>
     public interface IFeeHold
     {

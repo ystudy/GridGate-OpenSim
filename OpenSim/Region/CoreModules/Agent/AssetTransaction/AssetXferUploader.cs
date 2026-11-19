@@ -627,7 +627,8 @@ namespace OpenSim.Region.CoreModules.Agent.AssetTransaction
         private bool StoreUploaded()
         {
             IFeeHold fee = null;
-            if (!m_charged && !m_asset.Temporary && (m_feeDue || UploadData.IsTextureOrSound(m_asset.Data)))
+            // GridGate: texture, sound or animation data pays the fee whatever type it claims
+            if (!m_charged && !m_asset.Temporary && (m_feeDue || UploadData.IsFeeData(m_asset.Data)))
             {
                 IMoneyModule mm = m_Scene.RequestModuleInterface<IMoneyModule>();
                 if (mm is not null && mm.UploadCharge > 0)

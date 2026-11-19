@@ -44,13 +44,27 @@ public sealed class ParcelBuyLimitTests
     }
 
     [Fact]
-    public void Forget_drops_an_agent()
+    public void A_closed_client_keeps_its_count_until_it_expires()
     {
         var limit = Limit();
         for (var i = 0; i < ParcelBuyLimit.PerWindow; i++) limit.TryTake(A);
 
+        limit.Forget(A); // the client closed (a teleport out and back)
+
+        Assert.False(limit.TryTake(A));
+        Assert.Equal(1, limit.Count);
+    }
+
+    [Fact]
+    public void A_closed_clients_entry_is_dropped_once_it_has_expired()
+    {
+        var limit = Limit();
+        for (var i = 0; i < ParcelBuyLimit.PerWindow; i++) limit.TryTake(A);
+        _time.Advance(ParcelBuyLimit.Window + TimeSpan.FromSeconds(1));
+
         limit.Forget(A);
 
+        Assert.Equal(0, limit.Count);
         Assert.True(limit.TryTake(A));
     }
 

@@ -485,6 +485,22 @@ namespace OpenSim.Region.ClientStack.Linden
                     nreqinstances = llsdRequest.asset_resources?.instance_list?.Array.Count ?? 0;
                 }
 
+                // GridGate: a money module that doesn't know the upload fee yet reads it as 0: answer with an error, not a price of 0
+                if (m_Scene.RequestModuleInterface<IMoneyModule>() is IUploadFeeKnown { UploadFeeKnown: false })
+                {
+                    LLSDAssetUploadError feeUnknown = new LLSDAssetUploadError();
+                    feeUnknown.message = "The upload fee isn't known yet. Please try again in a minute.";
+                    feeUnknown.identifier = UUID.Zero;
+
+                    LLSDAssetUploadResponse feeUnknownResponse = new LLSDAssetUploadResponse();
+                    feeUnknownResponse.uploader = "";
+                    feeUnknownResponse.state = "error";
+                    feeUnknownResponse.error = feeUnknown;
+                    lock (m_ModelCost)
+                        m_FileAgentInventoryState = FileAgentInventoryState.idle;
+                    return feeUnknownResponse;
+                }
+
                 // check test upload and funds
                 if (client is not null)
                 {
@@ -664,9 +680,9 @@ namespace OpenSim.Region.ClientStack.Linden
             // charged a second time.
             IFeeHold fee = null;
             IMoneyModule mm = m_Scene.RequestModuleInterface<IMoneyModule>();
-            // GridGate: texture or sound data pays the upload fee whatever type the viewer declared (a texture uploaded as
-            // clothing was free): such data that was priced at 0 is held at the plain upload fee.
-            if (mm != null && !istest && cost == 0 && mm.UploadCharge > 0 && UploadData.IsTextureOrSound(data))
+            // GridGate: texture, sound or animation data pays the upload fee whatever type the viewer declared (a texture
+            // uploaded as clothing was free): such data that was priced at 0 is held at the plain upload fee.
+            if (mm != null && !istest && cost == 0 && mm.UploadCharge > 0 && UploadData.IsFeeData(data))
                 cost = mm.UploadCharge;
             if (mm != null)
             {
@@ -691,12 +707,54 @@ namespace OpenSim.Region.ClientStack.Linden
             try
             {
                 StoreUpload(assetName, assetDescription, assetID, inventoryItem, parentFolder, data, inventoryType, assetType,
-                    fee == null ? cost : 0, texturesFolder, nreqtextures, nreqmeshs, nreqinstances, istest, restrictPerms, creatorID,
+                    fee == null ? cost : 0, cost, texturesFolder, nreqtextures, nreqmeshs, nreqinstances, istest, restrictPerms, creatorID,
                     creatorIDstr, owner_id, ref nextOwnerMask, ref groupMask, ref everyoneMask, meshesSides, ref error, ref stored);
             }
             finally
             {
                 fee?.Settle(stored);
+            }
+        }
+
+        /// <summary>
+        /// GridGate: prices an uploaded model again with the formula the quote used, from the data that arrived instead of
+        /// the numbers in the request (mesh byte sizes, texture, mesh and instance counts). True when it costs more than
+        /// <paramref name="quotedCost"/>, or when it can't be priced at all: a model that was quoted could be priced.
+        /// False when there is no upload fee.
+        /// </summary>
+        private bool ModelCostsMoreThanQuoted(OSDMap request, int quotedCost)
+        {
+            IMoneyModule mm = m_Scene.RequestModuleInterface<IMoneyModule>();
+            if (mm is null || mm.UploadCharge <= 0)
+                return false;
+
+            try
+            {
+                LLSDAssetResource resources = new LLSDAssetResource();
+                foreach (OSD texture in (OSDArray)request["texture_list"])
+                    resources.texture_list.Array.Add(texture.AsBinary());
+                foreach (OSD mesh in (OSDArray)request["mesh_list"])
+                    resources.mesh_list.Array.Add(mesh.AsBinary());
+                foreach (OSD item in (OSDArray)request["instance_list"])
+                {
+                    OSDMap instance = (OSDMap)item;
+                    Hashtable priced = new Hashtable();
+                    OSDArray scale = (OSDArray)instance["scale"];
+                    priced["scale"] = new ArrayList { scale[0].AsReal(), scale[1].AsReal(), scale[2].AsReal() };
+                    priced["mesh_name"] = instance.TryGetValue("mesh_name", out OSD meshName) ? meshName.AsString() : string.Empty;
+                    if (instance.TryGetValue("mesh", out OSD meshIndex))
+                        priced["mesh"] = meshIndex.AsInteger();
+                    resources.instance_list.Array.Add(priced);
+                }
+
+                string warning = string.Empty;
+                LLSDAssetUploadResponseData breakdown = new LLSDAssetUploadResponseData();
+                return !m_ModelCost.MeshModelCost(resources, mm.UploadCharge, out int uploadedCost, breakdown, out _, ref warning, out _)
+                    || uploadedCost > quotedCost;
+            }
+            catch (Exception)
+            {
+                return true;
             }
         }
 
@@ -738,7 +796,7 @@ namespace OpenSim.Region.ClientStack.Linden
         /// anything.
         /// </summary>
         private void StoreUpload(string assetName, string assetDescription, UUID assetID, UUID inventoryItem, UUID parentFolder,
-            byte[] data, string inventoryType, string assetType, int cost, UUID texturesFolder, int nreqtextures, int nreqmeshs,
+            byte[] data, string inventoryType, string assetType, int cost, int quotedCost, UUID texturesFolder, int nreqtextures, int nreqmeshs,
             int nreqinstances, bool istest, bool restrictPerms, UUID creatorID, string creatorIDstr, UUID owner_id,
             ref int nextOwnerMask, ref int groupMask, ref int everyoneMask, int[] meshesSides, ref string error, ref bool stored)
         {
@@ -788,6 +846,15 @@ namespace OpenSim.Region.ClientStack.Linden
                     // before anything is stored (the held fee is given back), so a viewer can't pay for a small model and
                     // upload a big one.
                     if (texture_list.Count > nreqtextures || mesh_list.Count > nreqmeshs || instance_list.Count > nreqinstances)
+                    {
+                        error = "Upload and fee estimation information don't match";
+                        lock (m_ModelCost)
+                            m_FileAgentInventoryState = FileAgentInventoryState.idle;
+                        return;
+                    }
+                    // GridGate: the fee is worked out again from the data that arrived (mesh sizes and counts, as the quote was)
+                    // and a model that costs more than was quoted and held is refused before anything is stored.
+                    if (!istest && ModelCostsMoreThanQuoted(request, quotedCost))
                     {
                         error = "Upload and fee estimation information don't match";
                         lock (m_ModelCost)

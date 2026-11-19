@@ -90,6 +90,33 @@ public sealed class ItemUpdateFeeTests
         Assert.DoesNotContain(UploadData.ItemUpdateRefusedText, client.Alerts);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Before_the_fee_is_known_texture_or_sound_data_in_an_item_update_is_refused(bool sound)
+    {
+        var (region, client) = Region();
+        var item = AddItem(region, AssetType.Notecard, InventoryType.Notecard, FolderType.Notecard);
+        region.ForgetEconomy();
+
+        var result = region.Scene.CapsUpdateItemAsset(Buyer, item.ID, UUID.Zero, sound ? SoundData : TextureData);
+
+        AssertRefusedAndUnchanged(region, client, result, item, UUID.Zero);
+    }
+
+    [Fact]
+    public void Before_the_fee_is_known_a_notecards_text_can_still_be_updated()
+    {
+        var (region, client) = Region();
+        var item = AddItem(region, AssetType.Notecard, InventoryType.Notecard, FolderType.Notecard);
+        region.ForgetEconomy();
+
+        var result = region.Scene.CapsUpdateItemAsset(Buyer, item.ID, UUID.Zero, NotecardData);
+
+        Assert.NotEqual(UUID.Zero, result);
+        Assert.DoesNotContain(UploadData.ItemUpdateRefusedText, client.Alerts);
+    }
+
     [Fact]
     public void Without_an_upload_fee_texture_data_posted_as_a_notecard_update_is_stored_as_before()
     {

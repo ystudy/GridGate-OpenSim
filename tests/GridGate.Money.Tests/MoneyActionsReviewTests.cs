@@ -87,6 +87,68 @@ public sealed class MoneyActionsReviewTests
         Assert.Equal("Money is unavailable right now. Please try again later.", Assert.Single(_view.Told).Text);
     }
 
+    [Fact]
+    public async Task A_land_hold_that_arrives_after_the_limit_is_returned_to_the_buyer()
+    {
+        var release = new TaskCompletionSource();
+        _service.Gate = m => m == "hold" ? release.Task : Task.CompletedTask;
+        _service.Answer = m => m == "hold" ? new MoneyAnswer("ok", 50, null, 1, 7) : new MoneyAnswer("ok", 100, 0, 2, 7);
+
+        Assert.Null(await _actions.HoldLandAsync(A, SellerWho, 50, 3, TimeSpan.FromMilliseconds(100)));
+        Assert.Empty(_service.Of("return"));
+        release.SetResult();
+
+        var returned = await Eventually(() => _service.Of("return").FirstOrDefault());
+        Assert.Equal(7L, returned.Args[0]);
+        Assert.Empty(_service.Of("complete"));
+        Assert.DoesNotContain(_view.Pushed, p => p.Balance == 50); // the buyer never saw the held balance as theirs to keep
+    }
+
+    [Fact]
+    public async Task A_land_hold_that_arrives_late_without_a_hold_returns_nothing()
+    {
+        var release = new TaskCompletionSource();
+        _service.Gate = m => m == "hold" ? release.Task : Task.CompletedTask;
+        _service.Answer = _ => new MoneyAnswer("not_enough");
+
+        Assert.Null(await _actions.HoldLandAsync(A, SellerWho, 50, 3, TimeSpan.FromMilliseconds(100)));
+        release.SetResult();
+        await Task.Delay(200, TestContext.Current.CancellationToken);
+
+        Assert.Empty(_service.Of("return"));
+    }
+
+    [Fact]
+    public async Task Land_holds_fail_fast_for_thirty_seconds_after_one_ran_out_of_time()
+    {
+        var time = new Microsoft.Extensions.Time.Testing.FakeTimeProvider();
+        var actions = new MoneyActions(_service, Region, () => new EconomyInfo("C$", 0, 0, true, true, 1_000_000), _view) { Time = time };
+        _service.Gate = _ => new TaskCompletionSource().Task;
+        Assert.False(actions.LandPaused);
+
+        Assert.Null(await actions.HoldLandAsync(A, SellerWho, 50, 3, TimeSpan.FromMilliseconds(100)));
+
+        Assert.True(actions.LandPaused);
+        var calls = _service.Of("hold").Count();
+        Assert.Null(await actions.HoldLandAsync(B, SellerWho, 50, 4, TimeSpan.FromMilliseconds(100)));
+        Assert.Equal(calls, _service.Of("hold").Count());
+        time.Advance(TimeSpan.FromSeconds(29));
+        Assert.True(actions.LandPaused);
+        time.Advance(TimeSpan.FromSeconds(2));
+        Assert.False(actions.LandPaused);
+    }
+
+    private static async Task<T> Eventually<T>(Func<T?> read) where T : class
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (read() is not { } found)
+        {
+            Assert.True(DateTime.UtcNow < deadline, "It never happened.");
+            await Task.Delay(10, TestContext.Current.CancellationToken);
+        }
+        return read()!;
+    }
+
     [Theory]
     [InlineData("wrong_region")]
     [InlineData("unknown_hold")]

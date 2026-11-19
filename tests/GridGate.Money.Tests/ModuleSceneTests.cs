@@ -301,6 +301,123 @@ public sealed class ModuleSceneTests
     }
 
     [Fact]
+    public void A_land_hold_the_service_places_after_the_wait_is_returned_at_once()
+    {
+        var l = LandForSale(100);
+        var release = new TaskCompletionSource();
+        l.Region.Service.Gate = m => m == "hold" ? release.Task : Task.CompletedTask;
+
+        Buy(l, 100); // gives up after one and a half seconds
+        Assert.Equal(Seller, Now(l).OwnerID);
+        Assert.Empty(l.Region.Service.Of("return"));
+        release.SetResult(); // the service answers after all, with a hold
+
+        Assert.Equal(7L, l.Region.WaitFor("return").Args[0]);
+        Assert.Empty(l.Region.Service.Of("complete"));
+        Assert.Equal(Seller, Now(l).OwnerID);
+    }
+
+    [Fact]
+    public void After_a_land_hold_runs_out_of_time_land_buys_in_the_region_fail_fast()
+    {
+        var l = LandForSale(100);
+        var stranger = l.Region.Arrive(Stranger);
+        l.Region.Service.Gate = _ => new TaskCompletionSource().Task;
+        Buy(l, 100);
+        Assert.Single(l.Region.Service.Of("hold"));
+
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        Buy(l, 100, who: Stranger);
+        watch.Stop();
+
+        Assert.True(watch.Elapsed < TimeSpan.FromMilliseconds(500), $"The second buy waited {watch.Elapsed}.");
+        Assert.Single(l.Region.Service.Of("hold"));
+        stranger.WaitForAlert(MoneyRules.Message("unavailable"));
+        Assert.Equal(Seller, Now(l).OwnerID);
+    }
+
+    // --- visitors who are not here ------------------------------------------------------------------------------------
+
+    private const string TheirHome = "http://theirs.example:8002/";
+
+    private static MoneyScene VisitorRegion() =>
+        Build(beforeMoney: scene => scene.RegisterModuleInterface(CachedVisitors.Create(Stranger)));
+
+    [Fact]
+    public void An_absent_visitor_known_only_by_the_name_cache_is_not_paid_and_the_payer_is_told()
+    {
+        var region = VisitorRegion();
+        var payer = region.Arrive(Buyer);
+
+        payer.Raise(nameof(IClientAPI.OnMoneyTransferRequest), Buyer, Stranger, 5, Gift, "");
+
+        payer.WaitForAlert(MoneyRules.AbsentVisitorText);
+        Assert.Empty(region.Service.Of("transfer"));
+    }
+
+    [Fact]
+    public void A_visitor_who_is_here_is_paid_by_the_home_of_their_login()
+    {
+        var region = VisitorRegion();
+        var payer = region.Arrive(Buyer);
+        region.Arrive(Stranger, TheirHome);
+
+        payer.Raise(nameof(IClientAPI.OnMoneyTransferRequest), Buyer, Stranger, 5, Gift, "");
+
+        var transfer = region.WaitFor("transfer");
+        Assert.Equal(TheirHome, ((MoneyWho)transfer.Args[2]!).Home);
+    }
+
+    [Fact]
+    public void A_visitor_remembered_from_an_earlier_arrival_is_still_paid_after_they_leave()
+    {
+        var region = VisitorRegion();
+        var payer = region.Arrive(Buyer);
+        region.Arrive(Stranger, TheirHome);
+        region.Scene.CloseAgent(Stranger, false);
+        Assert.False(region.Scene.TryGetScenePresence(Stranger, out ScenePresence _));
+
+        payer.Raise(nameof(IClientAPI.OnMoneyTransferRequest), Buyer, Stranger, 5, Gift, "");
+
+        Assert.Equal(TheirHome, ((MoneyWho)region.WaitFor("transfer").Args[2]!).Home);
+    }
+
+    [Fact]
+    public void A_parcel_pass_to_an_absent_visitor_is_not_paid_and_the_payer_is_told()
+    {
+        var region = VisitorRegion();
+        var payer = region.Arrive(Buyer);
+
+        Assert.False(region.Module.MoveMoney(Buyer, Stranger, 5, MoneyTransactionType.LandPassSale, "pass"));
+
+        Assert.Contains(MoneyRules.AbsentVisitorText, payer.Alerts);
+        Assert.Empty(region.Service.Of("transfer"));
+    }
+
+    [Fact]
+    public void An_absent_visitor_known_only_by_the_name_cache_cannot_be_paid_by_a_script()
+    {
+        var region = VisitorRegion();
+        region.Arrive(Buyer);
+        var box = SceneHelpers.AddSceneObject(region.Scene, 1, Buyer, "Box ", 0x80);
+
+        Assert.False(region.Module.ObjectGiveMoney(box.RootPart.UUID, Buyer, Stranger, 5, UUID.Random(), out var reason));
+
+        Assert.Equal("LINDENDOLLAR_ENTITYDOESNOTEXIST", reason);
+        Assert.Empty(region.Service.Of("payout"));
+    }
+
+    [Fact]
+    public void An_absent_visitor_known_only_by_the_name_cache_cannot_be_paid_through_CanPayVisitor()
+    {
+        var region = VisitorRegion();
+        Assert.False(region.Module.CanPayVisitor(Stranger));
+
+        region.Arrive(Stranger, TheirHome);
+        Assert.True(region.Module.CanPayVisitor(Stranger));
+    }
+
+    [Fact]
     public void Buying_two_parcels_one_after_the_other_works()
     {
         var l = LandForSale(100);
@@ -696,7 +813,7 @@ public sealed class ModuleSceneTests
         // After the arrival: the scene asks a groups module for titles as an avatar arrives, which this one doesn't answer.
         region.Scene.RegisterModuleInterface(OneGroup.Create("Club", Founder));
 
-        region.Module.ApplyCharge(Buyer, 20, MoneyTransactionType.GroupJoin, "Club");
+        region.Module.ApplyCharge(Buyer, 20, MoneyTransactionType.GroupJoin, GroupId.ToString());
 
         var charge = Assert.Single(region.Service.Of("charge"));
         Assert.Equal("group_join_fee", charge.Args[0]);
@@ -713,7 +830,7 @@ public sealed class ModuleSceneTests
         region.Arrive(Buyer);
         region.Scene.RegisterModuleInterface(OneGroup.Create("Club", Founder));
 
-        region.Module.ApplyCharge(Buyer, 20, MoneyTransactionType.GroupJoin, "Another club");
+        region.Module.ApplyCharge(Buyer, 20, MoneyTransactionType.GroupJoin, Stranger.ToString());
 
         var charge = Assert.Single(region.Service.Of("charge"));
         Assert.Equal("group_join_fee", charge.Args[0]);
@@ -795,7 +912,7 @@ public sealed class ModuleSceneTests
         region.Arrive(Buyer);
         region.Scene.RegisterModuleInterface(OneGroup.Create("Club", Founder));
 
-        var fee = region.Module.HoldFee(Buyer, 20, MoneyTransactionType.GroupJoin, "Club");
+        var fee = region.Module.HoldFee(Buyer, 20, MoneyTransactionType.GroupJoin, GroupId.ToString());
 
         var hold = Assert.Single(region.Service.Of("hold"));
         Assert.Equal("group_join_fee", hold.Args[0]);
@@ -824,24 +941,30 @@ public sealed class ModuleSceneTests
     }
 
     [Fact]
-    public void Without_fee_holds_on_the_service_a_fee_is_checked_then_charged_after()
+    public void Without_fee_holds_on_the_service_every_fee_answers_unavailable()
     {
         // A service from before fee holds: no flag in its economy answer.
+        var region = Build(new EconomyInfo("C$", 10, 25, true, true, 1_000_000));
+        var client = region.Arrive(Buyer);
+        region.Service.Answer = _ => Rich;
+        region.Scene.RegisterModuleInterface(OneGroup.Create("Club", Founder));
+
+        Assert.Null(region.Module.HoldFee(Buyer, 10, MoneyTransactionType.UploadCharge));
+        Assert.Null(region.Module.HoldFee(Buyer, 25, MoneyTransactionType.ClassifiedCharge));
+        Assert.Null(region.Module.HoldFee(Buyer, 20, MoneyTransactionType.GroupJoin, MoneyScene.GroupId.ToString()));
+
+        Assert.Equal(3, client.Alerts.Count(a => a == MoneyRules.Message("unavailable")));
+        Assert.Empty(region.Service.Calls);
+    }
+
+    [Fact]
+    public void A_fee_of_nothing_is_still_due_nothing_without_fee_holds()
+    {
         var region = Build(new EconomyInfo("C$", 10, 0, true, true, 1_000_000));
         region.Arrive(Buyer);
-        region.Service.Answer = _ => Rich;
 
-        var fee = region.Module.HoldFee(Buyer, 10, MoneyTransactionType.UploadCharge);
-        lock (region.Service.Order) Assert.Equal(new[] { "balance" }, region.Service.Order);
-        fee!.Settle(true);
-        var charge = region.WaitFor("charge");
-        Assert.Equal("upload_fee", charge.Args[0]);
-        Assert.Equal(10L, charge.Args[2]);
-
-        region.Module.HoldFee(Buyer, 10, MoneyTransactionType.UploadCharge)!.Settle(false);
-        Thread.Sleep(200);
-        Assert.Single(region.Service.Of("charge"));
-        Assert.Empty(region.Service.Of("hold"));
+        Assert.NotNull(region.Module.HoldFee(Buyer, 0, MoneyTransactionType.UploadCharge));
+        Assert.Empty(region.Service.Calls);
     }
 
     [Fact]

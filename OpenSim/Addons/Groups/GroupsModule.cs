@@ -393,6 +393,13 @@ namespace OpenSim.Groups
                         IFeeHold fee = null;
                         GroupRecord group = GetGroupRecord(inviteInfo.GroupID);
                         IMoneyModule money = scene.RequestModuleInterface<IMoneyModule>();
+                        // GridGate: with money on, a group whose record can't be read has no known fee: nobody joins it free
+                        if (group == null && money != null)
+                        {
+                            if (remoteClient.AgentId == invitee)
+                                remoteClient.SendAgentAlertMessage("You can't join the group right now: its details couldn't be read. Please try again in a moment.", false);
+                            return;
+                        }
                         int current = group == null || money == null ? 0 : JoinFeeOnAccept(group);
                         // GridGate: and one paid join at a time per person and group, so two accepts can't both charge.
                         bool joinBegun = false;
@@ -432,7 +439,8 @@ namespace OpenSim.Groups
                                     return;
                                 }
 
-                                fee = FeeHolds.Take(money, remoteClient.AgentId, current, MoneyTransactionType.GroupJoin, group.GroupName);
+                                // GridGate: the group is named by its id, which finds its founder
+                                fee = FeeHolds.Take(money, remoteClient.AgentId, current, MoneyTransactionType.GroupJoin, inviteInfo.GroupID.ToString());
                                 if (fee == null)
                                 {
                                     remoteClient.SendAgentAlertMessage("Insufficient funds to join the group.", false);
@@ -1209,6 +1217,13 @@ namespace OpenSim.Groups
             // Someone who is a member already pays nothing again: the reply says the join worked. Only one paid join of
             // theirs to a group goes on at a time, so two at once can't both charge.
             IFeeHold fee = null;
+            // GridGate: with money on, a group whose record can't be read has no known fee: nobody joins it free
+            if (groupRecord == null && money != null)
+            {
+                remoteClient.SendAlertMessage("You can't join the group right now: its details couldn't be read. Please try again in a moment.");
+                remoteClient.SendJoinGroupReply(groupID, false);
+                return;
+            }
             bool paid = money != null && groupRecord.MembershipFee > 0;
             if (paid && !m_joinsInProgress.TryBegin(remoteClient.AgentId, groupID))
                 return; // the join already going on answers for both
@@ -1226,7 +1241,8 @@ namespace OpenSim.Groups
                         return;
                     }
 
-                    fee = FeeHolds.Take(money, remoteClient.AgentId, groupRecord.MembershipFee, MoneyTransactionType.GroupJoin, groupRecord.GroupName);
+                    // GridGate: the group is named by its id, which finds its founder
+                    fee = FeeHolds.Take(money, remoteClient.AgentId, groupRecord.MembershipFee, MoneyTransactionType.GroupJoin, groupID.ToString());
                     if (fee == null)
                     {
                         remoteClient.SendAlertMessage("Insufficient funds to join the group.");
