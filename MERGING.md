@@ -185,8 +185,9 @@ marked in the code with a `GridGate:` comment. When an upstream pick touches the
 | `fix(opensim): accepting a group invitation charges only a fee this program offered the invitee, and offers the fee first otherwise` | `Addons/Groups/GroupsModule.cs` (the invitation accept branch no longer falls back to the fee stored with the invitation) |
 | `fix(opensim): the animation check accepts what viewers play: any priority of -1 or more, a zero duration, an emote name of any length` | `OpenSim/Framework/UploadData.cs` (`IsAnimation`) |
 | `fix(opensim): uploads wait for a known fee in every path and say when the server isn't paired, a fee refused right after it changed is read again, and a money module that charges nothing leaves group and pass checks alone` | `OpenSim/Framework/IFeeHoldModule.cs` (`IUploadFeeKnown.UploadFeeUnknownText`, `IMoneyModuleNeverCharges`, `FeeHolds.Charges`), `AssetXferUploader.cs` (`StoreUploaded`), `AssetTransactionModule.cs` (`HandleUDPUploadRequest`), `BunchOfCaps.cs` (`NewAgentInventoryRequest`), `SampleMoneyModule.cs` (marked `IMoneyModuleNeverCharges`), `Addons/Groups/GroupsModule.cs` and `Region/OptionalModules/Avatar/XmlRpcGroups/GroupsModule.cs` (the money checks use `FeeHolds.Charges`), `LandManagementModule.cs` (`ClientParcelBuyPass`) |
+| `fix(opensim): a pass or group join charges at most the lowest price sent to the viewer in the last ten minutes, so a parcel edit or a re-sent profile can't raise it` | `OpenSim/Framework/ShownPrices.cs` (`Remember` keeps a lower price already sent), `LandObject.cs` (`SendLandProperties`: comment only) |
 
-The script changes (the six `LSL_Api.cs` rows) are tried against a real `LSL_Api` in a test region by
+The script changes (the eight `LSL_Api.cs` rows) are tried against a real `LSL_Api` in a test region by
 `tests/GridGate.Lsl.Tests`, which CI runs on Linux and Windows, and so are the places the saved-debit row marks an
 object whose script state comes from outside. After an upstream pick that touches `LSL_Api.cs` or one of those files, run
 it:

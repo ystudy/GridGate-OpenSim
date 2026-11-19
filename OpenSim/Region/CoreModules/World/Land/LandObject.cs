@@ -524,6 +524,7 @@ namespace OpenSim.Region.CoreModules.World.Land
                 m_lastSeqId = seq_id;
             }
 
+            // GridGate: note the pass price sent to this viewer; a later, higher price sent doesn't raise what a click may charge.
             ShownPassPrices.Remember(remote_client.AgentId, m_landData.GlobalID, m_landData.PassPrice);
             remote_client.SendLandProperties(seq_id,
                     snap_selection, request_result, this,
