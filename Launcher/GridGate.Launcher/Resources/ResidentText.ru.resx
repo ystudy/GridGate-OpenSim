@@ -131,7 +131,17 @@
   <data name="Legal.Privacy" xml:space="preserve"><value>Конфиденциальность</value></data>
   <data name="Legal.Cookies" xml:space="preserve"><value>Cookie</value></data>
   <data name="Home.Title" xml:space="preserve"><value>Добро пожаловать</value></data>
-  <data name="Home.Intro" xml:space="preserve"><value>Добро пожаловать. Войдите под своим аватаром, чтобы узнать, как подключиться, или создайте учётную запись, чтобы присоединиться.</value></data>
+  <data name="Home.Intro" xml:space="preserve"><value>Создайте аватар и исследуйте наш мир вместе с нами.</value></data>
+  <data name="Home.YourAccount" xml:space="preserve"><value>Ваша учётная запись</value></data>
+  <data name="Home.HowToConnect" xml:space="preserve"><value>Как подключиться</value></data>
+  <data name="Home.InWorld" xml:space="preserve"><value>Сейчас в мире</value></data>
+  <data name="Home.RegionsOnline" xml:space="preserve"><value>Регионов онлайн</value></data>
+  <data name="Home.Registered" xml:space="preserve"><value>Зарегистрировано аватаров</value></data>
+  <data name="Home.Active" xml:space="preserve"><value>Активны в этом месяце</value></data>
+  <data name="Home.NumbersLabel" xml:space="preserve"><value>Грид прямо сейчас</value></data>
+  <data name="Home.FeaturedPlaces" xml:space="preserve"><value>Избранные места</value></data>
+  <data name="Home.News" xml:space="preserve"><value>Новости</value></data>
+  <data name="Home.ReadyToJoin" xml:space="preserve"><value>Готовы присоединиться?</value></data>
   <data name="Home.SignInIntro" xml:space="preserve"><value>Уже есть аватар здесь? Используйте его имя и пароль.</value></data>
   <data name="Home.NewHere" xml:space="preserve"><value>Впервые здесь? Создайте аватар, чтобы присоединиться к {0} и его миру.</value></data>
   <data name="Home.AboutGrid" xml:space="preserve"><value>Об этом гриде</value></data>

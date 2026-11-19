@@ -76,6 +76,17 @@ public sealed class LanguageFileTests : IDisposable
     }
 
     [Fact]
+    public void A_file_downloaded_before_the_new_front_page_is_still_read()
+    {
+        // The old front page's sign-in card words (spec 2026-11-19-front-page-design) are no longer shown, but their keys stay,
+        // so an owner's language file saved before the update isn't refused for naming them.
+        var (read, problems) = Read("""{ "code": "it", "page": { "Home.SignInIntro": "Hai già un avatar?", "Home.NewHere": "Nuovo? Unisciti a {0}.", "Home.AboutGrid": "Su questo grid" } }""");
+
+        Assert.Empty(problems);
+        Assert.Equal("Su questo grid", read!.Page["Home.AboutGrid"]);
+    }
+
+    [Fact]
     public void Line_breaks_are_kept_as_line_feeds()
     {
         var (read, _) = Read("""{ "code": "it", "page": { "Home.Intro": "  Una\r\nDue  " } }""");

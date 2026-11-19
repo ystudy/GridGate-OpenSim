@@ -162,20 +162,7 @@ public static class SplashApi
             if (list.Regions.FirstOrDefault(r => r.Id == id) is not { } region)
                 return Results.Json(new { problem = "That region isn't registered with the grid." }, Json, statusCode: StatusCodes.Status404NotFound);
 
-            byte[] tile;
-            try
-            {
-                using var client = http.CreateClient(RegionsApi.RobustMapClient);
-                var port = grid.CurrentSettings().RobustPublicPort;
-                using var response = await client.GetAsync($"http://127.0.0.1:{port}/map-1-{region.X}-{region.Y}-objects.jpg", ctx.RequestAborted);
-                // A missing tile can come back as a 200 with text/plain and an empty body.
-                tile = response.IsSuccessStatusCode && response.Content.Headers.ContentType?.MediaType is "image/jpeg" or "image/png"
-                    ? await response.Content.ReadAsByteArrayAsync(ctx.RequestAborted) : [];
-            }
-            catch (Exception e) when (e is HttpRequestException or TaskCanceledException && !ctx.RequestAborted.IsCancellationRequested)
-            {
-                tile = [];
-            }
+            var (tile, _) = await MapTiles.FetchAsync(region, grid, http, ctx.RequestAborted);
             if (tile.Length == 0)
                 return Results.Json(new { problem = "The grid has no map picture for that region yet." }, Json, statusCode: StatusCodes.Status404NotFound);
 

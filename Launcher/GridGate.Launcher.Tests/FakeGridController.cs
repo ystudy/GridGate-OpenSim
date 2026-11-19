@@ -854,6 +854,21 @@ internal sealed class FakeWorldCounter : GridGate.Launcher.Core.Dashboard.IWorld
     }
 }
 
+/// <summary>The front page's resident counts, set by a test; counts how often it was asked and the last "since".</summary>
+internal sealed class FakeResidentCounter : GridGate.Launcher.Core.Dashboard.IResidentCounter
+{
+    public GridGate.Launcher.Core.Dashboard.ResidentCounts Counts { get; set; } = GridGate.Launcher.Core.Dashboard.ResidentCounts.Unknown;
+    public int Calls;
+    public DateTimeOffset? LastSince { get; private set; }
+
+    public Task<GridGate.Launcher.Core.Dashboard.ResidentCounts> CountAsync(DateTimeOffset activeSince, CancellationToken ct)
+    {
+        Interlocked.Increment(ref Calls);
+        LastSince = activeSince;
+        return Task.FromResult(Counts);
+    }
+}
+
 /// <summary>The dashboard's service checks, set by a test (no network).</summary>
 internal sealed class FakeServiceChecks : GridGate.Launcher.Dashboard.IServiceChecks
 {

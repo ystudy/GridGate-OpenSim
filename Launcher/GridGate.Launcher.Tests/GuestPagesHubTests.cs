@@ -27,16 +27,16 @@ public sealed class GuestPagesHubTests
     {
         await using var f = Factory();
         var page = await PageAsync(await StaffAsync(f, "owner"), "/guest-pages");
-        Assert.Equal(["/splash", "/security/legal", "/security/wording", "/security/languages", "/security/bots", "/security/iar", "/security/starter-avatars", "/security/email", "/advanced/password-reset"],
+        Assert.Equal(["/splash", "/front-page", "/security/legal", "/security/wording", "/security/languages", "/security/bots", "/security/iar", "/security/starter-avatars", "/security/email", "/advanced/password-reset"],
             page.QuerySelectorAll("main .list-group a").Select(a => a.GetAttribute("href")));
     }
 
     [Fact]
-    public async Task Admin_sees_only_the_splash_page()
+    public async Task Admin_sees_the_splash_and_front_pages()
     {
         await using var f = Factory();
         var page = await PageAsync(await StaffAsync(f, "admin"), "/guest-pages");
-        Assert.Equal(["/splash"], page.QuerySelectorAll("main .list-group a").Select(a => a.GetAttribute("href")));
+        Assert.Equal(["/splash", "/front-page"], page.QuerySelectorAll("main .list-group a").Select(a => a.GetAttribute("href")));
     }
 
     [Fact]
@@ -127,7 +127,7 @@ public sealed class GuestPagesHubTests
         Assert.Null(staffPage.QuerySelector("header nav a#guest-side-link")); // not a menu group
 
         var front = await PageAsync(client, "/home");
-        Assert.NotNull(front.QuerySelector("main form#front-sign-in"));
+        Assert.NotNull(front.QuerySelector("main section#front-hero"));
         Assert.Equal("/", front.QuerySelector("header a#staff-side-link")!.GetAttribute("href"));
         Assert.Null(front.QuerySelector("a#staff-link")); // no "Staff sign in" for someone already signed in
     }

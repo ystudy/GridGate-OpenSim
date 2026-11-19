@@ -59,6 +59,9 @@ public sealed record LauncherPaths(string Data, string OpenSimProgram, string? M
     /// <summary>The grid-wide look: for now the logo.</summary>
     public string Theme => Path.Combine(Data, "theme");
     public string ThemeImages => Path.Combine(Theme, "images");
+    /// <summary>The public front page: its settings (front.json) and its own pictures.</summary>
+    public string Front => Path.Combine(Data, "front");
+    public string FrontImages => Path.Combine(Front, "images");
 
     public string RegionDir(string instance) => Path.Combine(RegionsRoot, instance);
     public string RegionDefinitionDir(string instance) => Path.Combine(RegionDir(instance), "Region");

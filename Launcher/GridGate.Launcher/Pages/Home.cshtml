@@ -1,44 +1,91 @@
 @page "/home"
 @model GridGate.Launcher.Pages.HomeModel
+@using GridGate.Launcher.Core.Guests
 @{
     Layout = "_GuestLayout";
     ViewData["Title"] = T["Home.Title"].Value;
+    ViewData["Wide"] = true;
+    var view = Model.View;
+    var main = Model.Main;
+    var heroClass = view.PhotoUrl is null ? "front-hero front-hero-plain" : "front-hero";
 }
-<h1>@Model.GridName</h1>
-<p class="tone-text">@T["Home.Intro"]</p>
+@* The front page (spec 2026-11-19-front-page-design): a section is left out when it has nothing to show. *@
+<section id="front-hero" class="@heroClass">
+    @if (view.PhotoUrl is { } photo)
+    {
+        @* A real picture behind the words (the site's style policy allows no inline styles); decoration only, so no alt text. *@
+        <img class="front-hero-photo" src="@photo" alt="">
+    }
+    <div class="front-hero-words">
+        <h1>@Model.GridName</h1>
+        <p class="tone-text">@T["Home.Intro", Model.GridName]</p>
+        <div class="front-actions">
+            <a id="front-main" class="btn btn-lg btn-primary" href="@main.Href" icon="@main.Icon">@T[main.Key]</a>
+            <a id="front-connect" class="btn btn-lg btn-secondary" href="/guest/connect" icon="link">@T["Home.HowToConnect"]</a>
+        </div>
+    </div>
+</section>
 
-@* Two ways in, side by side (one above the other on phones). The sign-in form posts to the sign-in page, which shows any error, the two-factor step and the resend link. *@
-<div class="front-cards">
-    <section class="card card-body shadow-sm" aria-labelledby="front-sign-in-title">
-        <h2 id="front-sign-in-title" class="h4">@T["Common.SignIn"]</h2>
-        <p>@T["Home.SignInIntro"]</p>
-        @* The cards share rows (title, words, fields, button, link), so the two buttons line up. *@
-        <form id="front-sign-in" method="post" action="/guest/sign-in" asp-antiforgery="true">
-            <div class="front-fields">
-                <label class="form-label" for="front-name">@T["Common.AvatarName"]</label>
-                <input class="form-control" id="front-name" name="Name" maxlength="64" autocomplete="username" placeholder="@T["Common.NamePlaceholder"]" required>
-                <label class="form-label mt-3" for="front-password">@T["Common.Password"]</label>
-                <input class="form-control" id="front-password" name="Password" type="password" autocomplete="current-password" required>
-            </div>
-            <button type="submit" class="btn btn-primary w-100">@T["Common.SignIn"]</button>
-        </form>
-        <p class="small"><a href="/guest/forgot-password">@T["Common.ForgotPasswordLink"]</a></p>
-    </section>
-    <section class="card card-body shadow-sm" aria-labelledby="front-sign-up-title">
-        <h2 id="front-sign-up-title" class="h4">@T["Common.CreateAccount"]</h2>
-        <p>@T["Home.NewHere", Model.GridName]</p>
-        <div class="front-fields"></div>
-        <a class="btn btn-outline-primary w-100" href="/signup">@T["Common.CreateAccount"]</a>
-    </section>
-</div>
-@* The operator's legal pages, only those written (the footer lists them too). *@
-@if (Model.LegalPages.Count > 0)
+@if (view.Numbers.Count > 0)
 {
-    <section id="front-legal" class="front-legal" aria-labelledby="front-legal-title">
-        <h2 id="front-legal-title" class="h6 mb-0">@T["Home.AboutGrid"]</h2>
-        @foreach (var id in Model.LegalPages)
+    <section id="front-numbers" class="front-numbers" aria-label="@T["Home.NumbersLabel"]">
+        @foreach (var n in view.Numbers)
         {
-            <a class="btn btn-sm btn-outline-secondary" href="/@id" icon="@(GridGate.Launcher.Pages.HomeModel.LegalIcon(id))">@T.LegalTitle(id)</a>
+            <div class="front-number">
+                <span class="front-number-value">@n.Value</span>
+                <span class="front-number-label">@T[n.Key]</span>
+            </div>
         }
+    </section>
+}
+
+@if (view.Places.Count > 0)
+{
+    <section id="front-places" class="front-section" aria-labelledby="front-places-title">
+        <h2 id="front-places-title">@T["Home.FeaturedPlaces"]</h2>
+        <div class="front-cards-grid">
+            @foreach (var p in view.Places)
+            {
+                <article class="front-card card">
+                    @if (p.PictureUrl is { } picture)
+                    {
+                        <img class="front-card-picture" src="@picture" alt="" loading="lazy">
+                    }
+                    else
+                    {
+                        <div class="front-card-picture front-card-blank" aria-hidden="true"></div>
+                    }
+                    <div class="front-card-body">
+                        <h3 class="front-card-name">@p.Name</h3>
+                        @if (p.Line is { } line)
+                        {
+                            <p class="front-card-line">@line</p>
+                        }
+                    </div>
+                </article>
+            }
+        </div>
+    </section>
+}
+
+@if (view.News.Count > 0)
+{
+    <section id="front-news" class="front-section" aria-labelledby="front-news-title">
+        <h2 id="front-news-title">@T["Home.News"]</h2>
+        @foreach (var n in view.News)
+        {
+            <article class="front-news-item">
+                <time datetime="@n.Date.ToString("yyyy-MM-dd")">@n.Date.ToString("D", System.Globalization.CultureInfo.CurrentUICulture)</time>
+                <div class="front-news-text">@Html.Raw(LegalMarkdown.ToHtml(n.Text))</div>
+            </article>
+        }
+    </section>
+}
+
+@if (view.Main != GridGate.Launcher.Front.FrontMainButton.YourAccount)
+{
+    <section id="front-join" class="front-join" aria-labelledby="front-join-title">
+        <h2 id="front-join-title">@T["Home.ReadyToJoin"]</h2>
+        <a id="front-join-main" class="btn btn-lg btn-primary" href="@main.Href" icon="@main.Icon">@T[main.Key]</a>
     </section>
 }

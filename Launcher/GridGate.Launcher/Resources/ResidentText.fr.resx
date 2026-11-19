@@ -131,9 +131,19 @@
   <data name="Legal.Privacy" xml:space="preserve"><value>Confidentialité</value></data>
   <data name="Legal.Cookies" xml:space="preserve"><value>Cookies</value></data>
   <data name="Home.Title" xml:space="preserve"><value>Bienvenue</value></data>
-  <data name="Home.Intro" xml:space="preserve"><value>Bienvenue. Connectez-vous avec votre avatar pour voir comment vous connecter à la grille, ou créez un compte pour nous rejoindre.</value></data>
-  <data name="Home.SignInIntro" xml:space="preserve"><value>Vous avez déjà un avatar ici ? Utilisez son nom et son mot de passe.</value></data>
-  <data name="Home.NewHere" xml:space="preserve"><value>Nouveau ici ? Créez un avatar pour rejoindre {0} et son monde.</value></data>
+  <data name="Home.Intro" xml:space="preserve"><value>Créez un avatar et explorez notre monde avec nous.</value></data>
+  <data name="Home.YourAccount" xml:space="preserve"><value>Votre compte</value></data>
+  <data name="Home.HowToConnect" xml:space="preserve"><value>Comment se connecter</value></data>
+  <data name="Home.InWorld" xml:space="preserve"><value>Dans le monde en ce moment</value></data>
+  <data name="Home.RegionsOnline" xml:space="preserve"><value>Régions en ligne</value></data>
+  <data name="Home.Registered" xml:space="preserve"><value>Avatars inscrits</value></data>
+  <data name="Home.Active" xml:space="preserve"><value>Actifs ce mois-ci</value></data>
+  <data name="Home.NumbersLabel" xml:space="preserve"><value>La grille en ce moment</value></data>
+  <data name="Home.FeaturedPlaces" xml:space="preserve"><value>Lieux à découvrir</value></data>
+  <data name="Home.News" xml:space="preserve"><value>Actualités</value></data>
+  <data name="Home.ReadyToJoin" xml:space="preserve"><value>Prêt à nous rejoindre ?</value></data>
+  <data name="Home.SignInIntro" xml:space="preserve"><value>Vous avez déjà un avatar ici ? Utilisez son nom et son mot de passe.</value></data>
+  <data name="Home.NewHere" xml:space="preserve"><value>Nouveau ici ? Créez un avatar pour rejoindre {0} et son monde.</value></data>
   <data name="Home.AboutGrid" xml:space="preserve"><value>À propos de cette grille</value></data>
   <data name="Home.StaffSignIn" xml:space="preserve"><value>Connexion de l’équipe</value></data>
   <data name="SignUp.Closed" xml:space="preserve"><value>Cette grille n’est pas encore ouverte aux inscriptions.</value></data>

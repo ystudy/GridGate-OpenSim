@@ -6,7 +6,8 @@ using MySqlConnector;
 namespace GridGate.Launcher.Core.Grid;
 
 /// <param name="X">The region's corner on the map, in map squares (Robust keeps it in metres, 256 to a square).</param>
-public sealed record GridRegion(Guid Id, string Name, int X, int Y);
+/// <param name="IsLink">A hypergrid link to another grid's region (the Hyperlink flag, 512), not one of this grid's own.</param>
+public sealed record GridRegion(Guid Id, string Name, int X, int Y, bool IsLink = false);
 
 /// <param name="Available">False when the database could not be asked; <see cref="Regions"/> is then empty.</param>
 public sealed record GridRegionList(IReadOnlyList<GridRegion> Regions, bool Available)
@@ -33,7 +34,10 @@ public sealed class GridRegions(Func<LauncherSettings> settings, ILogger<GridReg
     // Short: the splash page asks while viewers wait at the login screen.
     private const uint TimeoutSeconds = 3;
 
-    private const string Query = "SELECT uuid, regionName, locX, locY FROM regions ORDER BY regionName";
+    private const string Query = "SELECT uuid, regionName, locX, locY, flags FROM regions ORDER BY regionName";
+
+    // OpenSim's RegionFlags.Hyperlink: the row is a hypergrid link, not a region of this grid.
+    private const int HyperlinkFlag = 512;
 
     public async Task<GridRegionList> ListAsync(CancellationToken ct)
     {
@@ -49,7 +53,8 @@ public sealed class GridRegions(Func<LauncherSettings> settings, ILogger<GridReg
                 // char(36) may come back as a Guid or as text, depending on the connector's GUID handling.
                 var id = InventoryStore.IdOf(reader.GetValue(0));
                 list.Add(new GridRegion(id, reader.IsDBNull(1) ? "" : reader.GetString(1),
-                    reader.IsDBNull(2) ? 0 : Convert.ToInt32(reader.GetValue(2)) / 256, reader.IsDBNull(3) ? 0 : Convert.ToInt32(reader.GetValue(3)) / 256));
+                    reader.IsDBNull(2) ? 0 : Convert.ToInt32(reader.GetValue(2)) / 256, reader.IsDBNull(3) ? 0 : Convert.ToInt32(reader.GetValue(3)) / 256,
+                    !reader.IsDBNull(4) && (Convert.ToInt32(reader.GetValue(4)) & HyperlinkFlag) != 0));
             }
             return new GridRegionList(list, true);
         }

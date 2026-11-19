@@ -360,17 +360,6 @@ header .signout { margin: 0; }
 /* Guest pages: help (and the front page's staff sign in) as buttons at the right of the header bar. */
 .guest-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: .5rem; }
 
-/* Guest front page: sign in and create an account as two cards side by side. */
-.front-cards { display: grid; gap: 1rem; grid-template-columns: minmax(0, 1fr); margin-top: 1.25rem; }
-@media (min-width: 768px) { .front-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-/* Each card spans five shared rows (title, words, fields, button, link), so both buttons sit on one line. */
-.front-cards > .card { display: grid; grid-row: span 5; grid-template-rows: subgrid; row-gap: .75rem; align-content: start; }
-.front-cards > .card > *, .front-cards .front-fields { margin: 0; }
-.front-cards form { display: contents; }
-.front-cards .front-fields { padding-bottom: .5rem; }
-/* The front page's legal pages: a row of buttons under the two cards. */
-.front-legal { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .75rem; margin-top: 1.25rem; padding: .75rem 1rem; border: 1px solid var(--bs-border-color); border-radius: var(--bs-border-radius-lg); }
-.front-legal h2 { margin-inline-end: .25rem; }
 
 /* Work pages with one form: a panel no wider than the form needs, and its buttons in one row. */
 .form-panel { max-width: 46rem; }
@@ -416,3 +405,7 @@ header .signout { margin: 0; }
 .btn-check:checked + .starter-card { border-color: var(--bs-primary); box-shadow: 0 0 0 .2rem rgba(var(--bs-primary-rgb), .25); }
 .btn-check:focus-visible + .starter-card { outline: 2px solid var(--bs-primary); outline-offset: 2px; }
 .starter-thumb { width: 120px; }
+
+/* The Front page editor (spec 2026-11-19-front-page-design): small previews of the photo and place pictures. */
+.front-editor-photo { display: block; max-width: 24rem; width: 100%; aspect-ratio: 16 / 9; object-fit: cover; border-radius: var(--bs-border-radius); }
+.front-editor-thumb { display: block; width: 10rem; aspect-ratio: 16 / 9; object-fit: cover; border-radius: var(--bs-border-radius); }

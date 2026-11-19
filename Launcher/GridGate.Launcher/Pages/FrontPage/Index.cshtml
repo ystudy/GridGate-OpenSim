@@ -1,0 +1,152 @@
+@page "/front-page"
+@model GridGate.Launcher.Pages.FrontPage.IndexModel
+@using GridGate.Launcher.Core.Front
+@using GridGate.Launcher.Endpoints
+@{
+    ViewData["Title"] = "Front page";
+    var s = Model.Saved;
+    var shown = FrontPictures.Shown(s);
+    string Lang(string code) => GridGate.Launcher.Core.Languages.NativeName(code);
+}
+<div class="d-flex flex-wrap align-items-center gap-2 mb-3">
+    <h1 class="mb-0 me-auto">Front page</h1>
+    <a id="see-front-page" class="btn btn-outline-secondary" href="/home" icon="eye">See the front page</a>
+</div>
+<p>What visitors see first on the website. Each section can use the splash page's content, its own list, or (for places) the busiest regions. Changes show as soon as you save.</p>
+
+@if (Model.Notice is { } notice)
+{
+    <div class="alert alert-success" role="status">@notice</div>
+}
+@if (Model.Problem is { } problem)
+{
+    <div class="alert alert-danger" role="alert">@problem</div>
+}
+
+<section class="card card-body mb-3" aria-labelledby="photo-title">
+    <h2 id="photo-title">Photo</h2>
+    <p>A big in-world picture behind the grid's name. Without one, the top of the page is a dark blue gradient.</p>
+    @if (s.Photo is { } photo && shown.Contains(photo))
+    {
+        <img class="front-editor-photo mb-2" src="@FrontApi.PictureUrl(photo)" alt="The current front page photo">
+        <form method="post" asp-page-handler="RemovePhoto" class="mb-2">
+            <button type="submit" class="btn btn-sm btn-outline-danger" icon="trash">Remove the photo</button>
+        </form>
+    }
+    <form id="front-photo-form" method="post" asp-page-handler="Photo" enctype="multipart/form-data" class="d-flex flex-wrap gap-2 align-items-center">
+        <input class="form-control w-auto" type="file" name="file" accept="image/png,image/jpeg,image/webp" required aria-label="Photo file">
+        <button type="submit" class="btn btn-primary" icon="upload">Upload</button>
+    </form>
+</section>
+
+<section class="card card-body mb-3" aria-labelledby="numbers-title">
+    <h2 id="numbers-title">Live numbers</h2>
+    <p>A number the grid can't count right now is hidden on its own.</p>
+    <form id="front-numbers-form" method="post" asp-page-handler="Numbers">
+        <div class="form-check"><input class="form-check-input" type="checkbox" id="n-inworld" name="inWorld" value="true" checked="@s.Numbers.InWorld"><label class="form-check-label" for="n-inworld">In-world now</label></div>
+        <div class="form-check"><input class="form-check-input" type="checkbox" id="n-regions" name="regions" value="true" checked="@s.Numbers.Regions"><label class="form-check-label" for="n-regions">Regions online (hypergrid links aren't counted)</label></div>
+        <div class="form-check"><input class="form-check-input" type="checkbox" id="n-registered" name="registered" value="true" checked="@s.Numbers.Registered"><label class="form-check-label" for="n-registered">Registered avatars</label></div>
+        <div class="form-check"><input class="form-check-input" type="checkbox" id="n-active" name="active" value="true" checked="@s.Numbers.Active"><label class="form-check-label" for="n-active">Active this month (signed in during the last 30 days)</label></div>
+        <button type="submit" class="btn btn-primary mt-2" icon="save">Save the numbers</button>
+    </form>
+</section>
+
+<section class="card card-body mb-3" aria-labelledby="places-title">
+    <h2 id="places-title">Featured places</h2>
+    <form id="front-places-source" method="post" asp-page-handler="PlacesSource" class="mb-3">
+        <div class="form-check"><input class="form-check-input" type="radio" id="p-splash" name="source" value="Splash" checked="@(s.PlacesSource == FrontPlacesSource.Splash)"><label class="form-check-label" for="p-splash">Same as the splash page (its published places)</label></div>
+        <div class="form-check"><input class="form-check-input" type="radio" id="p-own" name="source" value="Own" checked="@(s.PlacesSource == FrontPlacesSource.Own)"><label class="form-check-label" for="p-own">Its own list (below)</label></div>
+        <div class="form-check"><input class="form-check-input" type="radio" id="p-auto" name="source" value="Automatic" checked="@(s.PlacesSource == FrontPlacesSource.Automatic)"><label class="form-check-label" for="p-auto">Automatic: up to 6 running regions with the most people, with their map pictures</label></div>
+        <button type="submit" class="btn btn-primary mt-2" icon="save">Save the source</button>
+    </form>
+
+    <h3 class="h6">Its own list</h3>
+    @if (s.PlacesSource != FrontPlacesSource.Own && s.Places.Count > 0)
+    {
+        <p class="small">Kept, but not shown while another source is chosen.</p>
+    }
+    <ol id="front-own-places" class="list-unstyled">
+        @for (var i = 0; i < s.Places.Count; i++)
+        {
+            var p = s.Places[i];
+            <li class="border rounded p-2 mb-2">
+                <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+                    <strong class="front-own-place-name me-auto">@p.RegionName</strong>
+                    <form method="post" asp-page-handler="MovePlace"><input type="hidden" name="index" value="@i"><input type="hidden" name="regionId" value="@p.RegionId"><input type="hidden" name="by" value="-1"><button type="submit" class="btn btn-sm btn-outline-secondary" icon="arrow-up" disabled="@(i == 0)">Up</button></form>
+                    <form method="post" asp-page-handler="MovePlace"><input type="hidden" name="index" value="@i"><input type="hidden" name="regionId" value="@p.RegionId"><input type="hidden" name="by" value="1"><button type="submit" class="btn btn-sm btn-outline-secondary" icon="arrow-down" disabled="@(i == s.Places.Count - 1)">Down</button></form>
+                    <form method="post" asp-page-handler="RemovePlace"><input type="hidden" name="index" value="@i"><input type="hidden" name="regionId" value="@p.RegionId"><button type="submit" class="btn btn-sm btn-outline-danger" icon="trash">Remove</button></form>
+                </div>
+                <form method="post" asp-page-handler="SavePlace" enctype="multipart/form-data">
+                    <input type="hidden" name="index" value="@i"><input type="hidden" name="regionId" value="@p.RegionId">
+                    @foreach (var code in Model.Languages)
+                    {
+                        <label class="form-label small mb-0" for="line-@i-@code">Line (@Lang(code))</label>
+                        <input class="form-control form-control-sm mb-1" id="line-@i-@code" name="line[@code]" maxlength="@GridGate.Launcher.Core.Splash.SplashRules.MaxPlaceLine" value="@p.Line.GetValueOrDefault(code)">
+                    }
+                    @if (p.Picture is { } pic && shown.Contains(pic))
+                    {
+                        <img class="front-editor-thumb my-1" src="@FrontApi.PictureUrl(pic)" alt="@p.RegionName">
+                    }
+                    else if (p.Picture is not null)
+                    {
+                        <p class="small mb-1">Has a picture (shown while the source is its own list).</p>
+                    }
+                    <div class="d-flex flex-wrap gap-2 align-items-center">
+                        <input class="form-control form-control-sm w-auto" type="file" name="file" accept="image/png,image/jpeg,image/webp" aria-label="Picture for @p.RegionName">
+                        <div class="form-check mb-0"><input class="form-check-input" type="checkbox" id="map-@i" name="fromMap" value="true"><label class="form-check-label" for="map-@i">Use its map picture</label></div>
+                        <button type="submit" class="btn btn-sm btn-primary" icon="save">Save this place</button>
+                    </div>
+                </form>
+            </li>
+        }
+    </ol>
+    <form id="front-add-place" method="post" asp-page-handler="AddPlace" class="d-flex flex-wrap gap-2 align-items-center">
+        @if (Model.RegionsUnavailable)
+        {
+            <p class="mb-0">The grid's regions can't be read right now. Try again in a minute.</p>
+        }
+        else
+        {
+            <select class="form-select w-auto" name="regionId" aria-label="Region to add">
+                @foreach (var r in Model.OwnRegions)
+                {
+                    <option value="@r.Id">@r.Name</option>
+                }
+            </select>
+            <button type="submit" class="btn btn-outline-secondary" icon="plus" disabled="@(Model.OwnRegions.Count == 0 || s.Places.Count >= GridGate.Launcher.Core.Splash.SplashRules.MaxPlaces)">Add a place</button>
+        }
+    </form>
+</section>
+
+<section class="card card-body mb-3" aria-labelledby="news-title">
+    <h2 id="news-title">News</h2>
+    <form id="front-news-source" method="post" asp-page-handler="NewsSource" class="mb-3">
+        <div class="form-check"><input class="form-check-input" type="radio" id="n-splash" name="source" value="Splash" checked="@(s.NewsSource == FrontNewsSource.Splash)"><label class="form-check-label" for="n-splash">Same as the splash page (its published news)</label></div>
+        <div class="form-check"><input class="form-check-input" type="radio" id="n-own" name="source" value="Own" checked="@(s.NewsSource == FrontNewsSource.Own)"><label class="form-check-label" for="n-own">Its own news (below)</label></div>
+        <button type="submit" class="btn btn-primary mt-2" icon="save">Save the source</button>
+    </form>
+
+    <h3 class="h6">Its own news</h3>
+    <p class="small">The newest 5 that aren't hidden show on the page.</p>
+    <ol id="front-own-news" class="list-unstyled">
+        @for (var i = 0; i < s.News.Count; i++)
+        {
+            var n = s.News[i];
+            <li class="border rounded p-2 mb-2 d-flex flex-wrap align-items-center gap-2">
+                <span class="me-auto"><strong>@n.Date.ToString("yyyy-MM-dd")</strong> @(n.Text.GetValueOrDefault("en") ?? n.Text.Values.FirstOrDefault())@(n.Hidden ? " (hidden)" : "")</span>
+                <form method="post" asp-page-handler="ToggleNews"><input type="hidden" name="index" value="@i"><input type="hidden" name="key" value="@GridGate.Launcher.Pages.FrontPage.IndexModel.NewsKey(n)"><button type="submit" class="btn btn-sm btn-outline-secondary" icon="eye">@(n.Hidden ? "Show" : "Hide")</button></form>
+                <form method="post" asp-page-handler="RemoveNews"><input type="hidden" name="index" value="@i"><input type="hidden" name="key" value="@GridGate.Launcher.Pages.FrontPage.IndexModel.NewsKey(n)"><button type="submit" class="btn btn-sm btn-outline-danger" icon="trash">Remove</button></form>
+            </li>
+        }
+    </ol>
+    <form id="front-add-news" method="post" asp-page-handler="AddNews">
+        <label class="form-label" for="news-date">Date</label>
+        <input class="form-control w-auto mb-2" type="date" id="news-date" name="date" value="@DateTime.Today.ToString("yyyy-MM-dd")">
+        @foreach (var code in Model.Languages)
+        {
+            <label class="form-label small mb-0" for="news-@code">Text (@Lang(code))</label>
+            <textarea class="form-control mb-1" id="news-@code" name="text[@code]" rows="2" maxlength="@GridGate.Launcher.Core.Splash.SplashRules.MaxNewsText"></textarea>
+        }
+        <button type="submit" class="btn btn-outline-secondary mt-1" icon="plus" disabled="@(s.News.Count >= GridGate.Launcher.Core.Splash.SplashRules.MaxNews)">Add the news</button>
+    </form>
+</section>

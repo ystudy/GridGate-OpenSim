@@ -96,6 +96,7 @@ try
     LauncherPaths.CreateOwnerOnly(paths.Data);
     LauncherPaths.CreateOwnerOnly(paths.DataProtectionKeys);
     LauncherPaths.CreateOwnerOnly(paths.Security);
+    LauncherPaths.CreateOwnerOnly(paths.Front);
     LauncherPaths.CreateOwnerOnly(paths.Guests);
     LauncherPaths.CreateOwnerOnly(paths.StarterAvatars);
     LauncherPaths.CreateOwnerOnly(paths.Email);
@@ -221,6 +222,8 @@ builder.Services.AddRazorPages(o =>
     o.Conventions.AddPageApplicationModelConvention("/Security/Legal", m => m.Filters.Add(new GuestSideOnly()));
     // The splash page editor: the page it builds is the guest side's (AdminPolicy comes from the folder rule above).
     o.Conventions.AddFolderApplicationModelConvention("/Splash", m => m.Filters.Add(new GuestSideOnly()));
+    // The front page editor: the page it changes is the guest side's too (AdminPolicy from the folder rule above).
+    o.Conventions.AddFolderApplicationModelConvention("/FrontPage", m => m.Filters.Add(new GuestSideOnly()));
     // The Groups pages: the grid's own groups, so only where this computer runs the grid (AdminPolicy from the folder rule above).
     o.Conventions.AddFolderApplicationModelConvention("/Groups", m => m.Filters.Add(new GuestSideOnly()));
     // The hypergrid links: Robust's map, so only where this computer runs the grid; for every staff member (owner, 2026-11-03).
@@ -392,11 +395,24 @@ builder.Services.AddSingleton(sp => new SplashStore(paths, sp.GetRequiredService
 {
     PictureExists = sp.GetRequiredKeyedService<PictureStore>("splash").Exists,
 });
+// The public front page (spec 2026-11-19-front-page-design): its settings and its own pictures, kept apart from the splash page's.
+builder.Services.AddKeyedSingleton("front", (sp, _) => new PictureStore(paths.FrontImages, sp.GetRequiredService<TimeProvider>(),
+    sp.GetRequiredService<ILogger<PictureStore>>()));
+builder.Services.AddSingleton(sp => new GridGate.Launcher.Core.Front.FrontPageStore(paths, sp.GetRequiredService<ILogger<GridGate.Launcher.Core.Front.FrontPageStore>>())
+{
+    PictureExists = sp.GetRequiredKeyedService<PictureStore>("front").Exists,
+});
 builder.Services.AddSingleton(sp => new ThemeStore(paths, sp.GetRequiredKeyedService<PictureStore>("theme"), sp.GetRequiredService<ILogger<ThemeStore>>()));
 builder.Services.AddSingleton<SplashSnapshot>();
+builder.Services.AddSingleton<GridGate.Launcher.Front.FrontPageSnapshot>();
+builder.Services.AddSingleton<GridGate.Launcher.Front.FrontMapTiles>();
+builder.Services.AddSingleton<GridGate.Launcher.Front.FrontPageView>();
 // The Home dashboard's counts (design 2026-11-05-dashboard), cached a minute.
 builder.Services.AddSingleton<GridGate.Launcher.Core.Dashboard.IWorldCounter>(sp => new GridGate.Launcher.Core.Dashboard.WorldCounter(
     sp.GetRequiredService<Func<LauncherSettings>>(), sp.GetRequiredService<ILogger<GridGate.Launcher.Core.Dashboard.WorldCounter>>()));
+// The front page's two resident counts (spec 2026-11-19-front-page-design), asked by its once-a-minute snapshot.
+builder.Services.AddSingleton<GridGate.Launcher.Core.Dashboard.IResidentCounter>(sp => new GridGate.Launcher.Core.Dashboard.ResidentCounter(
+    sp.GetRequiredService<Func<LauncherSettings>>(), sp.GetRequiredService<ILogger<GridGate.Launcher.Core.Dashboard.ResidentCounter>>()));
 // [S] The Core services checks: 127.0.0.1 only, 2 seconds, no redirects, no cookies (design 2026-11-05-dashboard).
 builder.Services.AddHttpClient(GridGate.Launcher.Dashboard.ServiceChecks.ClientName, c =>
     {
@@ -408,6 +424,8 @@ builder.Services.AddSingleton<GridGate.Launcher.Dashboard.IServiceChecks, GridGa
 builder.Services.AddSingleton<GridGate.Launcher.Dashboard.DashboardSnapshot>();
 builder.Services.AddSingleton<SplashPictureCleanup>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<SplashPictureCleanup>());
+builder.Services.AddSingleton<GridGate.Launcher.Front.FrontPictureCleanup>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<GridGate.Launcher.Front.FrontPictureCleanup>());
 builder.Services.AddSingleton<GridActions>();
 builder.Services.AddSingleton<RegionActions>();
 builder.Services.AddSingleton<RegionRestarts>();
@@ -536,6 +554,7 @@ StatusApi.Map(app);
 DashboardApi.Map(app);
 SetupApi.Map(app);
 SplashApi.Map(app);
+FrontApi.Map(app);
 EconomyApi.Map(app);
 app.MapRazorPages();
 

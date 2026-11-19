@@ -61,6 +61,7 @@ public static class StaffMenu
 
             Add(groups, new("Guest pages", "/guest-pages", Items(
                 (admin, new("Splash page", "/splash", "/splash")),
+                (admin, new("Front page", "/front-page", "/front-page")),
                 (owner, new("Legal pages", "/security/legal", "/security/legal")),
                 (owner, new("Page wording", "/security/wording", "/security/wording")),
                 (owner, new("Languages", "/security/languages", "/security/languages")),

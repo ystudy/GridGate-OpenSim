@@ -73,6 +73,25 @@ public sealed class OnlineUsersTests : IDisposable
             Assert.Equal(0, counts.MapRegions);
             Assert.Equal(0, counts.HypergridLinks);
 
+            // The front page's resident counts (spec 2026-11-19-front-page-design §2): the owner is registered and has never
+            // signed in; after a sign-in five days ago they are active in the last 30 days, and not for a "since" of tomorrow.
+            var residents = new GridGate.Launcher.Core.Dashboard.ResidentCounter(store.LoadOrCreate);
+            Assert.Equal(new GridGate.Launcher.Core.Dashboard.ResidentCounts(1, 0), await residents.CountAsync(now.AddDays(-30), ct));
+            await using (var conn = new MySqlConnection(new MySqlConnectionStringBuilder
+            {
+                Server = "127.0.0.1", Port = (uint)s.MariaDbPort, Database = "robust",
+                UserID = "robustuser", Password = s.Db.RobustPassword, SslMode = MySqlSslMode.Disabled, Pooling = false,
+            }.ConnectionString))
+            {
+                await conn.OpenAsync(ct);
+                await using var cmd = new MySqlCommand("INSERT INTO GridUser (UserID, Login) VALUES (@u, @l) ON DUPLICATE KEY UPDATE Login = @l", conn);
+                cmd.Parameters.AddWithValue("@u", owner.PrincipalId.ToString());
+                cmd.Parameters.AddWithValue("@l", now.AddDays(-5).ToUnixTimeSeconds().ToString(System.Globalization.CultureInfo.InvariantCulture));
+                await cmd.ExecuteNonQueryAsync(ct);
+            }
+            Assert.Equal(new GridGate.Launcher.Core.Dashboard.ResidentCounts(1, 1), await residents.CountAsync(now.AddDays(-30), ct));
+            Assert.Equal(new GridGate.Launcher.Core.Dashboard.ResidentCounts(1, 0), await residents.CountAsync(now.AddDays(1), ct));
+
             // A database that is down: no exception, no long wait.
             await grid.StopAllAsync(ct);
             var watch = Stopwatch.StartNew();

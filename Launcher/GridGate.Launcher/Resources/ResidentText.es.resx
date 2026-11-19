@@ -131,7 +131,17 @@
   <data name="Legal.Privacy" xml:space="preserve"><value>Privacidad</value></data>
   <data name="Legal.Cookies" xml:space="preserve"><value>Cookies</value></data>
   <data name="Home.Title" xml:space="preserve"><value>Bienvenido</value></data>
-  <data name="Home.Intro" xml:space="preserve"><value>Bienvenido. Inicie sesión con su avatar para ver cómo conectarse, o cree una cuenta para unirse.</value></data>
+  <data name="Home.Intro" xml:space="preserve"><value>Cree un avatar y explore nuestro mundo con nosotros.</value></data>
+  <data name="Home.YourAccount" xml:space="preserve"><value>Su cuenta</value></data>
+  <data name="Home.HowToConnect" xml:space="preserve"><value>Cómo conectarse</value></data>
+  <data name="Home.InWorld" xml:space="preserve"><value>En el mundo ahora</value></data>
+  <data name="Home.RegionsOnline" xml:space="preserve"><value>Regiones en línea</value></data>
+  <data name="Home.Registered" xml:space="preserve"><value>Avatares registrados</value></data>
+  <data name="Home.Active" xml:space="preserve"><value>Activos este mes</value></data>
+  <data name="Home.NumbersLabel" xml:space="preserve"><value>El grid ahora mismo</value></data>
+  <data name="Home.FeaturedPlaces" xml:space="preserve"><value>Lugares destacados</value></data>
+  <data name="Home.News" xml:space="preserve"><value>Noticias</value></data>
+  <data name="Home.ReadyToJoin" xml:space="preserve"><value>¿Listo para unirse?</value></data>
   <data name="Home.SignInIntro" xml:space="preserve"><value>¿Ya tiene un avatar aquí? Use su nombre y su contraseña.</value></data>
   <data name="Home.NewHere" xml:space="preserve"><value>¿Es nuevo aquí? Cree un avatar para unirse a {0} y a su mundo.</value></data>
   <data name="Home.AboutGrid" xml:space="preserve"><value>Acerca de este grid</value></data>
