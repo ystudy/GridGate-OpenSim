@@ -1,0 +1,121 @@
+/* The public side's look (spec 2026-11-17-public-look-design): loaded only by _GuestLayout, after site.css. Always dark: a
+   navy page, near-white words, bold uppercase headings, a yellow main button and a blue second one. The colours are the
+   variables below, one per line ("--gg-name: #rrggbb;"): PublicLookTests reads them to check the contrast, so keep that form. */
+.guest-site {
+    --gg-bg: #00001a;
+    --gg-surface: #0b1236;
+    --gg-border: #2a3a7a;
+    --gg-text: #f8f9fa;
+    --gg-muted: #c9cfdb;
+    --gg-yellow: #ffc107;
+    --gg-yellow-hover: #ffcd39;
+    --gg-yellow-text: #111111;
+    --gg-blue: #0b5ed7;
+    --gg-blue-hover: #0a58ca;
+    --gg-blue-text: #ffffff;
+    --gg-link: #9ec5fe;
+    --gg-bar: #000000;
+    --gg-glow: 0 0 1.25rem rgba(13, 110, 253, .35);
+
+    --bs-body-bg: var(--gg-bg);
+    --bs-body-bg-rgb: 0, 0, 26;
+    --bs-body-color: var(--gg-text);
+    --bs-emphasis-color: #fff;
+    --bs-secondary-color: var(--gg-muted);
+    --bs-tertiary-bg: var(--gg-surface);
+    --bs-secondary-bg: var(--gg-surface);
+    --bs-border-color: var(--gg-border);
+    --bs-link-color: var(--gg-link);
+    --bs-link-color-rgb: 158, 197, 254;
+    --bs-link-hover-color: #fff;
+    --bs-link-hover-color-rgb: 255, 255, 255;
+    background: var(--gg-bg);
+    color: var(--gg-text);
+}
+
+/* Headings: heavy, uppercase, a little spaced. Body text keeps its normal case. */
+.guest-site h1, .guest-site h2, .guest-site h3, .guest-site .h4 {
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+}
+.guest-site h1 { font-size: clamp(1.8rem, 4vw, 2.6rem); }
+
+/* Buttons: yellow for the main action, blue for the second, outline buttons white. */
+.guest-site .btn { font-weight: 700; }
+.guest-site .btn-primary {
+    --bs-btn-color: var(--gg-yellow-text);
+    --bs-btn-bg: var(--gg-yellow);
+    --bs-btn-border-color: var(--gg-yellow);
+    --bs-btn-hover-color: var(--gg-yellow-text);
+    --bs-btn-hover-bg: var(--gg-yellow-hover);
+    --bs-btn-hover-border-color: var(--gg-yellow-hover);
+    --bs-btn-active-color: var(--gg-yellow-text);
+    --bs-btn-active-bg: var(--gg-yellow-hover);
+    --bs-btn-active-border-color: var(--gg-yellow-hover);
+    --bs-btn-disabled-color: var(--gg-yellow-text);
+    --bs-btn-disabled-bg: var(--gg-yellow);
+    --bs-btn-disabled-border-color: var(--gg-yellow);
+    --bs-btn-focus-shadow-rgb: 255, 193, 7;
+}
+.guest-site .btn-secondary, .guest-site .btn-info {
+    --bs-btn-color: var(--gg-blue-text);
+    --bs-btn-bg: var(--gg-blue);
+    --bs-btn-border-color: var(--gg-blue);
+    --bs-btn-hover-color: var(--gg-blue-text);
+    --bs-btn-hover-bg: var(--gg-blue-hover);
+    --bs-btn-hover-border-color: var(--gg-blue-hover);
+    --bs-btn-active-color: var(--gg-blue-text);
+    --bs-btn-active-bg: var(--gg-blue-hover);
+    --bs-btn-active-border-color: var(--gg-blue-hover);
+    --bs-btn-disabled-color: var(--gg-blue-text);
+    --bs-btn-disabled-bg: var(--gg-blue);
+    --bs-btn-disabled-border-color: var(--gg-blue);
+}
+
+/* Cards: dark blue panels with a soft border and glow. */
+.guest-site .card {
+    --bs-card-bg: var(--gg-surface);
+    --bs-card-border-color: var(--gg-border);
+    --bs-card-color: var(--gg-text);
+    border-radius: 1rem;
+    box-shadow: var(--gg-glow);
+}
+.guest-site .form-control, .guest-site .form-select { background-color: var(--gg-bg); color: var(--gg-text); border-color: var(--gg-border); }
+
+/* The top bar: black, sticky, the logo and name at the start, the account buttons and the menu at the end. */
+.guest-site .site-bar { position: sticky; top: 0; z-index: 1030; background: var(--gg-bar); border-bottom: 1px solid var(--gg-border); }
+.guest-site .site-bar-row { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem 1rem; padding-top: .6rem; padding-bottom: .6rem; }
+.guest-site .site-home { display: inline-flex; align-items: center; gap: .6rem; margin-inline-end: auto; color: #fff; text-decoration: none; }
+.guest-site .site-home:hover { color: #fff; }
+.guest-site .site-logo { max-height: 2.25rem; width: auto; }
+.guest-site .site-home .grid-name { font-size: 1.25rem; font-weight: 800; letter-spacing: .02em; }
+.guest-site .site-account { text-transform: uppercase; font-weight: 700; letter-spacing: .03em; }
+
+/* The menu: a <details> whose panel opens under the ☰ button, lined up with the bar's end. */
+.guest-site .site-menu { position: relative; }
+.guest-site .site-menu > summary {
+    display: inline-flex; align-items: center; justify-content: center; width: 2.4rem; height: 2.1rem;
+    font-size: 1.3rem; line-height: 1; color: #fff; list-style: none; cursor: pointer;
+    border: 1px solid var(--gg-border); border-radius: var(--bs-border-radius);
+}
+.guest-site .site-menu > summary::-webkit-details-marker { display: none; }
+.guest-site .site-menu > summary:hover, .guest-site .site-menu[open] > summary { background: var(--gg-surface); }
+.guest-site .site-menu > summary:focus-visible { outline: 2px solid var(--gg-yellow); outline-offset: 2px; }
+.guest-site .site-menu-panel {
+    position: absolute; top: calc(100% + .4rem); inset-inline-end: 0; z-index: 1040; min-width: 15rem;
+    padding: .5rem; background: var(--gg-surface); border: 1px solid var(--gg-border); border-radius: .75rem; box-shadow: var(--gg-glow);
+}
+.guest-site .site-menu-panel nav { display: flex; flex-direction: column; }
+.guest-site .site-menu-panel nav a { display: flex; align-items: center; padding: .5rem .75rem; color: var(--gg-text); text-decoration: none; border-radius: .5rem; font-weight: 600; }
+.guest-site .site-menu-panel nav a:hover, .guest-site .site-menu-panel nav a:focus-visible { background: var(--gg-bg); color: #fff; }
+.guest-site .site-menu-panel .language-picker { margin-top: .5rem; padding: .5rem .75rem 0; border-top: 1px solid var(--gg-border); }
+
+/* The footer: full width and black, the legal pages on one wrapping row, then the copyright and the staff door. */
+.guest-site .site-footer { margin-top: 2rem; padding: 1.5rem 0; background: var(--gg-bar); border-top: 1px solid var(--gg-border); color: var(--gg-muted); text-align: center; }
+.guest-site .site-footer nav { display: flex; flex-wrap: wrap; justify-content: center; gap: .25rem 1.25rem; font-size: .95rem; }
+.guest-site .site-footer nav a { margin: 0 !important; color: #fff; text-decoration: none; font-weight: 600; }
+.guest-site .site-footer nav a:hover { text-decoration: underline; }
+.guest-site .site-copyright { margin: .75rem 0 .5rem; }
+.guest-site .site-staff-link { font-size: .85rem; color: var(--gg-muted); }
+.guest-site .site-staff-link:hover { color: #fff; }
