@@ -14,10 +14,10 @@ public enum AccountKind { Person, Visitor, Bank, Fees, Holding }
 public static class MoneySchema
 {
     /// <summary>
-    /// 6: a session's location says whether the key placed it by a match. 5: a region pin can wait for the owner to confirm it. 4: each handoff keeps the address and port Robust listed its destination at. 3: key ids on entries and holds, and
+    /// 7: a pin's machine id that isn't the derived value is cleared. 6: a session's location says whether the key placed it by a match. 5: a region pin can wait for the owner to confirm it. 4: each handoff keeps the address and port Robust listed its destination at. 3: key ids on entries and holds, and
     /// the tables for locations, handoffs, pins, limits and alerts. 2: homes compared byte for byte.
     /// </summary>
-    public const int Version = 6;
+    public const int Version = 7;
 
     /// <summary>The system accounts' fixed ids.</summary>
     public const long BankId = 1, FeesId = 2, HoldingId = 3;
@@ -85,7 +85,7 @@ public static class MoneySchema
           (1, '00000000-0000-0000-0000-000000000000', 'system:bank', 'Bank', UTC_TIMESTAMP(6)),
           (2, '00000000-0000-0000-0000-000000000000', 'system:fees', 'Fees', UTC_TIMESTAMP(6)),
           (3, '00000000-0000-0000-0000-000000000000', 'system:holding', 'Holding', UTC_TIMESTAMP(6));
-        INSERT IGNORE INTO state (name, value) VALUES ('schema_version', '6'), ('frozen', '0'), ('frozen_reason', '');
+        INSERT IGNORE INTO state (name, value) VALUES ('schema_version', '7'), ('frozen', '0'), ('frozen_reason', '');
         CREATE INDEX IF NOT EXISTS hold_id ON entries (hold_id);
         CREATE INDEX IF NOT EXISTS requests_at ON requests (at);
         CREATE TRIGGER IF NOT EXISTS entries_never_edited BEFORE UPDATE ON entries FOR EACH ROW
@@ -167,6 +167,15 @@ public static class MoneySchema
         UPDATE state SET value = '6' WHERE name = 'schema_version';
         """;
 
+    /// <summary>
+    /// Version 6 to 7: a pin's <c>machine_id</c> that isn't 64 lowercase hex characters is a Region Server's own MachineId (its command
+    /// password), kept by an older version. Only the derived value is kept now, so the old one is cleared.
+    /// </summary>
+    private const string To7 = """
+        UPDATE region_pins SET machine_id = NULL WHERE machine_id IS NOT NULL AND CAST(machine_id AS BINARY) NOT REGEXP '^[0-9a-f]{64}$';
+        UPDATE state SET value = '7' WHERE name = 'schema_version';
+        """;
+
     /// <summary>Creates or updates the tables over <paramref name="root"/>, a root connection to the money database, and grants moneyuser its rights.</summary>
     public static async Task EnsureAsync(MySqlConnection root, CancellationToken ct)
     {
@@ -202,6 +211,12 @@ public static class MoneySchema
         if (current == "5")
         {
             await using var cmd = new MySqlCommand(To6, root);
+            await cmd.ExecuteNonQueryAsync(ct);
+            current = "6";
+        }
+        if (current == "6")
+        {
+            await using var cmd = new MySqlCommand(To7, root);
             await cmd.ExecuteNonQueryAsync(ct);
         }
         foreach (var host in DatabaseProvisioner.Hosts)

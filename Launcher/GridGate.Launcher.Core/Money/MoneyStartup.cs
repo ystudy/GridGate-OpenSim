@@ -17,6 +17,15 @@ public static class MoneyStartup
     public static async Task<LauncherSettings> PrepareAsync(
         LauncherSettings s, Func<Func<LauncherSettings, LauncherSettings>, LauncherSettings> update, MoneyMode effective, CancellationToken ct)
     {
+        // A paired server's machine id that isn't the derived value is its own MachineId, kept by an older version: it is cleared.
+        if (s.Money.PairedServers?.Any(HoldsRawMachineId) == true)
+            s = update(x => x with
+            {
+                Money = x.Money with
+                {
+                    PairedServers = x.Money.PairedServers?.Select(p => HoldsRawMachineId(p) ? p with { MachineId = null } : p).ToList(),
+                },
+            });
         if (effective == MoneyMode.Off) return s;
         if (s.Db.MoneyPassword == "")
             s = update(x => x.Db.MoneyPassword == "" ? x with { Db = x.Db with { MoneyPassword = Secrets.NewPassword(PasswordLength) } } : x);
@@ -26,6 +35,8 @@ public static class MoneyStartup
         await MoneySchema.EnsureAsync(conn, ct);
         return s;
     }
+
+    private static bool HoldsRawMachineId(PairedServer p) => p.MachineId is not null && !PairedServer.IsMachineKey(p.MachineId);
 
     /// <summary>
     /// <see cref="PrepareAsync"/>, but a failure is logged and leaves money unavailable instead of stopping the grid (money
