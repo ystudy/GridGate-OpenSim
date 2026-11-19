@@ -20,7 +20,7 @@
         {
             <p id="rs-gloebit-app">This computer's Gloebit app: @Model.App.Environment, key @GridGate.Launcher.Core.Money.GloebitRules.Masked(Model.App.Key).</p>
         }
-        <p>Gloebit runs inside each region, so this computer needs its own app from Gloebit's merchant tools. There is nothing to pair. Saving the app takes the owner's current two-factor code, which this computer checks itself, so nobody on the grid can reset it.</p>
+        <p>Gloebit runs inside each region, so this computer needs its own app from Gloebit's merchant tools. There is nothing to pair. Saving the app takes the owner's current two-factor code, which this computer checks itself, so nobody on the grid can reset it. Turn on two-factor here as soon as this computer is set up: it guards the app only once it is on.</p>
         @if (Model.IsOwner && Model.TwoFactorOn)
         {
             @await Html.PartialAsync("_GloebitForm", new GridGate.Launcher.Money.GloebitFormModel(Model.App, "/advanced/money?handler=Gloebit"),
