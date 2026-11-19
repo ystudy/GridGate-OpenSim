@@ -649,6 +649,20 @@ public sealed class ModuleSceneTests
     }
 
     [Fact]
+    public void With_a_money_module_that_charges_nothing_a_pass_needs_no_price_shown()
+    {
+        var (region, lmm, parcel, _) = PassParcel();
+        region.Scene.UnregisterModuleInterface<IMoneyModule>(region.Module);
+        region.Scene.RegisterModuleInterface<IMoneyModule>(new OpenSim.Region.OptionalModules.World.MoneyModule.SampleMoneyModule());
+        var unshown = new RecordingClient(SceneHelpers.GenerateAgentData(Stranger), region.Scene);
+
+        lmm.ClientParcelBuyPass(unshown, Stranger, parcel.LandData.LocalID);
+
+        WaitUntil(() => parcel.LandData.ParcelAccessList.Any(e => e.AgentID == Stranger));
+        Assert.Empty(unshown.Alerts);
+    }
+
+    [Fact]
     public void A_pass_bought_after_the_price_went_down_costs_the_lower_price()
     {
         var (region, lmm, parcel, buyer) = PassParcel();

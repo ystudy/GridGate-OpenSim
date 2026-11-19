@@ -395,7 +395,10 @@ namespace OpenSim.Groups
                         IFeeHold fee = null;
                         GroupRecord group = GetGroupRecord(inviteInfo.GroupID);
                         IMoneyModule money = scene.RequestModuleInterface<IMoneyModule>();
-                        // GridGate: with money on, a group whose record can't be read has no known fee: nobody joins it free
+                        // GridGate: a money module that never charges leaves joins as OpenSim has them
+                        if (!FeeHolds.Charges(money))
+                            money = null;
+                        // GridGate: with a money module that charges, a group whose record can't be read has no known fee: nobody joins it free
                         if (group == null && money != null)
                         {
                             if (remoteClient.AgentId == invitee)
@@ -1215,6 +1218,9 @@ namespace OpenSim.Groups
 
             GroupRecord groupRecord = GetGroupRecord(groupID);
             IMoneyModule money = remoteClient.Scene.RequestModuleInterface<IMoneyModule>();
+            // GridGate: a money module that never charges leaves joins as OpenSim has them
+            if (!FeeHolds.Charges(money))
+                money = null;
 
             // Should check to see if there's an outstanding invitation
 
@@ -1520,7 +1526,7 @@ namespace OpenSim.Groups
         /// </summary>
         private int JoinFeeOnAccept(GroupRecord group)
         {
-            if (group.MembershipFee <= 0 || m_sceneList[0].RequestModuleInterface<IMoneyModule>() == null)
+            if (group.MembershipFee <= 0 || !FeeHolds.Charges(m_sceneList[0].RequestModuleInterface<IMoneyModule>()))
                 return 0;
             return group.MembershipFee;
         }

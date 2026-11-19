@@ -27,6 +27,17 @@ namespace OpenSim.Framework
     public interface IUploadFeeKnown
     {
         bool UploadFeeKnown { get; }
+
+        /// <summary>What an uploader is told while <see cref="UploadFeeKnown"/> is false, and why.</summary>
+        string UploadFeeUnknownText { get; }
+    }
+
+    /// <summary>
+    /// GridGate: a money module that never takes a coin (OpenSim's own SampleMoneyModule, which every region loads when no
+    /// money module is chosen). Fee checks that exist to protect a payer don't apply with it: nothing is charged.
+    /// </summary>
+    public interface IMoneyModuleNeverCharges
+    {
     }
 
     /// <summary>GridGate: a fee held before its action.</summary>
@@ -44,6 +55,9 @@ namespace OpenSim.Framework
     public static class FeeHolds
     {
         private static readonly IFeeHold Nothing = new NothingHeld();
+
+        /// <summary>True for a money module that takes coins: there is one, and it isn't one that never charges.</summary>
+        public static bool Charges(IMoneyModule money) => money != null && money is not IMoneyModuleNeverCharges;
 
         /// <summary>
         /// The money module's own hold when it is an <see cref="IFeeHoldModule"/> (which decides the fee itself). Otherwise

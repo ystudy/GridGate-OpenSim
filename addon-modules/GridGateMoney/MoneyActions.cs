@@ -45,7 +45,8 @@ internal interface IMoneyView
 /// transaction id and is sent again with that same id while the service is unavailable: the service answers a repeat with
 /// its first answer, so nothing is paid twice.
 /// </summary>
-internal sealed class MoneyActions(IMoneyService service, Guid regionId, Func<EconomyInfo?> economy, IMoneyView view)
+internal sealed class MoneyActions(IMoneyService service, Guid regionId, Func<EconomyInfo?> economy, IMoneyView view,
+    Func<EconomyInfo?>? refreshEconomy = null)
 {
     /// <summary>libomv's transaction types, which the viewer's notices are keyed by.</summary>
     public static readonly Type TransactionTypes = typeof(MoneyTransactionType);
@@ -372,6 +373,12 @@ internal sealed class MoneyActions(IMoneyService service, Guid regionId, Func<Ec
     {
         if (amount <= 0) return;
         var answer = Wait(service.ChargeAsync(Guid.NewGuid(), type, p.Who, amount, payTo, regionId, CancellationToken.None));
+        // As for a hold: a fee the ledger refuses as not its configured one is tried once more after reading the settings again.
+        if (!answer.Ok && answer.Code == "bad_amount" && FeeAfterChange(type, amount) is { } current)
+        {
+            amount = current;
+            answer = Wait(service.ChargeAsync(Guid.NewGuid(), type, p.Who, amount, payTo, regionId, CancellationToken.None));
+        }
         if (!answer.Ok)
         {
             view.Warn($"Uncollected {type} of {amount} from {p.AgentId}: {answer.Code}");
@@ -402,6 +409,13 @@ internal sealed class MoneyActions(IMoneyService service, Guid regionId, Func<Ec
         }
         var founder = payTo is { } f ? new MoneyWho(f, "") : null;
         var hold = Wait(service.HoldAsync(Guid.NewGuid(), type, p.Who, founder, amount, regionId, null, null, CancellationToken.None));
+        // The ledger refuses a fee that isn't its configured one: right after the owner changed it, this region's copy may be
+        // old. Read the settings again and hold the fee once more at the current one.
+        if (!hold.Ok && hold.Code == "bad_amount" && FeeAfterChange(type, amount) is { } current)
+        {
+            amount = current;
+            hold = Wait(service.HoldAsync(Guid.NewGuid(), type, p.Who, founder, amount, regionId, null, null, CancellationToken.None));
+        }
         if (!hold.Ok || hold.HoldId is not { } holdId)
         {
             // A hold the service did place after all, without an answer, is returned to the payer when it expires.
@@ -452,8 +466,26 @@ internal sealed class MoneyActions(IMoneyService service, Guid regionId, Func<Ec
     private bool FeesKnown(Payer p)
     {
         if (economy() is not null) return true;
-        view.Tell(p.AgentId, MoneyRules.NoEconomyText);
+        // An unpaired Region Server never learns the fees: say so, not "try again in a minute".
+        view.Tell(p.AgentId, service is UnpairedMoneyService ? MoneyRules.NotPairedUploadText : MoneyRules.NoEconomyText);
         return false;
+    }
+
+    /// <summary>
+    /// The fee to send again after the ledger refused <paramref name="sent"/> as a <paramref name="type"/> fee, or null when
+    /// nothing says it was out of date: reads the settings again, and answers the fee they give now when that differs from
+    /// what was sent. A classified fee is the configured one; an upload fee is the configured one when that was what was
+    /// sent (a mesh priced above it stays as quoted).
+    /// </summary>
+    private int? FeeAfterChange(string type, int sent)
+    {
+        if (refreshEconomy is null || type is not ("upload_fee" or "classified_fee")) return null;
+        var before = economy();
+        if (refreshEconomy() is not { } now) return null;
+        long fee = type == "classified_fee"
+            ? now.ClassifiedFee
+            : before is null || sent <= before.UploadFee ? Math.Max(sent, now.UploadFee) : sent;
+        return fee > 0 && fee != sent ? (int)Math.Min(fee, int.MaxValue) : null;
     }
 
     /// <summary>

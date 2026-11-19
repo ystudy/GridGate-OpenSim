@@ -137,6 +137,84 @@ public sealed class OpenSimMoneyPathTests
         Assert.Equal("upload_fee", Assert.Single(region.Service.Of("hold")).Args[0]);
     }
 
+    /// <summary>While the fee isn't known it reads 0, which isn't free: texture data declared as a notecard stores nothing.</summary>
+    [Fact]
+    public void A_udp_upload_of_texture_data_declared_free_before_the_fee_is_known_is_refused_and_not_stored()
+    {
+        var (region, uploads, uploader) = UploadRegion(balance: 100);
+        region.ForgetEconomy();
+
+        Upload(uploads, uploader, type: (sbyte)AssetType.Notecard, createAs: (sbyte)AssetType.Notecard, data: TextureData);
+
+        uploader.WaitForAlert("The upload fee isn't known yet");
+        Assert.Null(region.Scene.AssetService.Get(UploadAssetId.ToString()));
+        Assert.Empty(region.Service.Of("hold"));
+        Assert.Empty(region.Service.Of("charge"));
+    }
+
+    /// <summary>A notecard is still free while the fee isn't known.</summary>
+    [Fact]
+    public void A_udp_notecard_is_still_stored_before_the_fee_is_known()
+    {
+        var (region, uploads, uploader) = UploadRegion(balance: 100);
+        region.ForgetEconomy();
+
+        Assert.True(Upload(uploads, uploader, type: (sbyte)AssetType.Notecard, createAs: (sbyte)AssetType.Notecard, data: NotecardData));
+
+        Assert.NotNull(region.Scene.AssetService.Get(UploadAssetId.ToString()));
+    }
+
+    private static void MakeUnpaired(MoneyScene region)
+    {
+        var client = typeof(GridGateMoneyModule).GetField("_client", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        client.SetValue(region.Module, new UnpairedMoneyService());
+        region.ForgetEconomy();
+    }
+
+    /// <summary>An unpaired Region Server never learns the fees: its uploads that cost a fee are refused, and it says it isn't paired.</summary>
+    [Fact]
+    public void A_udp_upload_on_an_unpaired_server_is_refused_and_says_it_is_not_paired()
+    {
+        var (region, uploads, uploader) = UploadRegion(balance: 100);
+        MakeUnpaired(region);
+
+        Upload(uploads, uploader);
+
+        uploader.WaitForAlert("isn't paired with the money service yet");
+        Assert.Null(region.Scene.AssetService.Get(UploadAssetId.ToString()));
+        Assert.Empty(Textures(region));
+    }
+
+    [Fact]
+    public void A_caps_upload_request_on_an_unpaired_server_says_it_is_not_paired()
+    {
+        var (region, caps) = CapsRegion();
+        MakeUnpaired(region);
+
+        var response = caps.NewAgentInventoryRequest(new LLSDAssetUploadRequest { asset_type = "sound", inventory_type = "sound", name = "A thing" });
+
+        Assert.Equal("error", response.state);
+        Assert.Contains("isn't paired with the money service yet", response.error.message);
+        Assert.DoesNotContain("minute", response.error.message);
+    }
+
+    /// <summary>
+    /// The owner raised the upload fee less than a minute ago: the region's copy is old, the ledger refuses the old fee,
+    /// and the upload goes through after the settings are read again.
+    /// </summary>
+    [Fact]
+    public void A_udp_upload_refused_for_an_out_of_date_fee_is_held_again_at_the_new_fee()
+    {
+        var (region, uploads, uploader) = UploadRegion(balance: 100);
+        region.Service.Economy = region.Service.Economy! with { UploadFee = 20 };
+        region.Service.Queue("hold", new MoneyAnswer("bad_amount"));
+
+        Assert.True(Upload(uploads, uploader));
+
+        Assert.Single(Textures(region));
+        Assert.Equal([(long)UploadFee, 20L], region.Service.Of("hold").Select(c => c.Args[3]));
+    }
+
     /// <summary>The fee is for the type the upload was checked as: a texture can't be saved under a type with no fee.</summary>
     [Fact]
     public void A_udp_texture_saved_as_a_notecard_is_refused_and_not_charged()
@@ -943,6 +1021,56 @@ public sealed class OpenSimMoneyPathTests
 
         AssertNoHoldAndNotAdded(g);
         AssertOffersFee(g, FreshInvitation(g), JoinFee);
+    }
+
+    /// <summary>The region has OpenSim's own money module, which charges nothing (money is off): groups work as in OpenSim.</summary>
+    private static void UseTheSampleMoneyModule(GroupsRig g)
+    {
+        g.Region.Scene.UnregisterModuleInterface<IMoneyModule>(g.Region.Module);
+        g.Region.Scene.RegisterModuleInterface<IMoneyModule>(new OpenSim.Region.OptionalModules.World.MoneyModule.SampleMoneyModule());
+    }
+
+    [Theory]
+    [InlineData(V2)]
+    [InlineData(Flotsam)]
+    public void With_a_money_module_that_charges_nothing_a_group_that_cannot_be_read_is_still_joined(string module)
+    {
+        var g = GroupsRegion(module);
+        UseTheSampleMoneyModule(g);
+        g.Service.NoRecord = true;
+
+        g.Groups.JoinGroupRequest(g.Joiner, GroupId);
+
+        Assert.Contains(Buyer, g.Service.Members);
+        Assert.Empty(g.Region.Service.Calls);
+    }
+
+    [Theory]
+    [InlineData(V2)]
+    [InlineData(Flotsam)]
+    public void With_a_money_module_that_charges_nothing_an_invitation_to_a_paid_group_says_there_is_no_cost(string module)
+    {
+        var g = GroupsRegion(module);
+        UseTheSampleMoneyModule(g);
+
+        var sent = Invite(g);
+
+        Assert.EndsWith("There is no cost to join this group.", sent.message, StringComparison.Ordinal);
+        Assert.Equal(new byte[20], sent.binaryBucket);
+    }
+
+    [Theory]
+    [InlineData(V2)]
+    [InlineData(Flotsam)]
+    public void With_a_money_module_that_charges_nothing_a_paid_group_is_joined_without_a_fee_shown(string module)
+    {
+        var g = GroupsRegion(module);
+        UseTheSampleMoneyModule(g);
+
+        g.Groups.JoinGroupRequest(g.Joiner, GroupId);
+
+        Assert.Contains(Buyer, g.Service.Members);
+        Assert.Empty(g.Joiner.Alerts);
     }
 
     [Theory]

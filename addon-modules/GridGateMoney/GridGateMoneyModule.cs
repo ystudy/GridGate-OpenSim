@@ -136,7 +136,7 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
             _healthTimer ??= TimeProvider.System.CreateTimer(_ => TimedHealth(), null, HealthEvery, HealthEvery);
         }
         var regionId = scene.RegionInfo.RegionID;
-        _actions[regionId] = new MoneyActions(_client!, regionId.Guid, KnownEconomy, new View(this)) { Pause = _payoutPause };
+        _actions[regionId] = new MoneyActions(_client!, regionId.Guid, KnownEconomy, new View(this), FetchEconomyNow) { Pause = _payoutPause };
         scene.EventManager.OnNewClient += OnNewClient;
         scene.EventManager.OnClientClosed += OnClientClosed;
         // Where avatars are: reported in the background, never holding up a teleport or crossing. A teleport or crossing is
@@ -249,6 +249,22 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
 
     /// <summary><see cref="KnownEconomy"/>, or <see cref="NoEconomy"/> before the service ever answered.</summary>
     private EconomyInfo Economy() => KnownEconomy() ?? NoEconomy;
+
+    /// <summary>
+    /// Asks the service for its settings now, on the caller's thread, and keeps them: for a fee the ledger refused as not the
+    /// configured one, right after it changed. Null when the service didn't answer.
+    /// </summary>
+    private EconomyInfo? FetchEconomyNow()
+    {
+        if (_client is null) return null;
+        var info = _client.EconomyAsync(default).GetAwaiter().GetResult();
+        lock (_economyGate)
+        {
+            if (info is not null) _economy = info;
+            _economyAt = DateTime.UtcNow;
+        }
+        return info;
+    }
 
     private void RefreshEconomy()
     {
@@ -471,6 +487,14 @@ public sealed class GridGateMoneyModule : ISharedRegionModule, IMoneyModule, IVi
 
     /// <summary>False until the money service has answered: <see cref="UploadCharge"/> reads 0 then, which isn't "free".</summary>
     public bool UploadFeeKnown => KnownEconomy() is not null;
+
+    /// <summary>
+    /// Why uploads that cost a fee are refused while the fee isn't known: a Region Server that isn't paired never learns it
+    /// (they stay refused until it is paired); otherwise the service hasn't answered yet.
+    /// </summary>
+    public string UploadFeeUnknownText => _client is UnpairedMoneyService
+        ? MoneyRules.NotPairedUploadText
+        : "The upload fee isn't known yet. Please try again in a minute.";
 
     /// <summary>Always 0: GridGate takes no fee for making a group (money design §7.3).</summary>
     public int GroupCreationCharge => 0;

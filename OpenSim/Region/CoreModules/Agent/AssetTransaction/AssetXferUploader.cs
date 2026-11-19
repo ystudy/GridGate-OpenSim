@@ -631,6 +631,14 @@ namespace OpenSim.Region.CoreModules.Agent.AssetTransaction
             if (!m_charged && !m_asset.Temporary && (m_feeDue || UploadData.IsFeeData(m_asset.Data)))
             {
                 IMoneyModule mm = m_Scene.RequestModuleInterface<IMoneyModule>();
+                // GridGate: while the money module doesn't know the fee it reads 0, which isn't free: nothing is stored
+                if (mm is IUploadFeeKnown { UploadFeeKnown: false } feeNotKnown)
+                {
+                    m_transactions.RemoveXferUploader(m_transactionID);
+                    ourClient.SendAgentAlertMessage("Unable to upload asset. " + feeNotKnown.UploadFeeUnknownText, false);
+                    return false;
+                }
+
                 if (mm is not null && mm.UploadCharge > 0)
                 {
                     fee = FeeHolds.Take(mm, ourClient.AgentId, mm.UploadCharge, MoneyTransactionType.UploadCharge);

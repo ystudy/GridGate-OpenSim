@@ -662,7 +662,7 @@ namespace OpenSim.Region.CoreModules.World.Land
             {
                 // GridGate: a pass costs no more than the price the viewer was sent with the parcel's properties; a higher
                 // price, or none sent, is refused with the current price, and the next click pays it.
-                if (!LandObject.ShownPassPrices.MayCharge(remote_client.AgentId, ldata.GlobalID, cost))
+                if (FeeHolds.Charges(mm) && !LandObject.ShownPassPrices.MayCharge(remote_client.AgentId, ldata.GlobalID, cost))
                 {
                     remote_client.SendAgentAlertMessage(string.Format("The price of this pass is now {0}, not the one shown. Click Buy Pass again to pay it.", cost), false);
                     return;

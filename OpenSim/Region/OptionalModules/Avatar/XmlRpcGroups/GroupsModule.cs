@@ -451,7 +451,10 @@ namespace OpenSim.Region.OptionalModules.Avatar.XmlRpcGroups
                         IFeeHold fee = null;
                         GroupRecord group = m_groupData.GetGroupRecord(remoteAgentID, inviteInfo.GroupID, null);
                         IMoneyModule money = scene.RequestModuleInterface<IMoneyModule>();
-                        // GridGate: with money on, a group whose record can't be read has no known fee: nobody joins it free
+                        // GridGate: a money module that never charges leaves joins as OpenSim has them
+                        if (!FeeHolds.Charges(money))
+                            money = null;
+                        // GridGate: with a money module that charges, a group whose record can't be read has no known fee: nobody joins it free
                         if (group == null && money != null)
                         {
                             if (remoteAgentID == inviteInfo.AgentID)
@@ -1319,6 +1322,9 @@ namespace OpenSim.Region.OptionalModules.Avatar.XmlRpcGroups
             UUID agentID = GetRequestingAgentID(remoteClient);
             GroupRecord groupRecord = m_groupData.GetGroupRecord(agentID, groupID, null);
             IMoneyModule money = remoteClient.Scene.RequestModuleInterface<IMoneyModule>();
+            // GridGate: a money module that never charges leaves joins as OpenSim has them
+            if (!FeeHolds.Charges(money))
+                money = null;
             // Someone who is a member already pays nothing again (the reply says the join worked), and only one paid join of
             // theirs to a group goes on at a time.
             IFeeHold fee = null;
@@ -1656,7 +1662,7 @@ namespace OpenSim.Region.OptionalModules.Avatar.XmlRpcGroups
         /// </summary>
         private int JoinFeeOnAccept(GroupRecord group)
         {
-            if (group == null || group.MembershipFee <= 0 || m_sceneList[0].RequestModuleInterface<IMoneyModule>() == null)
+            if (group == null || group.MembershipFee <= 0 || !FeeHolds.Charges(m_sceneList[0].RequestModuleInterface<IMoneyModule>()))
                 return 0;
             return group.MembershipFee;
         }
