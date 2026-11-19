@@ -493,6 +493,8 @@ internal sealed class MoneyActions(IMoneyService service, Guid regionId, Func<Ec
     /// attempts and the waits between them together) is spent; an attempt the budget cuts short got no answer. Any final
     /// answer but Ok is <see cref="MoneyAnswer.Lost"/> when an attempt got no answer: that attempt may have gone through,
     /// whatever a later one was told.
+    /// A txn id must never be reused for a payment the viewer was told failed: every new payment takes a new id, and only
+    /// the retries here repeat one.
     /// </summary>
     private async Task<MoneyAnswer> RetriedAsync(Func<CancellationToken, Task<MoneyAnswer>> send, TimeSpan? budget = null)
     {
