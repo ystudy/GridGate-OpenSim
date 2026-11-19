@@ -27,16 +27,16 @@ public sealed class GuestPagesHubTests
     {
         await using var f = Factory();
         var page = await PageAsync(await StaffAsync(f, "owner"), "/guest-pages");
-        Assert.Equal(["/splash", "/security/legal", "/security/wording", "/security/languages", "/security/bots", "/security/iar", "/security/starter-avatars", "/security/email", "/advanced/password-reset"],
+        Assert.Equal(["/splash", "/front-page", "/security/legal", "/security/wording", "/security/languages", "/security/bots", "/security/iar", "/security/starter-avatars", "/security/email", "/advanced/password-reset"],
             page.QuerySelectorAll("main .list-group a").Select(a => a.GetAttribute("href")));
     }
 
     [Fact]
-    public async Task Admin_sees_only_the_splash_page()
+    public async Task Admin_sees_the_splash_and_front_pages()
     {
         await using var f = Factory();
         var page = await PageAsync(await StaffAsync(f, "admin"), "/guest-pages");
-        Assert.Equal(["/splash"], page.QuerySelectorAll("main .list-group a").Select(a => a.GetAttribute("href")));
+        Assert.Equal(["/splash", "/front-page"], page.QuerySelectorAll("main .list-group a").Select(a => a.GetAttribute("href")));
     }
 
     [Fact]

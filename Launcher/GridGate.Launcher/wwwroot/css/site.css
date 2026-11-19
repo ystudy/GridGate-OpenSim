@@ -405,3 +405,7 @@ header .signout { margin: 0; }
 .btn-check:checked + .starter-card { border-color: var(--bs-primary); box-shadow: 0 0 0 .2rem rgba(var(--bs-primary-rgb), .25); }
 .btn-check:focus-visible + .starter-card { outline: 2px solid var(--bs-primary); outline-offset: 2px; }
 .starter-thumb { width: 120px; }
+
+/* The Front page editor (spec 2026-11-19-front-page-design): small previews of the photo and place pictures. */
+.front-editor-photo { display: block; max-width: 24rem; width: 100%; aspect-ratio: 16 / 9; object-fit: cover; border-radius: var(--bs-border-radius); }
+.front-editor-thumb { display: block; width: 10rem; aspect-ratio: 16 / 9; object-fit: cover; border-radius: var(--bs-border-radius); }

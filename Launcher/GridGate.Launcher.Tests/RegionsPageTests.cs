@@ -44,7 +44,7 @@ public sealed class RegionsPageTests : IAsyncLifetime
         var doc = await PageAsync();
 
         var top = doc.QuerySelectorAll("header nav > a.nav-link, header nav > .dropdown > a.dropdown-toggle").Select(a => a.TextContent.Trim()).ToArray();
-        Assert.Equal(["Home", "World", "People", "Splash page", "Settings"], top[..^1]);
+        Assert.Equal(["Home", "World", "People", "Guest pages", "Settings"], top[..^1]);
         Assert.Equal(6, top.Length); // the last is the admin's own menu, under their name
         Assert.Contains("active", doc.QuerySelector("header nav a.dropdown-toggle[href='/regions']")!.ClassName);
     }

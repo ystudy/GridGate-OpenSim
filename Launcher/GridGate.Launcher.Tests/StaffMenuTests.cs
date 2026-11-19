@@ -25,7 +25,7 @@ public sealed class StaffMenuTests
         Assert.Equal(["Home", "World", "People", "Guest pages", "Security", "Settings", "You"], Top(StaffRole.Owner, plan, canApprove: true));
         Assert.Equal(["Regions", "Estates", "Hypergrid links", "OAR library", "Recently deleted"], Inside(StaffRole.Owner, plan, "World"));
         Assert.Equal(["Find a person", "Sign-ups", "Tickets", "Groups", "Takedowns", "Staff"], Inside(StaffRole.Owner, plan, "People", canApprove: true));
-        Assert.Equal(["Splash page", "Legal pages", "Page wording", "Languages", "Sign-up and bots", "Inventory backups", "Starter avatars", "Email server", "Password reset"], Inside(StaffRole.Owner, plan, "Guest pages"));
+        Assert.Equal(["Splash page", "Front page", "Legal pages", "Page wording", "Languages", "Sign-up and bots", "Inventory backups", "Starter avatars", "Email server", "Password reset"], Inside(StaffRole.Owner, plan, "Guest pages"));
         Assert.Equal(["Plan", "Network", "Database", "Region defaults", "Money", "Logs"], Inside(StaffRole.Owner, plan, "Settings"));
         Assert.Equal(["Sessions", "Two-factor", "Email notices"], Inside(StaffRole.Owner, plan, "You"));
     }
@@ -33,7 +33,8 @@ public sealed class StaffMenuTests
     [Fact]
     public void Admin_on_a_grid_plan()
     {
-        Assert.Equal(["Home", "World", "People", "Splash page", "Settings", "You"], Top(StaffRole.Admin, OwnerPlan.Local, canApprove: true));
+        Assert.Equal(["Home", "World", "People", "Guest pages", "Settings", "You"], Top(StaffRole.Admin, OwnerPlan.Local, canApprove: true));
+        Assert.Equal(["Splash page", "Front page"], Inside(StaffRole.Admin, OwnerPlan.Local, "Guest pages"));
         Assert.Equal(["Find a person", "Sign-ups", "Tickets", "Groups", "Takedowns"], Inside(StaffRole.Admin, OwnerPlan.Local, "People", canApprove: true));
         Assert.Equal(["Find a person", "Tickets", "Groups", "Takedowns"], Inside(StaffRole.Admin, OwnerPlan.Local, "People"));
     }
@@ -90,9 +91,13 @@ public sealed class StaffMenuTests
     [Fact]
     public void A_single_link_is_not_marked_on_a_hub_it_does_not_link_to()
     {
-        var groups = StaffMenu.For(StaffRole.Admin, On(OwnerPlan.Local), true);
-        Assert.Null(StaffMenu.Active(groups, "/guest-pages")); // the admin's Guest pages group is the Splash page link
-        Assert.Equal("Guest pages", StaffMenu.Active(groups, "/splash")!.Text);
+        // A supervisor's World group is the one Hypergrid links link (the admin's Guest pages group has two items now: Splash
+        // page and Front page).
+        var groups = StaffMenu.For(StaffRole.Supervisor, On(OwnerPlan.Local), false);
+        var world = groups.Single(g => g.Text == "World");
+        Assert.True(world.IsSingle);
+        Assert.Null(StaffMenu.Active(groups, world.Href));
+        Assert.Equal("World", StaffMenu.Active(groups, world.Items[0].Href)!.Text);
     }
 
     [Theory]
