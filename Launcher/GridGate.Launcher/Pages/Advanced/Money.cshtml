@@ -28,7 +28,14 @@
         }
         else if (Model.IsOwner)
         {
-            <p id="rs-gloebit-two-factor">Saving the Gloebit app needs two-factor sign-in, which isn't on for your account on this computer. <a href="@GridGate.Launcher.Security.OwnerCodeStep.TurnOnPath">Turn on two-factor</a>, then come back here.</p>
+            @if (Model.TwoFactorStatus == GridGate.Launcher.Security.OwnerCodeResult.Unreadable)
+            {
+                <p id="rs-gloebit-two-factor">Saving the Gloebit app needs your two-factor code, which can't be checked right now: this computer's two-factor file can't be read.</p>
+            }
+            else
+            {
+                <p id="rs-gloebit-two-factor">Saving the Gloebit app needs two-factor sign-in, which isn't on for your account on this computer. <a href="@GridGate.Launcher.Security.OwnerCodeStep.TurnOnPath">Turn on two-factor</a>, then come back here.</p>
+            }
         }
         else
         {

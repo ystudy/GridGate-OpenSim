@@ -40,7 +40,14 @@
         }
         @if (Model.NeedsTwoFactor)
         {
-            <p class="join-two-factor">Moving to another grid takes your two-factor code, and two-factor sign-in isn't on for your account on this computer. <a href="@GridGate.Launcher.Security.OwnerCodeStep.TurnOnPath">Turn on two-factor</a>, then come back here.</p>
+            @if (Model.TwoFactorUnreadable)
+            {
+                <p class="join-two-factor">Moving to another grid takes your two-factor code, which can't be checked right now: this computer's two-factor file can't be read.</p>
+            }
+            else
+            {
+                <p class="join-two-factor">Moving to another grid takes your two-factor code, and two-factor sign-in isn't on for your account on this computer. <a href="@GridGate.Launcher.Security.OwnerCodeStep.TurnOnPath">Turn on two-factor</a>, then come back here.</p>
+            }
         }
         else
         {

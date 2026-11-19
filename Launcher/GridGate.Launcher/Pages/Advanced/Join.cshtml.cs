@@ -37,7 +37,10 @@ public sealed class JoinModel(IGridController grid, Func<LauncherSettings> setti
     [BindProperty] public string? TwoFactorCode { get; set; }
 
     /// <summary>The owner has two-factor on here: the confirm view asks for a code, otherwise it says where to turn two-factor on.</summary>
-    public bool TwoFactorOn => OwnerCodeStep.IsSetUp(twoFactor, User);
+    public bool TwoFactorOn => TwoFactorStatus == OwnerCodeResult.Ok;
+
+    /// <summary>Why two-factor can't be asked for, when it can't: it isn't on, or this computer's two-factor file can't be read.</summary>
+    public OwnerCodeResult TwoFactorStatus => OwnerCodeStep.CanAsk(twoFactor, User);
 
     /// <summary>The join information the first post read, shown with "Join this grid"; null shows the address form.</summary>
     public JoinedGrid? Found { get; private set; }
@@ -94,8 +97,8 @@ public sealed class JoinModel(IGridController grid, Func<LauncherSettings> setti
 
         // The owner here is a grid account, which the Grid Asset Server's admins can reset: so a current two-factor code of this
         // computer's own is needed too. Without two-factor on, nothing more is asked.
-        if (!OwnerCodeStep.IsSetUp(twoFactor, User))
-            return Refuse(read, OwnerCodeStep.Words(OwnerCodeResult.NotSetUp), OwnerCodeStep.AuditResult(OwnerCodeResult.NotSetUp));
+        if (OwnerCodeStep.CanAsk(twoFactor, User) is var asked and not OwnerCodeResult.Ok)
+            return Refuse(read, OwnerCodeStep.Words(asked), OwnerCodeStep.AuditResult(asked));
 
         var before = settings();
         if (before.Setup.Owner is not null && string.IsNullOrWhiteSpace(password))

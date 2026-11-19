@@ -37,6 +37,9 @@ public sealed class MoneyModel(IGridController grid, MoneyGate gate, IMoneyPairC
 
     /// <summary>The owner has two-factor on here; saving the Gloebit app needs a code from it.</summary>
     public bool TwoFactorOn { get; private set; }
+
+    /// <summary>Why two-factor can't be asked for, when it can't: it isn't on, or this computer's two-factor file can't be read.</summary>
+    public OwnerCodeResult TwoFactorStatus { get; private set; }
     public string? Error { get; private set; }
     public string? Notice { get; private set; }
 
@@ -131,10 +134,10 @@ public sealed class MoneyModel(IGridController grid, MoneyGate gate, IMoneyPairC
         }
         // The owner on a Region Server is a grid account, which the Grid Asset Server's admins can reset: so a current two-factor code
         // of this computer's own is needed too.
-        if (!OwnerCodeStep.IsSetUp(twoFactor, User))
+        if (OwnerCodeStep.CanAsk(twoFactor, User) is var asked and not OwnerCodeResult.Ok)
         {
-            audit.Write(User, Ip, "money-gloebit", "money", OwnerCodeStep.AuditResult(OwnerCodeResult.NotSetUp));
-            Error = OwnerCodeStep.Words(OwnerCodeResult.NotSetUp);
+            audit.Write(User, Ip, "money-gloebit", "money", OwnerCodeStep.AuditResult(asked));
+            Error = OwnerCodeStep.Words(asked);
             Show();
             return Page();
         }
@@ -188,7 +191,8 @@ public sealed class MoneyModel(IGridController grid, MoneyGate gate, IMoneyPairC
         Gloebit = GridMode == MoneyMode.Gloebit;
         CanPair = gate.Approved(MoneyMode.Play) && !Gloebit;
         App = s.Money.Gloebit;
-        TwoFactorOn = OwnerCodeStep.IsSetUp(twoFactor, User);
+        TwoFactorStatus = OwnerCodeStep.CanAsk(twoFactor, User);
+        TwoFactorOn = TwoFactorStatus == OwnerCodeResult.Ok;
         var p = s.Money.Pairing;
         PairedAt = p?.PairedAt;
         State = p is null || s.Join is not { } join || !string.Equals(p.GridHost, join.Host, StringComparison.OrdinalIgnoreCase) ? PairState.NotPaired
