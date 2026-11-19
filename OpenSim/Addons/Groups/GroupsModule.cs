@@ -430,9 +430,11 @@ namespace OpenSim.Groups
                                     return;
                                 }
 
-                                // The fee this invitation showed: a fee offered again by this module replaces the stored one
-                                // (the stored one is the fee before it went up), otherwise the stored fee, otherwise unknown.
-                                int? offered = m_joinFeeOffers.Find(inviteID) ?? inviteInfo.Fee;
+                                // The fee this invitation showed: only what this module offered. The fee stored with an invitation
+                                // isn't tied to the message the invitee saw (another program can write either), so an invitation
+                                // this module didn't send offers its fee first, at the cost of a second click.
+                                // GridGate: the stored fee (inviteInfo.Fee) is no longer charged on its own.
+                                int? offered = m_joinFeeOffers.Find(inviteID);
                                 if (offered == null || current > offered.Value)
                                 {
                                     // The fee is not the one shown: add nobody, hold nothing, and ask again at today's fee.

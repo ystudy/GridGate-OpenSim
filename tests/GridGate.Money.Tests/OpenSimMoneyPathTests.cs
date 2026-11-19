@@ -844,6 +844,7 @@ public sealed class OpenSimMoneyPathTests
     public void Accepting_a_group_invitation_holds_and_completes_the_join_fee()
     {
         var g = GroupsRegion(V2);
+        Invite(g);
         var added = AddedBeforeHold(g);
 
         AcceptInvitation(g);
@@ -924,6 +925,19 @@ public sealed class OpenSimMoneyPathTests
     {
         var g = GroupsRegion(module);
         g.Service.StoredFee = null; // as an older region stored it; this module never offered it either
+
+        AcceptInvitation(g);
+
+        AssertNoHoldAndNotAdded(g);
+        AssertOffersFee(g, FreshInvitation(g), JoinFee);
+    }
+
+    /// <summary>An invitation another program stored, with a fee this module never offered the invitee, offers the fee first.</summary>
+    [Fact]
+    public void An_invitation_this_module_did_not_send_is_not_charged_on_its_stored_fee()
+    {
+        var g = GroupsRegion(V2);
+        g.Service.StoredFee = 5000; // written by another program, not tied to the message the invitee saw
 
         AcceptInvitation(g);
 
