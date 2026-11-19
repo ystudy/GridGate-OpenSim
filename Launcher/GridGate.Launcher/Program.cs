@@ -96,6 +96,7 @@ try
     LauncherPaths.CreateOwnerOnly(paths.Data);
     LauncherPaths.CreateOwnerOnly(paths.DataProtectionKeys);
     LauncherPaths.CreateOwnerOnly(paths.Security);
+    LauncherPaths.CreateOwnerOnly(paths.Front);
     LauncherPaths.CreateOwnerOnly(paths.Guests);
     LauncherPaths.CreateOwnerOnly(paths.StarterAvatars);
     LauncherPaths.CreateOwnerOnly(paths.Email);
@@ -392,6 +393,13 @@ builder.Services.AddSingleton(sp => new SplashStore(paths, sp.GetRequiredService
 {
     PictureExists = sp.GetRequiredKeyedService<PictureStore>("splash").Exists,
 });
+// The public front page (spec 2026-11-19-front-page-design): its settings and its own pictures, kept apart from the splash page's.
+builder.Services.AddKeyedSingleton("front", (sp, _) => new PictureStore(paths.FrontImages, sp.GetRequiredService<TimeProvider>(),
+    sp.GetRequiredService<ILogger<PictureStore>>()));
+builder.Services.AddSingleton(sp => new GridGate.Launcher.Core.Front.FrontPageStore(paths, sp.GetRequiredService<ILogger<GridGate.Launcher.Core.Front.FrontPageStore>>())
+{
+    PictureExists = sp.GetRequiredKeyedService<PictureStore>("front").Exists,
+});
 builder.Services.AddSingleton(sp => new ThemeStore(paths, sp.GetRequiredKeyedService<PictureStore>("theme"), sp.GetRequiredService<ILogger<ThemeStore>>()));
 builder.Services.AddSingleton<SplashSnapshot>();
 // The Home dashboard's counts (design 2026-11-05-dashboard), cached a minute.
@@ -411,6 +419,8 @@ builder.Services.AddSingleton<GridGate.Launcher.Dashboard.IServiceChecks, GridGa
 builder.Services.AddSingleton<GridGate.Launcher.Dashboard.DashboardSnapshot>();
 builder.Services.AddSingleton<SplashPictureCleanup>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<SplashPictureCleanup>());
+builder.Services.AddSingleton<GridGate.Launcher.Front.FrontPictureCleanup>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<GridGate.Launcher.Front.FrontPictureCleanup>());
 builder.Services.AddSingleton<GridActions>();
 builder.Services.AddSingleton<RegionActions>();
 builder.Services.AddSingleton<RegionRestarts>();
