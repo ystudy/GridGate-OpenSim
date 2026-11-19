@@ -86,13 +86,13 @@ public sealed class ButtonIconsTests
 
         Assert.Equal(HttpStatusCode.OK, r.StatusCode);
         var page = new HtmlParser().ParseDocument(await r.Content.ReadAsStringAsync(Ct));
-        var signIn = page.QuerySelector("main form#front-sign-in button[type=submit]")!;
+        var signIn = page.QuerySelector("main a#front-main")!; // sign-up isn't open here, so the main button is Sign in
         Assert.Equal("/img/icons.svg#sign-in", signIn.QuerySelector("svg.btn-icon use")!.GetAttribute("href"));
         Assert.Equal("true", signIn.QuerySelector("svg")!.GetAttribute("aria-hidden"));
         Assert.Equal("Sign in", signIn.TextContent.Trim());
-        Assert.Equal("/img/icons.svg#plus", page.QuerySelector("main a[href='/signup'] svg use")!.GetAttribute("href"));
+        Assert.Equal("/img/icons.svg#link", page.QuerySelector("main a#front-connect svg use")!.GetAttribute("href"));
         Assert.Equal("/img/icons.svg#shield", page.QuerySelector("footer a#staff-link svg use")!.GetAttribute("href"));
         Assert.Equal("/img/icons.svg#help", page.QuerySelector("header a#help-link svg use")!.GetAttribute("href"));
-        Assert.Equal("guest-site", page.Body!.GetAttribute("class")); // the public look, in the narrow, centred column
+        Assert.Equal("guest-site page-wide", page.Body!.GetAttribute("class")); // the public look; the front page uses the wide column
     }
 }

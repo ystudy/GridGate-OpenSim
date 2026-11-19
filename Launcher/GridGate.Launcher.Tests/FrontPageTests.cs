@@ -55,8 +55,9 @@ public sealed class FrontPageTests
         Assert.Equal(HttpStatusCode.OK, r.StatusCode); // answered at "/", not redirected
         var page = new HtmlParser().ParseDocument(await r.Content.ReadAsStringAsync(Ct));
         Assert.Contains("Avalon", page.QuerySelector("main")!.TextContent);
-        Assert.Equal("/guest/sign-in", page.QuerySelector("main form#front-sign-in")!.GetAttribute("action"));
-        Assert.Equal("Create an account", page.QuerySelector("main a[href='/signup']")!.TextContent.Trim());
+        // Sign-up isn't open on this grid, so the front page's main button is Sign in (spec 2026-11-19-front-page-design §1).
+        Assert.Equal("/guest/sign-in", page.QuerySelector("main a#front-main")!.GetAttribute("href"));
+        Assert.Equal("Sign in", page.QuerySelector("main a#front-main")!.TextContent.Trim());
         var staff = page.QuerySelector("footer a#staff-link[href='/login']")!;
         Assert.Equal("Staff sign in", staff.TextContent.Trim());
         Assert.All(page.QuerySelectorAll("header nav a"), a => // no staff navigation: only the public menu's pages
@@ -72,7 +73,7 @@ public sealed class FrontPageTests
         using var r = await Client(f).GetAsync("/home", Ct);
 
         Assert.Equal(HttpStatusCode.OK, r.StatusCode);
-        Assert.Contains("Create an account", await r.Content.ReadAsStringAsync(Ct));
+        Assert.Contains("id=\"front-hero\"", await r.Content.ReadAsStringAsync(Ct));
     }
 
     [Fact]
@@ -85,7 +86,7 @@ public sealed class FrontPageTests
         using var r = await client.GetAsync("/", Ct);
 
         Assert.Equal(HttpStatusCode.OK, r.StatusCode);
-        Assert.Contains("Create an account", await r.Content.ReadAsStringAsync(Ct));
+        Assert.Contains("id=\"front-hero\"", await r.Content.ReadAsStringAsync(Ct));
     }
 
     [Fact]
@@ -99,7 +100,7 @@ public sealed class FrontPageTests
         Assert.Equal(HttpStatusCode.OK, r.StatusCode);
         var html = await r.Content.ReadAsStringAsync(Ct);
         Assert.Contains("Your world", html);
-        Assert.DoesNotContain("Create an account", html);
+        Assert.DoesNotContain("id=\"front-hero\"", html);
     }
 
     [Fact]

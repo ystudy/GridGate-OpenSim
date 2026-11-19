@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using GridGate.Launcher.Core.Settings;
+using GridGate.Launcher.Front;
 using GridGate.Launcher.Security;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Mvc.RazorPages;
@@ -7,36 +8,33 @@ using Microsoft.AspNetCore.Mvc.RazorPages;
 namespace GridGate.Launcher.Pages;
 
 /// <summary>
-/// The public front page: the grid's name and the ways in. Anyone not signed in as staff gets it at "/" (SetupGate hands the
-/// bare root to this page); it is open to every address (<c>AdminNetworkFilter</c>) and, with the other guest pages, does not
-/// exist on a Region Server or a Connected Server (<c>GuestSideOnly</c>).
+/// The public front page (spec 2026-11-19-front-page-design): the grid's shop window for newcomers, with a photo, live numbers,
+/// featured places, news and the way in. Anyone not signed in as staff gets it at "/" (SetupGate hands the bare root to this
+/// page); it is open to every address (<c>AdminNetworkFilter</c>) and, with the other guest pages, does not exist on a Region
+/// Server or a Connected Server (<c>GuestSideOnly</c>).
 /// </summary>
-public sealed class HomeModel(Func<LauncherSettings> settings) : PageModel
+public sealed class HomeModel(Func<LauncherSettings> settings, FrontPageView front) : PageModel
 {
     public string GridName { get; private set; } = "";
 
-    /// <summary>The legal pages the operator has written, in link order (Terms, Privacy, Cookies, Contact).</summary>
-    public IReadOnlyList<string> LegalPages { get; private set; } = [];
+    public FrontView View { get; private set; } = null!;
 
-    /// <summary>The icon for a legal page's button.</summary>
-    public static string LegalIcon(string page) => page switch
+    /// <summary>Where the main button goes, the key of its words, and its icon.</summary>
+    public (string Href, string Key, string Icon) Main => View.Main switch
     {
-        Core.Guests.LegalPages.Terms => "document",
-        Core.Guests.LegalPages.Privacy => "lock",
-        Core.Guests.LegalPages.Cookies => "cookie",
-        Core.Guests.LegalPages.Contact => "mail",
-        _ => "link",
+        FrontMainButton.YourAccount => ("/guest", "Home.YourAccount", "person"),
+        FrontMainButton.CreateAccount => ("/signup", "Common.CreateAccount", "plus"),
+        _ => ("/guest/sign-in", "Common.SignIn", "sign-in"),
     };
 
     public async Task OnGetAsync()
     {
-        var s = settings();
-        GridName = s.GridName;
-        LegalPages = [.. Core.Guests.LegalPages.All.Where(p => Core.Guests.LegalPages.Get(s, p, GridGate.Launcher.Resident.ResidentLanguageFilter.Current(HttpContext)) is not null)];
-        // The sign-in card posts to /guest/sign-in, which sees the guest cookie's user (or nobody), never the staff one. Its
-        // antiforgery token is made for HttpContext.User, so the page takes that same user first: otherwise a staff member
-        // looking at the guest side (Guest view) gets a 400 from the card. The header asks the staff cookie itself.
+        GridName = settings().GridName;
+        // Forms in this page's frame (the top bar's sign-out) post to pages that see the guest cookie's user (or nobody), never
+        // the staff one. Their antiforgery tokens are made for HttpContext.User, so the page takes that same user first.
         var guest = await HttpContext.AuthenticateAsync(AuthSchemes.Guest);
         HttpContext.User = guest.Succeeded ? guest.Principal! : new ClaimsPrincipal(new ClaimsIdentity());
+        View = await front.BuildAsync(GridGate.Launcher.Resident.ResidentLanguageFilter.Current(HttpContext), guest.Succeeded,
+            HttpContext.RequestAborted);
     }
 }

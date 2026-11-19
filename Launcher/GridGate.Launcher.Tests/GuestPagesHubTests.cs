@@ -127,7 +127,7 @@ public sealed class GuestPagesHubTests
         Assert.Null(staffPage.QuerySelector("header nav a#guest-side-link")); // not a menu group
 
         var front = await PageAsync(client, "/home");
-        Assert.NotNull(front.QuerySelector("main form#front-sign-in"));
+        Assert.NotNull(front.QuerySelector("main section#front-hero"));
         Assert.Equal("/", front.QuerySelector("header a#staff-side-link")!.GetAttribute("href"));
         Assert.Null(front.QuerySelector("a#staff-link")); // no "Staff sign in" for someone already signed in
     }

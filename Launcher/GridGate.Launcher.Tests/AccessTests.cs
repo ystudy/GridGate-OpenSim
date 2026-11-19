@@ -166,7 +166,7 @@ public sealed class AccessTests
         using var dashboard = await NoRedirect(f).GetAsync("/dashboard", Ct);
 
         Assert.Equal(HttpStatusCode.OK, root.StatusCode);
-        Assert.Contains("action=\"/guest/sign-in\"", await root.Content.ReadAsStringAsync(Ct)); // the front page's sign-in card
+        Assert.Contains("id=\"front-hero\"", await root.Content.ReadAsStringAsync(Ct)); // the front page
         Assert.Equal(HttpStatusCode.Redirect, dashboard.StatusCode);
         Assert.Equal("/login", LocationPath(dashboard));
     }
@@ -290,6 +290,10 @@ public sealed class AccessTests
             "route /welcome/images/{name}",
             // The grid's current logo (nothing else answers).
             "route /theme/images/{name}",
+            // The public front page's pictures while it shows them, and the map tiles of its Automatic places (nothing else
+            // answers; spec 2026-11-19-front-page-design).
+            "route /front/images/{name}",
+            "route /front/map/{id:guid}.jpg",
             // A ready starter avatar's snapshot for sign-up step 2 (nothing else answers).
             "route /starter-avatars/{id:guid}.webp",
             // The viewer's economy helper (money plan 2): Firestorm's Buy currency and Buy land windows; it checks the

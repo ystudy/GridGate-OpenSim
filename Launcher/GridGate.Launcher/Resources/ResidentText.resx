@@ -130,10 +130,17 @@
   <data name="Legal.Privacy" xml:space="preserve"><value>Privacy</value></data>
   <data name="Legal.Cookies" xml:space="preserve"><value>Cookies</value></data>
   <data name="Home.Title" xml:space="preserve"><value>Welcome</value></data>
-  <data name="Home.Intro" xml:space="preserve"><value>Welcome. Sign in with your avatar to see how to connect, or create an account to join.</value></data>
-  <data name="Home.SignInIntro" xml:space="preserve"><value>Already have an avatar here? Use its name and password.</value></data>
-  <data name="Home.NewHere" xml:space="preserve"><value>New here? Make an avatar to join {0} and its world.</value></data>
-  <data name="Home.AboutGrid" xml:space="preserve"><value>About this grid</value></data>
+  <data name="Home.Intro" xml:space="preserve"><value>Make an avatar and explore our world with us.</value></data>
+  <data name="Home.YourAccount" xml:space="preserve"><value>Your account</value></data>
+  <data name="Home.HowToConnect" xml:space="preserve"><value>How to connect</value></data>
+  <data name="Home.InWorld" xml:space="preserve"><value>In-world now</value></data>
+  <data name="Home.RegionsOnline" xml:space="preserve"><value>Regions online</value></data>
+  <data name="Home.Registered" xml:space="preserve"><value>Registered avatars</value></data>
+  <data name="Home.Active" xml:space="preserve"><value>Active this month</value></data>
+  <data name="Home.NumbersLabel" xml:space="preserve"><value>The grid right now</value></data>
+  <data name="Home.FeaturedPlaces" xml:space="preserve"><value>Featured places</value></data>
+  <data name="Home.News" xml:space="preserve"><value>News</value></data>
+  <data name="Home.ReadyToJoin" xml:space="preserve"><value>Ready to join?</value></data>
   <data name="Home.StaffSignIn" xml:space="preserve"><value>Staff sign in</value></data>
   <data name="SignUp.Closed" xml:space="preserve"><value>This grid isn't open for sign-ups yet.</value></data>
   <data name="SignUp.SignInIfAccount" xml:space="preserve"><value>{0} if you already have an account.</value></data>
