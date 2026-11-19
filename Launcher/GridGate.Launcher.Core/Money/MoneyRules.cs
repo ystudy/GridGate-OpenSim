@@ -30,13 +30,13 @@ public static class MoneyRules
 
     /// <summary>
     /// Whether <paramref name="amount"/> is what the configured fees allow for a fee of <paramref name="type"/>: a classified
-    /// fee is exactly the configured fee, an upload fee a positive whole multiple of it. A fee configured as nothing allows
+    /// fee is exactly the configured fee, an upload fee at least the configured fee (a mesh costs more). A fee configured as nothing allows
     /// no such charge. Other fee types have no configured amount and pass.
     /// </summary>
     public static bool FeeAmountOk(string type, long amount, MoneySettings settings) => type switch
     {
         EntryType.ClassifiedFee => settings.ClassifiedFee > 0 && amount == settings.ClassifiedFee,
-        EntryType.UploadFee => settings.UploadFee > 0 && amount > 0 && amount % settings.UploadFee == 0,
+        EntryType.UploadFee => settings.UploadFee > 0 && amount >= settings.UploadFee,
         _ => true,
     };
 }

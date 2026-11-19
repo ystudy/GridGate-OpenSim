@@ -39,6 +39,7 @@ public sealed class MoneyPairServiceTests(MoneyMariaDb maria) : IClassFixture<Mo
     private bool _moneyDown;
     private MoneyPairing _pairing = null!;
     private RegionPins _pins = null!;
+    private MoneyAlerts _alerts = null!;
     private string _fingerprint = "";
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
@@ -83,7 +84,7 @@ public sealed class MoneyPairServiceTests(MoneyMariaDb maria) : IClassFixture<Mo
         _host = new MoneyServiceHost(ledger, presence, () => _settings, () => _mode, () => cert,
             new MoneyAuthFailures(time, loggers.CreateLogger<MoneyAuthFailures>()), loggers, new MoneyStatus(), _pairing,
             change => _saveFails ? throw new IOException("disk full") : _settings = change(_settings), pins, verification,
-            new MoneyLocations(MoneyConnections.Money(() => dbSettings), MoneyConnections.Robust(() => dbSettings), verification, presence, time));
+            new MoneyLocations(MoneyConnections.Money(() => dbSettings), MoneyConnections.Robust(() => dbSettings), verification, presence, time), _alerts = new MoneyAlerts(db.OpenMoney, time));
         await _host.StartAsync(Ct);
         _http = new HttpClient(new SocketsHttpHandler
         {
@@ -260,6 +261,57 @@ public sealed class MoneyPairServiceTests(MoneyMariaDb maria) : IClassFixture<Mo
         Assert.Single(_settings.Money.PairedServers!);
         Assert.Equal(HttpStatusCode.Unauthorized, (await Post("health", new { }, first)).Status);
         Assert.Equal(HttpStatusCode.OK, (await Post("health", new { }, second)).Status);
+    }
+
+    [Fact]
+    public async Task Five_wrong_proofs_from_this_address_block_it_but_leave_the_code_for_others()
+    {
+        await StartAsync();
+        var (code, _) = _pairing.Issue();
+        var nonce = NewNonce();
+        for (var i = 0; i < MoneyPairing.MaxWrongProofs; i++)
+            Assert.Equal("refused", (string?)(await Post("pair", new { host = ServerHost, firstPort = 9000, nonce, proof = new string('A', 64) })).Body!["code"]);
+
+        // Even the right proof from this address is refused now.
+        var right = await Post("pair", new { host = ServerHost, firstPort = 9000, nonce, proof = PairingProof.Client(code, _fingerprint, nonce, ServerHost) });
+
+        Assert.Equal("""{"code":"refused"}""", right.Raw);
+        Assert.Null(_settings.Money.PairedServers);
+        Assert.NotNull(_pairing.PendingUntil);
+        Assert.Equal(code, _pairing.Redeem(c => c == code, IPAddress.Parse("192.168.1.77")));
+    }
+
+    [Fact]
+    public async Task A_pairing_that_takes_over_another_servers_address_and_ports_is_noticed()
+    {
+        await StartAsync();
+        await PairAsync(machineId: "machine-one");
+        Assert.Empty(await _alerts.OpenAsync(Ct));
+
+        var key = await PairAsync(machineId: "machine-two");
+
+        var alert = Assert.Single(await _alerts.OpenAsync(Ct));
+        var now = Assert.Single(_settings.Money.PairedServers!);
+        Assert.Equal(AlertKind.ServerTookOver, alert.Kind);
+        Assert.Equal(AlertLevel.Notice, alert.Level);
+        Assert.Equal(MoneyVerifyText.KeyOf(now), alert.KeyId);
+        Assert.StartsWith("server:", alert.OtherKeyId);
+        Assert.NotEqual(alert.KeyId, alert.OtherKeyId);
+        Assert.Contains("took over the earlier server's address and ports", MoneyVerifyText.Alert(alert, "a region", MoneyVerifyText.KeyName(alert.KeyId, _settings), null));
+        Assert.Equal(PairedServer.HashOf(key), now.KeyHash);
+    }
+
+    [Fact]
+    public async Task The_same_computer_pairing_again_or_another_address_is_not_a_takeover()
+    {
+        await StartAsync();
+        await PairAsync(machineId: "machine-one");
+
+        await PairAsync(machineId: "machine-one");
+        await PairAsync(host: "192.168.1.21", machineId: "machine-two");
+        await PairAsync(host: "192.168.1.21", firstPort: 9200, machineId: "machine-three");
+
+        Assert.Empty(await _alerts.OpenAsync(Ct));
     }
 
     [Fact]

@@ -112,10 +112,21 @@ public static class MoneyPageRules
         MoneyOutcome.VisitorGridNotListed => "That visitor's grid isn't on your list.",
         MoneyOutcome.DuplicateReference or MoneyOutcome.AlreadyRefunded => "That entry was already refunded.",
         MoneyOutcome.UnknownEntry => "There is no entry with that number.",
+        MoneyOutcome.NotAVisitor => "Only a visitor's wallet can move to a new home address.",
         MoneyOutcome.OverDailyLimit => "That person has reached their daily limit, which counts the last 24 hours.",
         MoneyOutcome.OverKeyLimit => "That region program or Region Server has reached its daily money limit, which counts the last 24 hours.",
         MoneyOutcome.OutcomeUnknown => "The money database stopped answering while this was being saved, so it may have gone through. Check the history before you try again.",
         _ => "That couldn't be done (" + Code(o) + ").",
+    };
+
+    /// <summary>A refused fee refund in words for the owner; the coins come from whoever was paid, so the answer names who lacks them.</summary>
+    public static string FeeRefundWords(MoneyResult r) => r.Outcome switch
+    {
+        MoneyOutcome.Ok => "Refunded. The coins came back from " + (r.PayeeKind == "Fees" ? "Fees." : "the group's founder."),
+        MoneyOutcome.NotEnough when r.PayeeKind == "Fees" => "Fees doesn't have the coins to refund this.",
+        MoneyOutcome.NotEnough => "The founder doesn't have the coins to refund this.",
+        MoneyOutcome.NotAllowed => "That entry isn't an upload, classified or group join fee that this person paid and that went through a hold to the end.",
+        _ => Words(r.Outcome),
     };
 
     /// <summary>

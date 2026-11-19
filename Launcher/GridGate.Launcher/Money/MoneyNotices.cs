@@ -89,6 +89,8 @@ public sealed class MoneyNotices(MoneyGate gate, IMoneyBooks books, MoneyStatus 
                 $"{level}: a sale in {RegionName(a.RegionId, s)} was completed after its hold ran out, and the buyer couldn't pay it again; the seller wasn't paid. Open Money to check it.",
             AlertKind.ManyPayoutOwners =>
                 $"{level}: {KeyName(a.KeyId, s)} paid out for more than {MoneyRules.PayoutOwnersAlertAbove} different object owners in a day. Open Money to check it.",
+            AlertKind.ServerTookOver =>
+                $"{level}: {KeyName(a.KeyId, s)} took over the earlier server's address and ports. Open Money to check it was you.",
             _ => $"{level}: someone hit their daily spending limit {times} in a day. Open Money to check it.",
         };
     }

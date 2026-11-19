@@ -31,6 +31,12 @@ public sealed class PersonModel(MoneyGate gate, IMoneyBooks books, AuditLog audi
     /// <summary>Only the owner gives a person limits of their own.</summary>
     public bool CanSetLimits { get; private set; }
 
+    /// <summary>Only the owner gives back a fee that was taken through a hold.</summary>
+    public bool CanRefundFees { get; private set; }
+
+    /// <summary>Whether a history line is the opening entry of an upload, classified or group join fee held until its action finished.</summary>
+    public static bool IsHeldFee(HistoryLine line) => line.Type == EntryType.Hold && line.Reason is EntryType.UploadFee or EntryType.ClassifiedFee or EntryType.GroupJoinFee;
+
     /// <summary>"Daily spending: 2,300 of 10,000 used (grid default)."</summary>
     public static string LimitLine(string what, long used, long limit, bool own, DateTime? until) =>
         $"{what}: {N(used)} of {N(limit)} used ({(own ? "own limit" + (until is { } u ? $" until {u:yyyy-MM-dd HH:mm} UTC" : "") : "grid default")}).";
@@ -105,6 +111,30 @@ public sealed class PersonModel(MoneyGate gate, IMoneyBooks books, AuditLog audi
 
     public Task<IActionResult> OnPostTakeAsync(long amount, CancellationToken ct) =>
         MoveAsync("money-take", (who, staff) => books.TakeAsync(who, amount, staff, ct), amount, ct);
+
+    /// <summary>
+    /// Owner only: gives back an upload, classified or group join fee that was taken through a hold. The coins come from whoever
+    /// was paid (Fees, or the group's founder), not from the Grid bank, and are refused when that account hasn't got them.
+    /// Needs a reason; audited.
+    /// </summary>
+    public async Task<IActionResult> OnPostRefundFeeAsync(long entryId, CancellationToken ct)
+    {
+        if (!Owner) return StatusCode(StatusCodes.Status403Forbidden);
+        if (await NameAsync(ct) is not { } name) return NotFound();
+        if (string.IsNullOrWhiteSpace(Reason) || entryId <= 0)
+        {
+            Error = "Give the entry number and say why.";
+        }
+        else
+        {
+            var r = await books.RefundHeldFeeAsync(Who, entryId, new StaffAction(User.Identity?.Name ?? "staff", LogText.Clean(Reason.Trim(), MoneyPageRules.MaxReason)), ct);
+            audit.Write(User, Ip, "money-fee-refund", LogText.Clean(name), $"entry {entryId.ToString(CultureInfo.InvariantCulture)} " + MoneyPageRules.Code(r.Outcome));
+            if (r.Outcome == MoneyOutcome.Ok) Notice = MoneyPageRules.FeeRefundWords(r);
+            else Error = MoneyPageRules.FeeRefundWords(r);
+        }
+        await ShowAsync(ct);
+        return Page();
+    }
 
     public Task<IActionResult> OnPostFreezeAccountAsync(CancellationToken ct) => FreezeAsync(true, ct);
 
@@ -232,6 +262,7 @@ public sealed class PersonModel(MoneyGate gate, IMoneyBooks books, AuditLog audi
         Symbol = settings().Money.CurrencySymbol;
         CanChange = Admin;
         CanSetLimits = Owner;
+        CanRefundFees = Owner;
         try
         {
             var balance = await books.FindBalanceAsync(Who, ct);

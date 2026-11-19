@@ -149,6 +149,7 @@ public static class MoneyVerifyText
             AlertKind.RegionMoved => $"{region} now registers from {key}, but it belongs to another server, so money is off there. {when}",
             AlertKind.SaleNotPaid => $"A sale was completed after its hold ran out; the seller wasn't paid. It was in {region}, on {key}, {times} in a day. {when}",
             AlertKind.ManyPayoutOwners => $"{key} paid out for more than {MoneyRules.PayoutOwnersAlertAbove} different object owners in a day. {when}",
+            AlertKind.ServerTookOver => $"{key} took over the earlier server's address and ports, and that server is no longer paired. {when}",
             _ => $"Someone hit their daily spending limit {times} in a day. {when}",
         };
     }

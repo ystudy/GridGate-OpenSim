@@ -54,10 +54,10 @@ public sealed class MoneyLedgerFinalRulesTests(MoneyMariaDb maria) : IClassFixtu
     [InlineData(5, true)]
     [InlineData(15, true)]
     [InlineData(4, false)]
-    [InlineData(12, false)]
+    [InlineData(12, true)]
     [InlineData(0, false)]
     [InlineData(-5, false)]
-    public async Task An_upload_fee_must_be_a_whole_multiple_of_the_configured_fee(long amount, bool allowed)
+    public async Task An_upload_fee_must_be_at_least_the_configured_fee(long amount, bool allowed)
     {
         var (ledger, db, _) = await MoneyLedgerTransferTests.Setup(maria, Fees());
         await ledger.BalanceAsync(AccountRef.Resident(A), Ct);

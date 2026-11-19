@@ -45,6 +45,8 @@ public sealed partial class MoneyLedger
         [EntryType.Refund] = new(NotHolding, NotHolding, Staff: true, Reverses: true),
         [EntryType.WalletMerge] = new(Wallets, Wallets, Staff: true),
         [EntryType.FeeMoved] = new(Fees, Wallets, Staff: true),
+        // The owner gave back a fee taken through a hold: from whoever was paid, never from the bank or Holding.
+        [EntryType.FeeRefund] = new([.. Fees, .. Residents], Wallets, Staff: true, Reverses: true),
     };
 
     /// <summary>
@@ -203,6 +205,15 @@ public sealed partial class MoneyLedger
                    OR o.type IN ('{EntryType.Hold}', '{EntryType.HoldCompleted}', '{EntryType.HoldReturned}', '{EntryType.LateSale}'))
             ORDER BY r.id LIMIT {ProblemsPerCheck}
             """, r => $"Refund {r.GetInt64(0)} doesn't reverse its entry.", ct);
+        // A fee refund reverses what paid a fee out of a hold, to the hold's buyer, for the same amount.
+        await ReadLinesAsync(conn, tx, problems, $"""
+            SELECT r.id FROM entries r LEFT JOIN entries o ON o.id = r.reverses LEFT JOIN holds h ON h.id = o.hold_id
+            WHERE r.type = '{EntryType.FeeRefund}'
+              AND (o.id IS NULL OR o.id >= r.id
+                   OR o.type NOT IN ('{EntryType.HoldCompleted}', '{EntryType.LateSale}') OR o.to_id <> r.from_id OR o.amount <> r.amount
+                   OR h.id IS NULL OR h.buyer_id <> r.to_id OR h.kind NOT IN ('{EntryType.UploadFee}', '{EntryType.ClassifiedFee}', '{EntryType.GroupJoinFee}'))
+            ORDER BY r.id LIMIT {ProblemsPerCheck}
+            """, r => $"Fee refund {r.GetInt64(0)} doesn't reverse the payment of its fee.", ct);
         await ReadLinesAsync(conn, tx, problems, $"""
             SELECT reverses FROM entries WHERE reverses IS NOT NULL GROUP BY reverses HAVING COUNT(*) > 1 ORDER BY reverses LIMIT {ProblemsPerCheck}
             """, r => $"Entry {r.GetInt64(0)} was refunded more than once.", ct);

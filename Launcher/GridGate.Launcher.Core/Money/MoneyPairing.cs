@@ -70,18 +70,23 @@ public static class PairingProof
 }
 
 /// <summary>
-/// The Grid Asset Server's pending pairing code, in memory only: one at a time, for 15 minutes, cancelled after 5 wrong
+/// The Grid Asset Server's pending pairing code, in memory only: one at a time, for 15 minutes, cancelled after 50 wrong
 /// proofs, gone when the launcher restarts (money plan 3).
 /// </summary>
 public sealed class MoneyPairing(TimeProvider time)
 {
+    /// <summary>Wrong proofs from one address that block it for the code's lifetime.</summary>
     public const int MaxWrongProofs = 5;
+
+    /// <summary>Wrong proofs from any addresses that cancel the code.</summary>
+    public const int MaxWrongProofsInAll = 50;
     public static readonly TimeSpan Lifetime = TimeSpan.FromMinutes(15);
 
     private readonly Lock _gate = new();
     private string? _code;
     private DateTimeOffset _expires;
     private int _wrong;
+    private readonly Dictionary<System.Net.IPAddress, int> _wrongBy = [];
 
     /// <summary>A new code, replacing any pending one, and when it stops working.</summary>
     public (string Code, DateTimeOffset Expires) Issue()
@@ -91,6 +96,7 @@ public sealed class MoneyPairing(TimeProvider time)
             _code = PairingCode.New();
             _expires = time.GetUtcNow() + Lifetime;
             _wrong = 0;
+            _wrongBy.Clear();
             return (_code, _expires);
         }
     }
@@ -110,21 +116,27 @@ public sealed class MoneyPairing(TimeProvider time)
     }
 
     /// <summary>
-    /// The pending code, used up, when <paramref name="proofMatches"/> says the proof was made with it; otherwise null, and a
-    /// wrong proof counts towards cancelling it.
+    /// The pending code, used up, when <paramref name="proofMatches"/> says the proof was made with it; otherwise null. A wrong
+    /// proof counts against the address it came from (<paramref name="from"/>): after <see cref="MaxWrongProofs"/> that
+    /// address is blocked for this code's lifetime and its proofs aren't even tried, while the code stays good for other
+    /// addresses. <see cref="MaxWrongProofsInAll"/> wrong proofs from anywhere cancel the code.
     /// </summary>
-    public string? Redeem(Func<string, bool> proofMatches)
+    public string? Redeem(Func<string, bool> proofMatches, System.Net.IPAddress? from = null)
     {
         lock (_gate)
         {
             if (!Live()) return null;
+            var address = from is null ? System.Net.IPAddress.None : from.IsIPv4MappedToIPv6 ? from.MapToIPv4() : from;
+            _wrongBy.TryGetValue(address, out var wrongHere);
+            if (wrongHere >= MaxWrongProofs) return null;
             var code = _code!;
             if (proofMatches(code))
             {
                 _code = null;
                 return code;
             }
-            if (++_wrong >= MaxWrongProofs) _code = null;
+            _wrongBy[address] = wrongHere + 1;
+            if (++_wrong >= MaxWrongProofsInAll) _code = null;
             return null;
         }
     }

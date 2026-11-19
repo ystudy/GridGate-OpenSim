@@ -82,6 +82,10 @@ internal sealed class FakeBooks : IMoneyBooks
     public Task<MoneyResult> TakeAsync(AccountRef from, long amount, StaffAction who, CancellationToken ct) => Moved($"take {from.AgentId} {amount}", who);
     public Task<MoneyResult> MoveFeesAsync(AccountRef to, long amount, StaffAction who, CancellationToken ct) => Moved($"move-fees {to.AgentId} {amount}", who);
     public Task<MoneyResult> RefundAsync(long entryId, StaffAction who, CancellationToken ct) => Moved($"refund {entryId}", who);
+    /// <summary>What <see cref="RefundHeldFeeAsync"/> answers with, and who it says was paid.</summary>
+    public string? FeePayeeKind { get; set; } = "Fees";
+    public Task<MoneyResult> RefundHeldFeeAsync(AccountRef payer, long entryId, StaffAction who, CancellationToken ct) =>
+        Moved($"refund-fee {payer.AgentId} {entryId}", who).ContinueWith(t => t.Result with { PayeeKind = FeePayeeKind }, TaskScheduler.Default);
     public Task<MoneyResult> SetPayoutsAllowedAsync(Guid residentId, bool allowed, CancellationToken ct) => Moved($"payouts {residentId} {allowed}");
     public Task<SelfCheckResult> SelfCheckAsync(CancellationToken ct)
     {
@@ -685,6 +689,91 @@ public sealed class MoneyPageTests
         var doc = await PageAsync(await SignedInAsync(f), $"/money/person?id={Ann}");
 
         Assert.Empty(doc.QuerySelectorAll("form[action*='handler=Merge']"));
+    }
+
+    [Fact]
+    public async Task A_merge_the_ledger_refuses_is_told_in_plain_words()
+    {
+        var books = new FakeBooks { Outcome = MoneyOutcome.NotAVisitor };
+        var visitors = new FakeVisitors();
+        visitors.Known.Add(new VisitorInfo(Hope, HopeHome, "Hope Visitor"));
+        await using var f = Make(books, visitors: visitors);
+
+        using var r = await PostAsync(await SignedInAsync(f), $"/money/person?id={Hope}&home=" + Uri.EscapeDataString(HopeHome), "Merge",
+            new() { ["NewHome"] = "http://new.example:8002/", ["Reason"] = "grid moved" });
+
+        Assert.Contains("Only a visitor's wallet can move to a new home address.", (await ParseAsync(r)).QuerySelector(".alert-danger")!.TextContent);
+    }
+
+    [Fact]
+    public async Task A_resident_cant_be_merged_from_the_page()
+    {
+        var books = new FakeBooks();
+        await using var f = Make(books);
+
+        using var r = await PostAsync(await SignedInAsync(f), $"/money/person?id={Ann}", "Merge", new() { ["NewHome"] = "http://new.example:8002/", ["Reason"] = "x" });
+
+        Assert.Contains("Only a visitor's wallet can move", (await ParseAsync(r)).QuerySelector(".alert-danger")!.TextContent);
+        Assert.DoesNotContain(books.Calls, x => x.StartsWith("merge"));
+    }
+
+    [Fact]
+    public async Task The_owner_refunds_a_fee_taken_through_a_hold_and_it_is_audited()
+    {
+        var books = new FakeBooks { FeePayeeKind = "Fees" };
+        await using var f = Make(books);
+
+        using var r = await PostAsync(await SignedInAsync(f), $"/money/person?id={Ann}", "RefundFee", new() { ["EntryId"] = "77", ["Reason"] = "charged twice" });
+
+        Assert.Contains($"refund-fee {Ann} 77", books.Calls);
+        Assert.Contains("Refunded. The coins came back from Fees.", MainText(await ParseAsync(r)));
+        Assert.Contains(Audit(f), a => a.GetProperty("action").GetString() == "money-fee-refund" && a.GetProperty("result").GetString()!.Contains("ok"));
+    }
+
+    [Fact]
+    public async Task A_fee_refund_the_founder_cant_cover_says_so()
+    {
+        var books = new FakeBooks { Outcome = MoneyOutcome.NotEnough, FeePayeeKind = "founder" };
+        await using var f = Make(books);
+
+        using var r = await PostAsync(await SignedInAsync(f), $"/money/person?id={Ann}", "RefundFee", new() { ["EntryId"] = "77", ["Reason"] = "charged twice" });
+
+        Assert.Contains("The founder doesn't have the coins to refund this.", (await ParseAsync(r)).QuerySelector(".alert-danger")!.TextContent);
+        Assert.Contains(Audit(f), a => a.GetProperty("action").GetString() == "money-fee-refund" && a.GetProperty("result").GetString()!.Contains("not_enough"));
+    }
+
+    [Theory]
+    [InlineData("admin")]
+    [InlineData("supervisor")]
+    public async Task Admins_and_supervisors_cant_refund_a_fee(string role)
+    {
+        var books = new FakeBooks();
+        await using var f = Make(books);
+        var client = await SignedInAsync(f, role);
+        var token = (await PageAsync(client, $"/money/person?id={Ann}")).QuerySelector("input[name=__RequestVerificationToken]")?.GetAttribute("value") ?? "";
+
+        using var r = await client.PostAsync($"/money/person?id={Ann}&handler=RefundFee",
+            new FormUrlEncodedContent(new Dictionary<string, string> { ["EntryId"] = "77", ["Reason"] = "x", ["__RequestVerificationToken"] = token }), Ct);
+
+        Assert.Equal(HttpStatusCode.Forbidden, r.StatusCode);
+        Assert.DoesNotContain(books.Calls, x => x.StartsWith("refund-fee"));
+    }
+
+    [Fact]
+    public async Task Only_the_owner_sees_a_refund_button_on_a_held_fee()
+    {
+        var books = new FakeBooks();
+        books.History.Add(new HistoryLine(9, DateTimeOffset.UtcNow, EntryType.Hold, null, -10, 90, null, EntryType.UploadFee));
+        books.History.Add(new HistoryLine(8, DateTimeOffset.UtcNow, EntryType.Hold, null, -20, 70, "dress", null));
+        await using var f = Make(books);
+
+        var owner = await PageAsync(await SignedInAsync(f), $"/money/person?id={Ann}");
+        var admin = await PageAsync(await SignedInAsync(f, "admin"), $"/money/person?id={Ann}");
+
+        var forms = owner.QuerySelectorAll("form[action*='handler=RefundFee']");
+        Assert.Single(forms);
+        Assert.Equal("9", forms[0].QuerySelector("input[name=EntryId]")!.GetAttribute("value"));
+        Assert.Empty(admin.QuerySelectorAll("form[action*='handler=RefundFee']"));
     }
 
     [Fact]

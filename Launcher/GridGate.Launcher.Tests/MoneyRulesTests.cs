@@ -58,7 +58,8 @@ public sealed class MoneyRulesTests
     [InlineData(EntryType.ClassifiedFee, 25, 5, 25, true)]
     [InlineData(EntryType.ClassifiedFee, 50, 5, 25, false)]
     [InlineData(EntryType.UploadFee, 10, 5, 25, true)]
-    [InlineData(EntryType.UploadFee, 7, 5, 25, false)]
+    [InlineData(EntryType.UploadFee, 7, 5, 25, true)]
+    [InlineData(EntryType.UploadFee, 4, 5, 25, false)]
     [InlineData(EntryType.UploadFee, 5, 0, 25, false)]
     [InlineData(EntryType.GroupJoinFee, 7, 5, 25, true)]
     public void Fee_amounts_follow_the_configured_fees(string type, long amount, long upload, long classified, bool ok) =>

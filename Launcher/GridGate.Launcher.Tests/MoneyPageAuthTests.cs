@@ -87,6 +87,7 @@ public sealed class MoneyPageAuthTests
         new(AnnPage, "UnfreezeAccount", Site.GridAsset, Why(), Effect.Books, $"freeze-account {Ann} False"),
         new(AnnPage, "Payouts", Site.GridAsset, new() { ["On"] = "true" }, Effect.Books, "payouts"),
         new(AnnPage, "Limits", Site.GridAsset, Why(new() { ["DailySpend"] = "5" }), Effect.Books, "set-person-limits", OwnerOnly: true),
+        new(AnnPage, "RefundFee", Site.GridAsset, Why(new() { ["EntryId"] = "77" }), Effect.Books, "refund-fee", OwnerOnly: true),
         new(HopePage, "Merge", Site.GridAsset, Why(new() { ["NewHome"] = "http://new.example:8002/" }), Effect.Books, "merge"),
         new("/guest/coins", "Payouts", Site.GridAsset, new() { ["On"] = "true" }, Effect.Books, "payouts"),
         new("/advanced/money", "Pair", Site.RegionCoins, new() { ["Code"] = "7K2M-9QXD-4HTB-ZW3R" }, Effect.PairClient),

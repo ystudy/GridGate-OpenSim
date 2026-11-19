@@ -47,6 +47,9 @@
                             case AlertKind.KeyLimitReached:
                                 <text>if that's expected, give it a higher limit of its own under <a href="#money-limits">Limits</a>. If not, <a href="#money-freeze-title">freeze all payments</a> while you find out why.</text>
                                 break;
+                            case AlertKind.ServerTookOver:
+                                <text>if you paired the new computer yourself, clear this. If not, remove the server under Region Servers: its regions take no payments until it is paired again.</text>
+                                break;
                             case AlertKind.RegionMoved:
                                 <text><a href="#money-regions">approve the move, or keep it off</a>, under Regions.</text>
                                 break;

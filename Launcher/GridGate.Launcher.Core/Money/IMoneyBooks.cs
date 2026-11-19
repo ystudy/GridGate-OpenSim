@@ -19,6 +19,12 @@ public interface IMoneyBooks
     Task<MoneyResult> TakeAsync(AccountRef from, long amount, StaffAction who, CancellationToken ct);
     Task<MoneyResult> MoveFeesAsync(AccountRef to, long amount, StaffAction who, CancellationToken ct);
     Task<MoneyResult> RefundAsync(long entryId, StaffAction who, CancellationToken ct);
+
+    /// <summary>
+    /// The owner gives back an upload, classified or group join fee that was taken through a hold: the coins come from whoever was
+    /// paid, never from the Grid bank. <paramref name="entryId"/> is an entry of the hold.
+    /// </summary>
+    Task<MoneyResult> RefundHeldFeeAsync(AccountRef payer, long entryId, StaffAction who, CancellationToken ct);
     Task<MoneyResult> SetPayoutsAllowedAsync(Guid residentId, bool allowed, CancellationToken ct);
     Task<SelfCheckResult> SelfCheckAsync(CancellationToken ct);
 

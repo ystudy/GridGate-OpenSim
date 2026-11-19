@@ -18,6 +18,9 @@ public enum AlertKind
 
     /// <summary>One key's script payouts in a day went to more than <see cref="MoneyRules.PayoutOwnersAlertAbove"/> different owners.</summary>
     ManyPayoutOwners,
+
+    /// <summary>A pairing took over an older paired server's address and first port: the new server's key, with the old one in the other key.</summary>
+    ServerTookOver,
 }
 
 /// <summary>A notice asks the owner to check something; a warning shows on the dashboard too.</summary>
@@ -178,6 +181,13 @@ public sealed class MoneyAlerts(Func<CancellationToken, Task<MySqlConnection>> o
             failed: () => { lock (_ownersSeen) _ownersSeen.Remove(keyId); });
     }
 
+    /// <summary>
+    /// <paramref name="newKeyId"/>'s pairing took over the address and first port of <paramref name="oldKeyId"/>'s server, which is no longer paired:
+    /// a notice, one row per new server, so the owner can check it was theirs.
+    /// </summary>
+    public Task ServerTookOverAsync(string newKeyId, string oldKeyId, CancellationToken ct) =>
+        RaiseAsync(AlertKind.ServerTookOver, newKeyId, null, null, (_, _) => Task.FromResult(new Level(AlertLevel.Notice, false, oldKeyId)), ct);
+
     public Task<IReadOnlyList<MoneyAlert>> OpenAsync(CancellationToken ct) => ReadOpenAsync(null, ct);
 
     public Task<IReadOnlyList<MoneyAlert>> WarningsAsync(CancellationToken ct) => ReadOpenAsync(AlertLevel.Warning, ct);
@@ -317,6 +327,7 @@ public sealed class MoneyAlerts(Func<CancellationToken, Task<MySqlConnection>> o
         AlertKind.PersonLimitRepeated => "agent_id = @agent",
         AlertKind.SaleNotPaid => "key_id = @key AND region_id = @region",
         AlertKind.ManyPayoutOwners => "key_id = @key",
+        AlertKind.ServerTookOver => "key_id = @key",
         _ => throw new ArgumentOutOfRangeException(nameof(kind)),
     };
 

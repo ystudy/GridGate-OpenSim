@@ -44,6 +44,10 @@ The region runs on a computer that isn't paired with this grid's money, so money
 **What to do:** pair it. On this Money page, under **Region Servers**, make a pairing code, and type it into that Region
 Server's Money page. Its regions are verified once their programs check in, within a few minutes.
 
+A pairing code works once, for 15 minutes. Five wrong tries from one address block that address until the code ends, and the
+code still works from other addresses; fifty wrong tries from anywhere end it, and you make a new one. Only computers on this
+computer's own network (or this computer itself) can reach the money port at all.
+
 If that computer runs stock OpenSim rather than GridGate, it can't be paired; its regions stay open to visitors, without
 money.
 
@@ -205,6 +209,7 @@ Clear an alert once you've dealt with it.
 | **Two servers disagree about where someone is.** One server's region says the person arrived there, while the grid had them in another server's region. The alert names both: "Server X and server Y disagree about where Ann is." | Warning | When both regions are verified, money is paused for that person until their next login, so neither server can charge them. Either server may be the one that is wrong: check both regions are running and up to date, and look at what each charged them. Refund or freeze if needed. |
 | **A server or program reached its daily limit.** | Warning | If that's expected, give it a higher limit of its own (see [Own limits](#own-limits)). If not, **freeze all payments** while you find out why. |
 | **A region moved between servers.** | Notice | Approve the move or keep it off, under Regions (see [Moved, waiting for you](#moved-waiting-for-you)). |
+| **A new pairing took over another server's address and ports.** A different computer paired at the same address and first port as a server that was paired before. The alert says the new server took over the earlier server's address and ports. | Notice | If you paired the new computer yourself, clear the alert. If not, remove the server: its regions take no payments until it is paired again. |
 | **One person hit their daily spending limit three times in a day.** | Notice | If they asked for more, give them a limit of their own. If not, check what charged them; refund the entries or freeze their account. |
 
 A warning about a Region Server that reached its daily limit, or that claimed people it wasn't handed three or more times

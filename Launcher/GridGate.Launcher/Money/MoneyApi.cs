@@ -233,7 +233,7 @@ internal static class MoneyApi
                 && host.Length is > 0 and <= 255 && SettingsValidator.HostnameError(host) is null && IsNonce(nonce) && proof.Length == 64
                 && b.FirstPort is { } firstPort and >= 1 and <= 65535 && (b.MachineId ?? "").Length <= 64)
             {
-                if (pairing.Redeem(code => PairingProof.Same(PairingProof.Client(code, c.Fingerprint, nonce, host), proof)) is { } code)
+                if (pairing.Redeem(code => PairingProof.Same(PairingProof.Client(code, c.Fingerprint, nonce, host), proof), http.Connection.RemoteIpAddress) is { } code)
                 {
                     var key = Secrets.NewPassword(MoneyKeys.KeyLength);
                     var machine = string.IsNullOrWhiteSpace(b.MachineId) ? null : b.MachineId.Trim();
@@ -259,6 +259,11 @@ internal static class MoneyApi
                         c.Log.LogInformation("Paired a Region Server at {Host}, region ports from {FirstPort}{Replacing}.", LogText.Clean(host), firstPort,
                             replacing ? ", replacing its earlier pairing" : "");
                         answer = new PairAnswer("ok", key, PairingProof.Server(code, c.Fingerprint, nonce, key));
+                        // Another computer that now holds an older server's address and first port: the owner is told, in case it isn't theirs.
+                        if (c.Alerts is { } takeovers)
+                            foreach (var old in replaced.Where(p => string.Equals(p.Host, host, StringComparison.OrdinalIgnoreCase) && p.FirstPort == firstPort
+                                         && !(machine is not null && string.Equals(p.MachineId, machine, StringComparison.Ordinal))))
+                                await takeovers.ServerTookOverAsync(MoneyVerifyText.KeyOf(server), MoneyVerifyText.KeyOf(old), AlertToken);
                         // Pins follow the same machine; a different machine at that address gets none. Only
                         // after the settings hold the new key: if this fails the pairing stands, and the regions stay pinned to
                         // the old server id, so they show as moves until the owner approves them (money stays off there).
