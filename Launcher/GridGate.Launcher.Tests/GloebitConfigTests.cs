@@ -49,7 +49,7 @@ public sealed class GloebitConfigTests : IDisposable
             Gloebit: app),
     };
 
-    private void Write(LauncherSettings s, bool open = true) => new GridConfigWriter(_paths, open ? MoneyGate.Open : null).Write(s, []);
+    private void Write(LauncherSettings s, bool open = true) => new GridConfigWriter(_paths, open ? MoneyGate.Open : MoneyGate.Closed).Write(s, []);
 
     private IniDocument Region(string instance) => IniDocument.Load(Path.Combine(_paths.RegionDir(instance), "OpenSim.ini"));
     private IniDocument Robust() => IniDocument.Load(Path.Combine(_paths.RuntimeOpenSim, "Robust.HG.ini"));
@@ -188,7 +188,8 @@ public sealed class GloebitConfigTests : IDisposable
         Assert.True(MoneyPlace.GloebitHere(Grid(MoneyMode.Gloebit, App), MoneyGate.Open));
         Assert.False(MoneyPlace.GloebitHere(Grid(MoneyMode.Gloebit), MoneyGate.Open));
         Assert.False(MoneyPlace.GloebitHere(Grid(MoneyMode.Play, App), MoneyGate.Open));
-        Assert.False(MoneyPlace.GloebitHere(Grid(MoneyMode.Gloebit, App), MoneyRelease.Effective));
+        Assert.False(MoneyPlace.GloebitHere(Grid(MoneyMode.Gloebit, App), MoneyGate.Closed));
+        Assert.True(MoneyPlace.GloebitHere(Grid(MoneyMode.Gloebit, App), MoneyRelease.Effective));
         Assert.False(MoneyPlace.GloebitHere(Grid(MoneyMode.Gloebit, App) with { Plan = OwnerPlan.Connected }, MoneyGate.Open));
     }
 }

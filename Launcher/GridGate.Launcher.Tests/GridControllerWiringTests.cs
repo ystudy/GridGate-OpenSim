@@ -526,8 +526,9 @@ public sealed class GridControllerWiringTests : IAsyncDisposable
             Programs = [new ProgramSettings("p1", _ports[3] + 100, _ports[6] + 100)],
             Money = new Core.Money.MoneySettings(Mode: Core.Money.MoneyMode.Play), // chosen, but the gate is closed
         });
+        var grid = NewGrid(TimeProvider.System, moneyEffective: Core.Money.MoneyGate.Closed);
 
-        _grid.RegenerateConfig();
+        grid.RegenerateConfig();
 
         Assert.Empty(_store.LoadOrCreate().Money.Keys);
     }
