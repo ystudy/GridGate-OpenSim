@@ -21,6 +21,9 @@ public sealed class SignInCodeModel(ResidentTwoFactor residents, LoginThrottle t
 {
     [BindProperty] public string? Code { get; set; }
 
+    /// <summary>The page to go back to afterwards, carried from the password step (<see cref="GuestReturn"/>).</summary>
+    [BindProperty(SupportsGet = true)] public string? ReturnUrl { get; set; }
+
     public string? Error { get; private set; }
 
     /// <summary>The two-factor file can't be read: the page says to contact the grid owner.</summary>
@@ -46,7 +49,7 @@ public sealed class SignInCodeModel(ResidentTwoFactor residents, LoginThrottle t
                 TwoFactorUnknown = true;
                 return Page();
             case CodeStepResult.SignedIn:
-                return LocalRedirect("/guest");
+                return LocalRedirect(GuestReturn.Pick(ReturnUrl));
             default:
                 Error = result switch
                 {

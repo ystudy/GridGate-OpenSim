@@ -39,12 +39,12 @@ public sealed class GuestSignInTests
 
     private static HttpClient Client(LauncherFactory f) => f.CreateClient(new() { AllowAutoRedirect = false });
 
-    private static async Task<HttpResponseMessage> SignInAsync(HttpClient client, string name, string password)
+    private static async Task<HttpResponseMessage> SignInAsync(HttpClient client, string name, string password, string url = "/guest/sign-in")
     {
-        var page = await client.GetStringAsync("/guest/sign-in", Ct);
+        var page = await client.GetStringAsync(url, Ct);
         var token = new HtmlParser().ParseDocument(page).QuerySelector("input[name=__RequestVerificationToken]")?.GetAttribute("value");
         Assert.NotNull(token);
-        return await client.PostAsync("/guest/sign-in", new FormUrlEncodedContent(new Dictionary<string, string>
+        return await client.PostAsync(url, new FormUrlEncodedContent(new Dictionary<string, string>
         {
             ["Name"] = name,
             ["Password"] = password,
@@ -65,6 +65,28 @@ public sealed class GuestSignInTests
         using var s = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
         return new StreamReader(s).ReadToEnd().Split('\n', StringSplitOptions.RemoveEmptyEntries)
             .Select(l => JsonDocument.Parse(l).RootElement.Clone()).ToList();
+    }
+
+    [Fact]
+    public async Task Sign_in_returns_to_the_map()
+    {
+        await using var f = Factory();
+
+        using var r = await SignInAsync(Client(f), "Test Guest", "pass-word1", "/guest/sign-in?returnUrl=%2Fmap");
+
+        Assert.Equal(HttpStatusCode.Redirect, r.StatusCode);
+        Assert.Equal("/map", r.Headers.Location?.OriginalString);
+    }
+
+    [Fact]
+    public async Task Sign_in_ignores_another_site()
+    {
+        await using var f = Factory();
+
+        using var r = await SignInAsync(Client(f), "Test Guest", "pass-word1", "/guest/sign-in?returnUrl=%2F%2Fevil.example");
+
+        Assert.Equal(HttpStatusCode.Redirect, r.StatusCode);
+        Assert.Equal("/guest", r.Headers.Location?.OriginalString);
     }
 
     [Fact]
