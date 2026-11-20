@@ -14,17 +14,23 @@ public sealed class TermsGate : IAsyncPageFilter
 {
     private static readonly string[] Open = ["/Guest/Terms", "/Guest/SignOut", "/Guest/SignIn", "/Guest/SignInCode", "/Guest/ForgotPassword", "/Guest/ResetPassword", "/Guest/Confirm", "/Guest/ConfirmEmail", "/Guest/Connect"];
 
+    /// <summary>Whether the guest still has to accept the current Terms (there is a Terms text they haven't accepted yet).</summary>
+    public static bool MustAccept(HttpContext http, Guid principal)
+    {
+        var settings = http.RequestServices.GetRequiredService<Func<LauncherSettings>>()();
+        return LegalPages.Get(settings, LegalPages.Terms, settings.Languages.Default) is { } terms
+            && !http.RequestServices.GetRequiredService<TermsAcceptances>().HasAccepted(principal, terms.Version);
+    }
+
     public Task OnPageHandlerSelectionAsync(PageHandlerSelectedContext context) => Task.CompletedTask;
 
     public async Task OnPageHandlerExecutionAsync(PageHandlerExecutingContext context, PageHandlerExecutionDelegate next)
     {
         var http = context.HttpContext;
         var page = context.ActionDescriptor.ViewEnginePath;
-        var settings = http.RequestServices.GetRequiredService<Func<LauncherSettings>>()();
         if (!Open.Contains(page, StringComparer.OrdinalIgnoreCase)
             && GuestSignIn.Read(http.User) is { } guest
-            && LegalPages.Get(settings, LegalPages.Terms, settings.Languages.Default) is { } terms
-            && !http.RequestServices.GetRequiredService<TermsAcceptances>().HasAccepted(guest.Principal, terms.Version))
+            && MustAccept(http, guest.Principal))
         {
             // Back to the same page afterwards, but only for a GET: a POST can't be repeated by a redirect.
             var back = HttpMethods.IsGet(http.Request.Method) ? http.Request.PathBase + http.Request.Path + http.Request.QueryString : "/guest";

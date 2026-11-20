@@ -82,6 +82,17 @@ public sealed class RegionsPageTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Regions_page_loads_the_map_core_first()
+    {
+        var doc = await PageAsync();
+
+        var scripts = doc.QuerySelectorAll("script[src]").Select(s => s.GetAttribute("src")).ToList();
+        var core = scripts.IndexOf("/js/map-core.js");
+        Assert.True(core >= 0, "map-core.js is loaded");
+        Assert.True(core < scripts.IndexOf("/js/map.js"), "map-core.js comes before map.js");
+    }
+
+    [Fact]
     public async Task Page_says_map_needs_javascript()
     {
         var doc = await PageAsync();

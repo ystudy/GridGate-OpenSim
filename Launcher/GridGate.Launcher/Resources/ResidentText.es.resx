@@ -13,6 +13,7 @@
   <data name="Layout.Register" xml:space="preserve"><value>Registrarse</value></data>
   <data name="Layout.Menu" xml:space="preserve"><value>Menú</value></data>
   <data name="Layout.MenuHome" xml:space="preserve"><value>Inicio</value></data>
+  <data name="Layout.MenuMap" xml:space="preserve"><value>Mapa del mundo</value></data>
   <data name="Layout.MenuConnect" xml:space="preserve"><value>Cómo conectarse</value></data>
   <data name="Layout.MenuResetPassword" xml:space="preserve"><value>Restablecer contraseña</value></data>
   <data name="Layout.Copyright" xml:space="preserve"><value>© {0}. Todos los derechos reservados.</value></data>
@@ -644,4 +645,16 @@
   <data name="MyCoins.Type.wallet_merge" xml:space="preserve"><value>Monederos unidos</value></data>
   <data name="MyCoins.Type.fee_moved" xml:space="preserve"><value>De las tarifas del grid</value></data>
   <data name="MyCoins.WhatWithObject" xml:space="preserve"><value>{0}: {1}</value></data>
+  <data name="Map.Title" xml:space="preserve"><value>Mapa del mundo</value></data>
+  <data name="Map.SignInTitle" xml:space="preserve"><value>Inicie sesión para explorar el mapa</value></data>
+  <data name="Map.SignInText" xml:space="preserve"><value>Vea todas las regiones de nuestro mundo y teletranspórtese directamente a una.</value></data>
+  <data name="Map.Unavailable" xml:space="preserve"><value>El mapa no se puede mostrar ahora. Inténtelo de nuevo en un minuto.</value></data>
+  <data name="Map.NoRegions" xml:space="preserve"><value>No hay regiones en línea en este momento. Inténtelo más tarde.</value></data>
+  <data name="Map.NeedsJs" xml:space="preserve"><value>El mapa necesita JavaScript.</value></data>
+  <data name="Map.PeopleHere" xml:space="preserve"><value>Personas aquí ahora: {0}</value></data>
+  <data name="Map.Teleport" xml:space="preserve"><value>Teletransportarse aquí</value></data>
+  <data name="Map.ViewerHelp" xml:space="preserve"><value>¿No se abrió el visor? Cómo conectarse</value></data>
+  <data name="Map.Close" xml:space="preserve"><value>Cerrar</value></data>
+  <data name="Map.ZoomIn" xml:space="preserve"><value>Acercar</value></data>
+  <data name="Map.ZoomOut" xml:space="preserve"><value>Alejar</value></data>
 </root>

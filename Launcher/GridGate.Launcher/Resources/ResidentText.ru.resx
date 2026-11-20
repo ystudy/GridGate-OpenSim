@@ -13,6 +13,7 @@
   <data name="Layout.Register" xml:space="preserve"><value>Регистрация</value></data>
   <data name="Layout.Menu" xml:space="preserve"><value>Меню</value></data>
   <data name="Layout.MenuHome" xml:space="preserve"><value>Главная</value></data>
+  <data name="Layout.MenuMap" xml:space="preserve"><value>Карта мира</value></data>
   <data name="Layout.MenuConnect" xml:space="preserve"><value>Как подключиться</value></data>
   <data name="Layout.MenuResetPassword" xml:space="preserve"><value>Сбросить пароль</value></data>
   <data name="Layout.Copyright" xml:space="preserve"><value>© {0}. Все права защищены.</value></data>
@@ -644,4 +645,16 @@
   <data name="MyCoins.Type.wallet_merge" xml:space="preserve"><value>Кошельки объединены</value></data>
   <data name="MyCoins.Type.fee_moved" xml:space="preserve"><value>Из сборов грида</value></data>
   <data name="MyCoins.WhatWithObject" xml:space="preserve"><value>{0}: {1}</value></data>
+  <data name="Map.Title" xml:space="preserve"><value>Карта мира</value></data>
+  <data name="Map.SignInTitle" xml:space="preserve"><value>Войдите, чтобы исследовать карту</value></data>
+  <data name="Map.SignInText" xml:space="preserve"><value>Смотрите все регионы нашего мира и телепортируйтесь прямо в любой из них.</value></data>
+  <data name="Map.Unavailable" xml:space="preserve"><value>Карту сейчас нельзя показать. Попробуйте ещё раз через минуту.</value></data>
+  <data name="Map.NoRegions" xml:space="preserve"><value>Сейчас нет ни одного региона онлайн. Попробуйте позже.</value></data>
+  <data name="Map.NeedsJs" xml:space="preserve"><value>Для карты нужен JavaScript.</value></data>
+  <data name="Map.PeopleHere" xml:space="preserve"><value>Сейчас здесь: {0}</value></data>
+  <data name="Map.Teleport" xml:space="preserve"><value>Телепортироваться сюда</value></data>
+  <data name="Map.ViewerHelp" xml:space="preserve"><value>Вьюер не открылся? Как подключиться</value></data>
+  <data name="Map.Close" xml:space="preserve"><value>Закрыть</value></data>
+  <data name="Map.ZoomIn" xml:space="preserve"><value>Приблизить</value></data>
+  <data name="Map.ZoomOut" xml:space="preserve"><value>Отдалить</value></data>
 </root>

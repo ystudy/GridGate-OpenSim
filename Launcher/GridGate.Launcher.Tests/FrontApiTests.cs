@@ -8,6 +8,7 @@ using GridGate.Launcher.Core.Grid;
 using GridGate.Launcher.Core.Pictures;
 using GridGate.Launcher.Core.Splash;
 using GridGate.Launcher.Endpoints;
+using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 using static GridGate.Launcher.Tests.SplashPictureApiTests;
@@ -69,6 +70,37 @@ public sealed class FrontApiTests
 
         Assert.Equal(HttpStatusCode.OK, r.StatusCode);
         Assert.Contains("immutable", r.Headers.CacheControl!.ToString());
+    }
+
+    [Fact]
+    public async Task Front_pictures_reachable_outside_the_staff_networks()
+    {
+        var f = new LauncherFactory(s => s with
+        {
+            GridName = "Avalon",
+            SetupToken = null,
+            Setup = s.Setup with { OwnerCreated = true, Finished = true, Owner = new OwnerInfo("Test", "Owner", TestAuth.OwnerId) },
+        })
+        {
+            // Every caller comes from outside the network list set below.
+            Before = app =>
+            {
+                app.Use((ctx, next) =>
+                {
+                    ctx.Connection.RemoteIpAddress = IPAddress.Parse("192.168.1.50");
+                    return next(ctx);
+                });
+                TestAuth.Apply(app);
+            },
+        };
+        await using var _ = f;
+        TestAuth.AddStaff(f.Robust);
+        var photo = await AddAsync(f);
+        Save(f, FrontPageSettings.Default with { Photo = photo });
+        f.Store.Save(f.Store.LoadOrCreate() with { Security = f.Store.LoadOrCreate().Security with { AdminNetworks = ["10.0.0.0/8"] } });
+
+        Assert.Equal(HttpStatusCode.OK, await GetAsync(f, FrontApi.PictureUrl(photo)));
+        Assert.Equal(HttpStatusCode.NotFound, await GetAsync(f, "/login"));
     }
 
     [Fact]

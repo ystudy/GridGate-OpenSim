@@ -47,17 +47,20 @@ public sealed class ApprovalFlowTests
         return await staff.PostAsync(form.GetAttribute("action"), new FormUrlEncodedContent(fields), Ct);
     }
 
-    private static async Task<HttpResponseMessage> SignInAsync(HttpClient client, string name)
+    private static async Task<HttpResponseMessage> SignInAsync(HttpClient client, string name, string url = "/guest/sign-in")
     {
-        var page = await PageAsync(client, "/guest/sign-in");
-        return await client.PostAsync("/guest/sign-in", new FormUrlEncodedContent(new Dictionary<string, string>
+        var page = await PageAsync(client, url);
+        return await client.PostAsync(url, new FormUrlEncodedContent(new Dictionary<string, string>
         {
             ["Name"] = name, ["Password"] = Password, ["__RequestVerificationToken"] = Token(page),
         }), Ct);
     }
 
-    [Fact]
-    public async Task Staff_approve_before_link()
+    // The greeting wins over a return address: it's shown once, and the next sign-in goes back as asked.
+    [Theory]
+    [InlineData("/guest/sign-in")]
+    [InlineData("/guest/sign-in?returnUrl=%2Fmap")]
+    public async Task Staff_approve_before_link(string signInUrl)
     {
         await using var rig = SignUpsTests.Factory();
         var guest = Browser(rig);
@@ -70,7 +73,7 @@ public sealed class ApprovalFlowTests
         var sent = await SignUpsTests.SentAsync(rig, 2);
         Assert.Equal("Welcome to Avalon", sent[1].Email.Subject);
         Assert.Contains("You're already approved. Sign in.", (await PageAsync(guest, "/guest/confirm?token=" + link)).QuerySelector("main")!.TextContent);
-        using var signIn = await SignInAsync(guest, "Bea Example");
+        using var signIn = await SignInAsync(guest, "Bea Example", signInUrl);
         Assert.Equal("/guest/connect?approved=1", signIn.Headers.Location?.OriginalString);
         Assert.Contains("You're approved. Log in as Bea Example.", (await PageAsync(guest, "/guest/connect?approved=1")).QuerySelector("main")!.TextContent);
     }

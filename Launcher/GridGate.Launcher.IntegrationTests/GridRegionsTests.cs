@@ -48,7 +48,7 @@ public sealed class GridRegionsTests : IDisposable
             {
                 await conn.OpenAsync(ct);
                 // uuid, regionHandle and Token are the columns without a default.
-                await using var cmd = new MySqlCommand("INSERT INTO regions (uuid, regionHandle, regionName, Token, locX, locY) VALUES (@u, 1, 'Far Away', '', 256000, 256512)", conn);
+                await using var cmd = new MySqlCommand("INSERT INTO regions (uuid, regionHandle, regionName, Token, locX, locY, sizeX, sizeY) VALUES (@u, 1, 'Far Away', '', 256000, 256512, 512, 768)", conn);
                 cmd.Parameters.AddWithValue("@u", elsewhere.ToString());
                 await cmd.ExecuteNonQueryAsync(ct);
                 // A hypergrid link: a regions row with the Hyperlink flag (512). Still listed, but marked.
@@ -60,7 +60,7 @@ public sealed class GridRegionsTests : IDisposable
             var list = await regions.ListAsync(ct);
             Assert.True(list.Available);
             // Robust keeps the corner in metres; the list gives the map square.
-            Assert.Contains(new GridRegion(elsewhere, "Far Away", 1000, 1002), list.Regions);
+            Assert.Contains(new GridRegion(elsewhere, "Far Away", 1000, 1002, SizeX: 2, SizeY: 3), list.Regions); // sizes in squares too
             Assert.Contains(new GridRegion(linked, "Other Grid", 2000, 2000, IsLink: true), list.Regions);
             Assert.Equal(before.Regions.Count + 2, list.Regions.Count);
 

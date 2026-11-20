@@ -27,6 +27,9 @@ public sealed class SignInModel(Core.Starter.StarterAvatarList starters, IRobust
     [BindProperty] public string? Name { get; set; }
     [BindProperty] public string? Password { get; set; }
 
+    /// <summary>The page to go back to afterwards (<see cref="GuestReturn"/>); the form posts to this page's own address, query and all.</summary>
+    [BindProperty(SupportsGet = true)] public string? ReturnUrl { get; set; }
+
     public string? Error { get; private set; }
 
     /// <summary>The guest pages exist only with a guest side, so the link always is.</summary>
@@ -86,7 +89,8 @@ public sealed class SignInModel(Core.Starter.StarterAvatarList starters, IRobust
         if (residents.Store.StateOf(account!.PrincipalId) != TwoFactorState.Off)
         {
             GuestTwoFactorPending.Issue(HttpContext, account);
-            return LocalRedirect("/guest/sign-in/code");
+            var back = GuestReturn.Pick(ReturnUrl);
+            return LocalRedirect("/guest/sign-in/code" + (back == GuestReturn.Home ? "" : "?returnUrl=" + Uri.EscapeDataString(back)));
         }
 
         throttle.RecordSuccess(SignInDoor.Guest, name.Key);
@@ -99,7 +103,7 @@ public sealed class SignInModel(Core.Starter.StarterAvatarList starters, IRobust
             pending.MarkGreeted(account.PrincipalId);
             return LocalRedirect("/guest/connect?approved=1");
         }
-        return LocalRedirect("/guest");
+        return LocalRedirect(GuestReturn.Pick(ReturnUrl));
     }
 
     private IActionResult Fail(AvatarName name)

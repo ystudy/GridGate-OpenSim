@@ -55,16 +55,16 @@ public sealed class ResidentTwoFactorTests
     private static async Task<HttpResponseMessage> PostAsync(HttpClient client, string url, Dictionary<string, string> form) =>
         await client.PostAsync(url, new FormUrlEncodedContent(form), Ct);
 
-    private static async Task<HttpResponseMessage> PasswordAsync(HttpClient client, string name, string password = "pass-word1")
+    private static async Task<HttpResponseMessage> PasswordAsync(HttpClient client, string name, string password = "pass-word1", string url = "/guest/sign-in")
     {
-        var page = await PageAsync(client, "/guest/sign-in");
-        return await PostAsync(client, "/guest/sign-in", new() { ["Name"] = name, ["Password"] = password, ["__RequestVerificationToken"] = Token(page) });
+        var page = await PageAsync(client, url);
+        return await PostAsync(client, url, new() { ["Name"] = name, ["Password"] = password, ["__RequestVerificationToken"] = Token(page) });
     }
 
-    private static async Task<HttpResponseMessage> CodeAsync(HttpClient client, string code)
+    private static async Task<HttpResponseMessage> CodeAsync(HttpClient client, string code, string url = "/guest/sign-in/code")
     {
-        var page = await PageAsync(client, "/guest/sign-in/code");
-        return await PostAsync(client, "/guest/sign-in/code", new() { ["Code"] = code, ["__RequestVerificationToken"] = Token(page) });
+        var page = await PageAsync(client, url);
+        return await PostAsync(client, url, new() { ["Code"] = code, ["__RequestVerificationToken"] = Token(page) });
     }
 
     private static async Task<string?> ErrorAsync(HttpResponseMessage r) =>
@@ -159,6 +159,22 @@ public sealed class ResidentTwoFactorTests
         var page = await PageAsync(client, "/guest/two-factor");
 
         Assert.NotNull(page.QuerySelector("form#turn-off"));
+    }
+
+    [Fact]
+    public async Task Two_factor_carries_the_return()
+    {
+        await using var f = Factory();
+        var (secret, _) = Enrol(f, Residents(f), TestAuth.GuestId, "Test Guest");
+        var client = Client(f);
+
+        using var password = await PasswordAsync(client, "Test Guest", url: "/guest/sign-in?returnUrl=%2Fmap");
+        Assert.Equal(HttpStatusCode.Redirect, password.StatusCode);
+        Assert.Equal("/guest/sign-in/code?returnUrl=%2Fmap", password.Headers.Location?.OriginalString);
+
+        using var code = await CodeAsync(client, CodeNow(f, secret), password.Headers.Location!.OriginalString);
+        Assert.Equal(HttpStatusCode.Redirect, code.StatusCode);
+        Assert.Equal("/map", code.Headers.Location?.OriginalString);
     }
 
     [Fact]

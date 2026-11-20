@@ -78,6 +78,7 @@
                     <nav aria-label="@T["Layout.Menu"]">
                         @* Not buttons, so ButtonIcons does not add their icons: they are written here. *@
                         <a id="menu-home" href="/home">@Html.Raw(GridGate.Launcher.Navigation.ButtonIcons.Svg("flag"))@T["Layout.MenuHome"]</a>
+                        <a id="menu-map" href="/map">@Html.Raw(GridGate.Launcher.Navigation.ButtonIcons.Svg("map-pin"))@T["Layout.MenuMap"]</a>
                         <a id="menu-connect" href="/guest/connect">@Html.Raw(GridGate.Launcher.Navigation.ButtonIcons.Svg("link"))@T["Layout.MenuConnect"]</a>
                         <a id="help-link" href="/support">@Html.Raw(GridGate.Launcher.Navigation.ButtonIcons.Svg("help"))@T["Layout.Help"]</a>
                         <a id="menu-reset" href="/guest/forgot-password">@Html.Raw(GridGate.Launcher.Navigation.ButtonIcons.Svg("key"))@T["Layout.MenuResetPassword"]</a>
