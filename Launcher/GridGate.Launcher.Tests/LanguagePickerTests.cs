@@ -151,7 +151,7 @@ public sealed class LanguagePickerTests
         Assert.Contains("Русский", options.Select(o => o.TextContent.Trim()));
         Assert.Equal("de", options.Single(o => o.HasAttribute("selected")).GetAttribute("value"));
         Assert.Equal("/support", page.QuerySelector("form[action='/language'] input[name=returnUrl]")!.GetAttribute("value"));
-        Assert.Contains("/js/language.js", page.QuerySelectorAll("script[src]").Select(s => s.GetAttribute("src")));
+        Assert.Contains("/js/language.js", page.QuerySelectorAll("script[src]").Select(s => s.GetAttribute("src")!.Split('?')[0]));
     }
 
     [Fact]

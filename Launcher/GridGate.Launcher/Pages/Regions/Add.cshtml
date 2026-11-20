@@ -134,12 +134,12 @@ else if (Model.Failed)
 @section Scripts {
 @if (Model.Running)
 {
-    <script src="/js/add-progress.js"></script>
+    <script src="/js/add-progress.js" asp-append-version="true"></script>
 }
 else if (Model.ShowForm)
 {
-    <script src="/js/add-form.js"></script>
-    <script src="/js/runs.js"></script>
-    <script src="/js/img-fallback.js"></script>
+    <script src="/js/add-form.js" asp-append-version="true"></script>
+    <script src="/js/runs.js" asp-append-version="true"></script>
+    <script src="/js/img-fallback.js" asp-append-version="true"></script>
 }
 }

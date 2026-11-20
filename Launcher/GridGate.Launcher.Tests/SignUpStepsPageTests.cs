@@ -72,7 +72,7 @@ public sealed class SignUpStepsPageTests
         Assert.Equal("Lyra", img.GetAttribute("alt"));
         Assert.Equal("lazy", img.GetAttribute("loading"));
         Assert.NotNull(page.QuerySelector("#sign-up button#to-step2"));
-        Assert.NotNull(page.QuerySelector("script[src='/js/signup-steps.js']"));
+        Assert.NotNull(page.QuerySelector("script[src^='/js/signup-steps.js']"));
     }
 
     [Fact]

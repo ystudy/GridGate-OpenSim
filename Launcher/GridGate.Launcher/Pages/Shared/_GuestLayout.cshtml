@@ -27,8 +27,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>@(ViewData["Title"] is string t ? t + " - " : "")@gridName</title>
     <link rel="stylesheet" href="@(rtl ? "/lib/bootstrap/bootstrap.rtl.min.css" : "/lib/bootstrap/bootstrap.min.css")">
-    <link rel="stylesheet" href="/css/site.css">
-    <link rel="stylesheet" href="/css/guest.css">
+    <link rel="stylesheet" href="/css/site.css" asp-append-version="true">
+    <link rel="stylesheet" href="/css/guest.css" asp-append-version="true">
     @await RenderSectionAsync("Head", required: false)
 </head>
 <body class="@bodyClass">
@@ -106,8 +106,8 @@
         @await RenderSectionAsync("Footer", required: false)
     </div>
 </footer>
-<script src="/js/copy.js"></script>
-<script src="/js/language.js"></script>
+<script src="/js/copy.js" asp-append-version="true"></script>
+<script src="/js/language.js" asp-append-version="true"></script>
 @await RenderSectionAsync("Scripts", required: false)
 </body>
 </html>

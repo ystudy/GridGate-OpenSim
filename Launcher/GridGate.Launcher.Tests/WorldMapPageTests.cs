@@ -72,7 +72,8 @@ public sealed class WorldMapPageTests
         Assert.Equal("/world/regions", map.GetAttribute("data-regions"));
         Assert.Equal("/world/tile", map.GetAttribute("data-tiles"));
         Assert.Equal("People here now: {0}", map.GetAttribute("data-people"));
-        var scripts = page.QuerySelectorAll("script[src]").Select(s => s.GetAttribute("src")).ToList();
+        // Without the ?v= version the links carry.
+        var scripts = page.QuerySelectorAll("script[src]").Select(s => s.GetAttribute("src")!.Split('?')[0]).ToList();
         Assert.True(scripts.IndexOf("/js/map-core.js") >= 0 && scripts.IndexOf("/js/map-core.js") < scripts.IndexOf("/js/world-map.js"));
         Assert.Null(page.QuerySelector("#map-invite"));
         Assert.NotNull(page.QuerySelector("#world-card a#world-teleport"));

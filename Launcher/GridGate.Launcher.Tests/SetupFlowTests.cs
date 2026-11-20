@@ -1473,7 +1473,7 @@ public sealed class SetupFlowTests
         var page = new HtmlParser().ParseDocument(await client.GetStringAsync("/setup/network", Ct));
 
         Assert.Equal("button", page.QuerySelector("#public-part #find-address")!.GetAttribute("type"));
-        Assert.NotNull(page.QuerySelector("script[src='/js/network.js']"));
+        Assert.NotNull(page.QuerySelector("script[src^='/js/network.js']"));
     }
 
     [Fact]
@@ -1555,8 +1555,8 @@ public sealed class SetupFlowTests
         Assert.NotNull(page.QuerySelector("input[name=AddressKind][value=public]"));
         Assert.NotNull(page.QuerySelector("#public-part input[name=PublicAddress]"));
         Assert.NotNull(page.QuerySelector("#switch-part input[name=Hypergrid]"));
-        Assert.NotNull(page.QuerySelector("noscript link[href=\"/css/noscript.css\"]"));
-        Assert.NotNull(page.QuerySelector("script[src=\"/js/network.js\"]"));
+        Assert.NotNull(page.QuerySelector("noscript link[href^=\"/css/noscript.css\"]"));
+        Assert.NotNull(page.QuerySelector("script[src^=\"/js/network.js\"]"));
     }
 
     // ---- Region Server (plan 6b) ----

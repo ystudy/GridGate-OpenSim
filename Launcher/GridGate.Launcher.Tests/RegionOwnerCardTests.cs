@@ -314,7 +314,7 @@ public sealed class RegionOwnerCardTests : IAsyncLifetime
         var form = card.QuerySelector("#region-owner form[data-confirm]")!;
         Assert.Equal("Remove Test Guest's region rights for Sunset Shore?", form.GetAttribute("data-confirm"));
         Assert.Equal("Remove region rights", form.QuerySelector("button")!.TextContent.Trim());
-        Assert.NotNull(card.QuerySelector("script[src='/js/confirm.js']"));
+        Assert.NotNull(card.QuerySelector("script[src^='/js/confirm.js']"));
         Assert.Null(card.QuerySelector("#region-owner input[name=owner]"));
 
         using var removed = await PostAsync(client, SunsetId, "revoke");

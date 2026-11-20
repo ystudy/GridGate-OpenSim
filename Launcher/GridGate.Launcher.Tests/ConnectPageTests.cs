@@ -78,7 +78,7 @@ public sealed class ConnectPageTests
     {
         await using var f = Factory();
         var page = await PageAsync(f);
-        var scripts = page.QuerySelectorAll("script[src]").Select(s => s.GetAttribute("src")).ToList();
+        var scripts = page.QuerySelectorAll("script[src]").Select(s => s.GetAttribute("src")!.Split('?')[0]).ToList();
         Assert.True(scripts.IndexOf("/js/copy.js") >= 0 && scripts.IndexOf("/js/copy.js") < scripts.IndexOf("/js/connect.js"));
     }
 }

@@ -55,8 +55,8 @@
         </ul>
         <button type="submit" class="btn btn-primary mt-3">Continue</button>
     </form>
-    <noscript><link rel="stylesheet" href="/css/noscript.css"></noscript>
-    <script src="/js/network.js"></script>
+    <noscript><link rel="stylesheet" href="/css/noscript.css" asp-append-version="true"></noscript>
+    <script src="/js/network.js" asp-append-version="true"></script>
     return;
 }
 <form method="post">
@@ -115,9 +115,9 @@
 </form>
 @if (gridAsset)
 {
-    <noscript><link rel="stylesheet" href="/css/noscript.css"></noscript>
+    <noscript><link rel="stylesheet" href="/css/noscript.css" asp-append-version="true"></noscript>
 }
 @if (Model.Plan != OwnerPlan.Local)
 {
-    <script src="/js/network.js"></script>
+    <script src="/js/network.js" asp-append-version="true"></script>
 }
