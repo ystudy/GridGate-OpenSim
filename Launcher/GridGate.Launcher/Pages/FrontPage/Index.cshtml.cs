@@ -105,7 +105,7 @@ public sealed class IndexModel(FrontPageStore store, [FromKeyedServices("front")
             $"{region.Name} is added.");
     }
 
-    public async Task<IActionResult> OnPostSavePlaceAsync(int index, Guid regionId, Dictionary<string, string>? line, IFormFile? file,
+    public async Task<IActionResult> OnPostSavePlaceAsync(int index, Guid regionId, [FromForm(Name = "line")] Dictionary<string, string>? line, IFormFile? file,
         bool fromMap, CancellationToken ct)
     {
         if (PlaceAt(store.Load(), index, regionId) is not { } place) return Fail(ListChanged);
@@ -143,7 +143,7 @@ public sealed class IndexModel(FrontPageStore store, [FromKeyedServices("front")
     public IActionResult OnPostNewsSource(FrontNewsSource source) =>
         Enum.IsDefined(source) ? Apply(s => s with { NewsSource = source }, "The news' source is saved.") : BadRequest();
 
-    public IActionResult OnPostAddNews(DateOnly date, Dictionary<string, string>? text)
+    public IActionResult OnPostAddNews(DateOnly date, [FromForm(Name = "text")] Dictionary<string, string>? text)
     {
         var words = (text ?? []).Where(t => offered.Current().Contains(t.Key) && !string.IsNullOrWhiteSpace(t.Value))
             .ToDictionary(t => t.Key, t => t.Value.Trim());

@@ -181,6 +181,37 @@ public sealed class FrontPageEditorTests
     }
 
     [Fact]
+    public async Task A_place_saved_without_any_line_fields_is_saved_with_no_lines()
+    {
+        await using var f = Rig();
+        var admin = await StaffAsync(f, "admin");
+        Saved(await PostAsync(admin, "AddPlace", new() { ["regionId"] = Harbour.ToString() }));
+        Saved(await PostAsync(admin, "SavePlace", new() { ["index"] = "0", ["regionId"] = Harbour.ToString(), ["line[en]"] = "Boats" }));
+
+        // A hand-made post with no line[...] fields: the other fields must not be read as lines.
+        Saved(await PostAsync(admin, "SavePlace", new() { ["index"] = "0", ["regionId"] = Harbour.ToString() }));
+        Assert.Empty(Assert.Single(Store(f).Load().Places).Line);
+
+        Saved(await UploadAsync(admin, "SavePlace", new() { ["index"] = "0", ["regionId"] = Harbour.ToString() }));
+        var place = Assert.Single(Store(f).Load().Places);
+        Assert.Empty(place.Line);
+        Assert.NotNull(place.Picture);
+    }
+
+    [Fact]
+    public async Task News_added_without_any_text_fields_is_refused_not_an_error()
+    {
+        await using var f = Rig();
+        var admin = await StaffAsync(f, "admin");
+
+        // Only text[...] fields are the news: a bare "en" field is not.
+        Saved(await PostAsync(admin, "AddNews", new() { ["date"] = "2026-11-19", ["en"] = "Not the news" }));
+
+        Assert.Empty(Store(f).Load().News);
+        Assert.Contains("Write the news in at least one language.", (await PageAsync(admin)).QuerySelector(".alert-danger")?.TextContent);
+    }
+
+    [Fact]
     public async Task Move_and_remove_places()
     {
         await using var f = Rig();
