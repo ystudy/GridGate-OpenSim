@@ -41,6 +41,9 @@ public static class LauncherServices
         services.AddSingleton<LogLevelModule>();
         services.AddSingleton<IFeatureModule>(sp => sp.GetRequiredService<LogLevelModule>());
         services.AddSingleton<ISettingsPage>(sp => sp.GetRequiredService<LogLevelModule>());
+        // Without its own limits a Robust that is off kept sign-in waiting 100 seconds (HttpClient's default).
+        services.AddHttpClient("GridGate.Robust", c => c.Timeout = RobustClient.Timeout)
+            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { ConnectTimeout = RobustClient.ConnectTimeout });
         services.AddSingleton<IRobustClient>(sp => new RobustClient(
             sp.GetRequiredService<IHttpClientFactory>().CreateClient("GridGate.Robust"),
             // Resolved per call: the controller itself depends on this client.
