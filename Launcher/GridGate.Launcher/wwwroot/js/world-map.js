@@ -12,6 +12,7 @@
         var linkEl = document.getElementById("world-link");
         var copy = document.getElementById("world-copy");
         var unavailable = document.getElementById("map-unavailable");
+        var empty = document.getElementById("map-empty");
         var copyWords = copy.textContent;
         var teleportStart = "";
         var openName = null;
@@ -35,15 +36,18 @@
             load: load,
             regionsOf: function (json) {
                 teleportStart = json.teleport || "";
+                var list = json.regions || [];
                 unavailable.hidden = json.available !== false;
-                return json.regions || [];
+                // The grid answered, but no region is running: say so rather than show an empty map.
+                empty.hidden = json.available === false || list.length > 0;
+                return list;
             },
             keyOf: function (r) { return r.name; },
             markerClass: function (r) { return r.name === openName ? "selected" : ""; },
             markerTitle: function (r) { return r.name; },
             zoomIn: document.getElementById("zoom-in"),
             zoomOut: document.getElementById("zoom-out"),
-            fitFirst: function () { view.fitAll(view.regions()); },
+            fitFirst: function () { return view.fitAll(view.regions()); },
             onRegions: function () {
                 // A region that went away takes its card with it; one still there shows its new count.
                 var r = openName !== null && view.regionByKey(openName);

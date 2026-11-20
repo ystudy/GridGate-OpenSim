@@ -77,6 +77,10 @@ public sealed class WorldMapPageTests
         Assert.Null(page.QuerySelector("#map-invite"));
         Assert.NotNull(page.QuerySelector("#world-card a#world-teleport"));
         Assert.Equal("/guest/connect", page.QuerySelector("#world-card a.world-card-help")!.GetAttribute("href"));
+        // Shown by the script when the grid answers with no region running, so an empty map isn't left unexplained.
+        var empty = page.QuerySelector("p#map-empty")!;
+        Assert.True(empty.HasAttribute("hidden"));
+        Assert.Equal("No regions are online right now. Try again later.", empty.TextContent.Trim());
     }
 
     [Fact]

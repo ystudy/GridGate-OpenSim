@@ -68,7 +68,7 @@ public sealed class PublicLookTests
         Assert.Equal("/guest/sign-in", login.GetAttribute("href"));
         Assert.Equal("Sign in", login.TextContent.Trim());
         Assert.NotNull(page.QuerySelector("header details#site-menu > summary"));
-        Assert.Equal(["/home", "/guest/connect", "/support", "/guest/forgot-password"],
+        Assert.Equal(["/home", "/map", "/guest/connect", "/support", "/guest/forgot-password"],
             page.QuerySelectorAll("header details#site-menu nav a").Select(a => a.GetAttribute("href")));
         Assert.NotNull(page.QuerySelector("header details#site-menu form#language-picker"));
         Assert.Null(page.QuerySelector("#resident-link"));

@@ -649,6 +649,7 @@
   <data name="Map.SignInTitle" xml:space="preserve"><value>Sign in to explore the map</value></data>
   <data name="Map.SignInText" xml:space="preserve"><value>See every region of our world and teleport straight into one.</value></data>
   <data name="Map.Unavailable" xml:space="preserve"><value>The map can't be shown right now. Try again in a minute.</value></data>
+  <data name="Map.NoRegions" xml:space="preserve"><value>No regions are online right now. Try again later.</value></data>
   <data name="Map.NeedsJs" xml:space="preserve"><value>The map needs JavaScript.</value></data>
   <data name="Map.PeopleHere" xml:space="preserve"><value>People here now: {0}</value></data>
   <data name="Map.Teleport" xml:space="preserve"><value>Teleport here</value></data>

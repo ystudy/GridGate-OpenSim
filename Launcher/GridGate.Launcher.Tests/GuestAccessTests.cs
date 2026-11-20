@@ -123,7 +123,7 @@ public sealed class GuestAccessTests
         Assert.Equal(GridEndpoints.LoginUri(s, HostAddress.Effective(s.Hostname)), page.QuerySelector("main code")!.TextContent);
         Assert.Contains("Avalon", main);
         Assert.All(page.QuerySelectorAll("header nav a"), a => // no staff navigation: only the public menu's pages
-            Assert.Contains(a.GetAttribute("href"), new[] { "/home", "/guest/connect", "/support", "/guest/forgot-password" }));
+            Assert.Contains(a.GetAttribute("href"), new[] { "/home", "/map", "/guest/connect", "/support", "/guest/forgot-password" }));
         Assert.DoesNotContain("href=\"/people\"", page.Body!.InnerHtml);
         Assert.DoesNotContain("href=\"/logout\"", page.Body!.InnerHtml);
     }

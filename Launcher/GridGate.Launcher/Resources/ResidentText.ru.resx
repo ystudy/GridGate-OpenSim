@@ -649,6 +649,7 @@
   <data name="Map.SignInTitle" xml:space="preserve"><value>Войдите, чтобы исследовать карту</value></data>
   <data name="Map.SignInText" xml:space="preserve"><value>Смотрите все регионы нашего мира и телепортируйтесь прямо в любой из них.</value></data>
   <data name="Map.Unavailable" xml:space="preserve"><value>Карту сейчас нельзя показать. Попробуйте ещё раз через минуту.</value></data>
+  <data name="Map.NoRegions" xml:space="preserve"><value>Сейчас нет ни одного региона онлайн. Попробуйте позже.</value></data>
   <data name="Map.NeedsJs" xml:space="preserve"><value>Для карты нужен JavaScript.</value></data>
   <data name="Map.PeopleHere" xml:space="preserve"><value>Сейчас здесь: {0}</value></data>
   <data name="Map.Teleport" xml:space="preserve"><value>Телепортироваться сюда</value></data>

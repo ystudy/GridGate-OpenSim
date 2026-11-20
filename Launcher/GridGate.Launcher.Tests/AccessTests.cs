@@ -300,10 +300,16 @@ public sealed class AccessTests
             // viewer's secure session itself and moves no money.
             "route /economy/currency.php",
             "route /economy/landtool.php",
+            // The world map's regions and pictures (spec 2026-11-20-public-map-design): 401 unless a resident or staff member is
+            // signed in (WorldMapAccess), 404 where there is no guest side.
+            "route /world/regions",
+            "route /world/tile/{z:int}/{x:int}/{y:int}",
             // The public front page: SetupGate shows it at "/" to anyone not signed in as staff, where there is a guest side.
             // How coins work here, where those windows send residents (money plan 2).
             "page coins",
             "page home",
+            // The world map: the page itself shows regions only to a signed-in resident or staff member (WorldMapAccess).
+            "page map",
             // The guest door: any account at level 0 or more signs in here, to the guest pages only.
             "page guest/sign-in",
             // A resident's two-factor code step: only does anything with the pending cookie the guest password step leaves.

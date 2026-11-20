@@ -649,6 +649,7 @@
   <data name="Map.SignInTitle" xml:space="preserve"><value>Melden Sie sich an, um die Karte zu erkunden</value></data>
   <data name="Map.SignInText" xml:space="preserve"><value>Sehen Sie alle Regionen unserer Welt und teleportieren Sie sich direkt in eine.</value></data>
   <data name="Map.Unavailable" xml:space="preserve"><value>Die Karte kann gerade nicht angezeigt werden. Versuchen Sie es in einer Minute erneut.</value></data>
+  <data name="Map.NoRegions" xml:space="preserve"><value>Gerade ist keine Region online. Versuchen Sie es später erneut.</value></data>
   <data name="Map.NeedsJs" xml:space="preserve"><value>Die Karte braucht JavaScript.</value></data>
   <data name="Map.PeopleHere" xml:space="preserve"><value>Gerade hier: {0}</value></data>
   <data name="Map.Teleport" xml:space="preserve"><value>Hierher teleportieren</value></data>

@@ -15,7 +15,8 @@
 //   markerTitle(r) -> string       the outline's tooltip
 //   zoomIn, zoomOut                the two zoom buttons
 //   startZoom                      the zoom before the first fit (3 when absent)
-//   fitFirst()                     the first view, once the list is there and the map has a size
+//   fitFirst()                     the first view, once the list is there and the map has a size; returning false
+//                                  (nothing to fit yet) asks again when the list next changes
 //   onClick(p, region)             a press that didn't move: p in pixels from the map's corner, region the one under it or null
 //   onHover(p), onLeave()          a mouse or pen over the map (not while panning), and leaving it
 //   onRegions(list)                after the list changed (not when a poll brings the same list)
@@ -280,11 +281,11 @@ function startMapView(map, options) {
         });
     }
 
-    // The first view waits until the list is there and the map has a size.
+    // The first view waits until the list is there and the map has a size, and until the page had something to fit:
+    // a list that was empty when the page opened (the database down, no region running) mustn't use it up.
     function fitFirst() {
         if (fitted || !regionsJson || width() === 0) return;
-        fitted = true;
-        fitFirstView();
+        fitted = fitFirstView() !== false;
     }
 
     function resized() {
