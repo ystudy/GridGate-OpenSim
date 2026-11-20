@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Http.Headers;
+using System.Text.RegularExpressions;
 using GridGate.Launcher.Core.Settings;
 using GridGate.Launcher.Core.Front;
 using GridGate.Launcher.Core.Grid;
@@ -26,9 +27,13 @@ public sealed class FrontApiTests
     {
         public ConcurrentQueue<string> Asked { get; } = new();
 
+        /// <summary>The grid has no tiles yet: every tile is a 404.</summary>
+        public bool Missing { get; init; }
+
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             Asked.Enqueue(request.RequestUri!.AbsolutePath);
+            if (Missing) return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
             {
                 Content = new ByteArrayContent(TestPictures.Jpeg(256, 256)) { Headers = { ContentType = new MediaTypeHeaderValue("image/jpeg") } },
@@ -142,5 +147,90 @@ public sealed class FrontApiTests
         Assert.Equal(HttpStatusCode.NotFound, await GetAsync(f, FrontApi.PictureUrl(photo)));
         Assert.Equal(HttpStatusCode.NotFound, await GetAsync(f, FrontApi.MapUrl(harbour.Id)));
         Assert.Empty(map.Asked);
+    }
+
+    [Fact]
+    public async Task A_region_without_a_map_tile_gets_the_blank_card()
+    {
+        var map = new FakeRobustMap { Missing = true };
+        await using var f = WithMap(map);
+        var harbour = new GridRegion(Guid.NewGuid(), "Harbour", 1000, 1002);
+        f.Regions.Result = new GridRegionList([harbour], true);
+        Save(f, FrontPageSettings.Default with { PlacesSource = FrontPlacesSource.Automatic });
+        Assert.Equal(HttpStatusCode.NotFound, await GetAsync(f, FrontApi.MapUrl(harbour.Id)));
+
+        var page = new AngleSharp.Html.Parser.HtmlParser().ParseDocument(await Client(f).GetStringAsync("/home", Ct));
+
+        var card = page.QuerySelector("#front-places .front-card")!;
+        Assert.Equal("Harbour", card.QuerySelector(".front-card-name")!.TextContent.Trim());
+        Assert.Null(card.QuerySelector("img")); // no request for a picture the grid doesn't have
+        Assert.NotNull(card.QuerySelector(".front-card-blank"));
+        Assert.Single(map.Asked); // the page itself asked nothing more
+    }
+
+    [Fact]
+    public void A_card_picture_that_fails_to_load_shows_the_blank_gradient()
+    {
+        // The first visitor after a tile expires still gets its address; should the tile be gone, the box behind it is the
+        // blank card's gradient, not a broken picture.
+        var css = GuestCss();
+        var picture = Regex.Match(css, @"\.front-card-picture\s*\{([^}]*)\}").Groups[1].Value;
+        var blank = Regex.Match(css, @"\.front-card-blank\s*\{\s*background:\s*([^;]*);").Groups[1].Value;
+
+        Assert.NotEqual("", blank);
+        Assert.Contains("background: " + blank, picture);
+    }
+
+    private static string GuestCss()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "GridGate.sln"))) dir = dir.Parent;
+        var root = dir?.FullName ?? throw new InvalidOperationException("GridGate.sln not found");
+        return File.ReadAllText(Path.Combine(root, "Launcher", "GridGate.Launcher", "wwwroot", "css", "guest.css"));
+    }
+
+    // ---- The editor's preview of any front picture ----
+
+    [Fact]
+    public async Task Staff_preview_serves_a_picture_the_page_does_not_show()
+    {
+        await using var f = Factory();
+        var pic = await AddAsync(f);
+        Save(f, FrontPageSettings.Default with { PlacesSource = FrontPlacesSource.Splash, Places = [Place(pic)] });
+
+        using var r = await (await StaffAsync(f, "admin")).GetAsync(FrontApi.StaffPictureUrl(pic), Ct);
+
+        Assert.Equal(HttpStatusCode.OK, r.StatusCode);
+        Assert.Equal("image/png", r.Content.Headers.ContentType?.MediaType);
+        Assert.Equal(HttpStatusCode.NotFound, await GetAsync(f, FrontApi.PictureUrl(pic))); // still not public
+    }
+
+    [Theory]
+    [InlineData("supervisor")]
+    [InlineData(null)]
+    public async Task Staff_preview_refuses_supervisor_and_anonymous(string? role)
+    {
+        await using var f = Factory();
+        var pic = await AddAsync(f);
+        var client = role is null ? Client(f) : await StaffAsync(f, role);
+
+        using var r = await client.GetAsync(FrontApi.StaffPictureUrl(pic), Ct);
+
+        Assert.NotEqual(HttpStatusCode.OK, r.StatusCode);
+    }
+
+    [Fact]
+    public async Task Staff_preview_is_404_without_a_public_side_or_a_picture()
+    {
+        await using (var f = Factory(settings: s => s with { Plan = OwnerPlan.RegionServer }))
+        {
+            var pic = await AddAsync(f);
+            using var r = await (await StaffAsync(f, "owner")).GetAsync(FrontApi.StaffPictureUrl(pic), Ct);
+            Assert.Equal(HttpStatusCode.NotFound, r.StatusCode);
+        }
+
+        await using var g = Factory();
+        using var none = await (await StaffAsync(g, "owner")).GetAsync(FrontApi.StaffPictureUrl("0123456789abcdef0123456789abcdef.png"), Ct);
+        Assert.Equal(HttpStatusCode.NotFound, none.StatusCode);
     }
 }

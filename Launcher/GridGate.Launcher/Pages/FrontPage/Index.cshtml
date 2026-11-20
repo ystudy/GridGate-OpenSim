@@ -5,7 +5,6 @@
 @{
     ViewData["Title"] = "Front page";
     var s = Model.Saved;
-    var shown = FrontPictures.Shown(s);
     string Lang(string code) => GridGate.Launcher.Core.Languages.NativeName(code);
 }
 <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
@@ -26,9 +25,9 @@
 <section class="card card-body mb-3" aria-labelledby="photo-title">
     <h2 id="photo-title">Photo</h2>
     <p>A big in-world picture behind the grid's name. Without one, the top of the page is a dark blue gradient.</p>
-    @if (s.Photo is { } photo && shown.Contains(photo))
+    @if (s.Photo is { } photo)
     {
-        <img class="front-editor-photo mb-2" src="@FrontApi.PictureUrl(photo)" alt="The current front page photo">
+        <img class="front-editor-photo mb-2" src="@FrontApi.StaffPictureUrl(photo)" alt="The current front page photo">
         <form method="post" asp-page-handler="RemovePhoto" class="mb-2">
             <button type="submit" class="btn btn-sm btn-outline-danger" icon="trash">Remove the photo</button>
         </form>
@@ -54,9 +53,12 @@
 <section class="card card-body mb-3" aria-labelledby="places-title">
     <h2 id="places-title">Featured places</h2>
     <form id="front-places-source" method="post" asp-page-handler="PlacesSource" class="mb-3">
-        <div class="form-check"><input class="form-check-input" type="radio" id="p-splash" name="source" value="Splash" checked="@(s.PlacesSource == FrontPlacesSource.Splash)"><label class="form-check-label" for="p-splash">Same as the splash page (its published places)</label></div>
-        <div class="form-check"><input class="form-check-input" type="radio" id="p-own" name="source" value="Own" checked="@(s.PlacesSource == FrontPlacesSource.Own)"><label class="form-check-label" for="p-own">Its own list (below)</label></div>
-        <div class="form-check"><input class="form-check-input" type="radio" id="p-auto" name="source" value="Automatic" checked="@(s.PlacesSource == FrontPlacesSource.Automatic)"><label class="form-check-label" for="p-auto">Automatic: up to 6 running regions with the most people, with their map pictures</label></div>
+        <fieldset>
+            <legend class="h6">Where the places come from</legend>
+            <div class="form-check"><input class="form-check-input" type="radio" id="p-splash" name="source" value="Splash" checked="@(s.PlacesSource == FrontPlacesSource.Splash)"><label class="form-check-label" for="p-splash">Same as the splash page (its published places)</label></div>
+            <div class="form-check"><input class="form-check-input" type="radio" id="p-own" name="source" value="Own" checked="@(s.PlacesSource == FrontPlacesSource.Own)"><label class="form-check-label" for="p-own">Its own list (below)</label></div>
+            <div class="form-check"><input class="form-check-input" type="radio" id="p-auto" name="source" value="Automatic" checked="@(s.PlacesSource == FrontPlacesSource.Automatic)"><label class="form-check-label" for="p-auto">Automatic: up to 6 running regions with the most people, with their map pictures</label></div>
+        </fieldset>
         <button type="submit" class="btn btn-primary mt-2" icon="save">Save the source</button>
     </form>
 
@@ -83,13 +85,10 @@
                         <label class="form-label small mb-0" for="line-@i-@code">Line (@Lang(code))</label>
                         <input class="form-control form-control-sm mb-1" id="line-@i-@code" name="line[@code]" maxlength="@GridGate.Launcher.Core.Splash.SplashRules.MaxPlaceLine" value="@p.Line.GetValueOrDefault(code)">
                     }
-                    @if (p.Picture is { } pic && shown.Contains(pic))
+                    @if (p.Picture is { } pic)
                     {
-                        <img class="front-editor-thumb my-1" src="@FrontApi.PictureUrl(pic)" alt="@p.RegionName">
-                    }
-                    else if (p.Picture is not null)
-                    {
-                        <p class="small mb-1">Has a picture (shown while the source is its own list).</p>
+                        @* The staff-only address: the public one answers only while the page shows the own list. *@
+                        <img class="front-editor-thumb my-1" src="@FrontApi.StaffPictureUrl(pic)" alt="@p.RegionName">
                     }
                     <div class="d-flex flex-wrap gap-2 align-items-center">
                         <input class="form-control form-control-sm w-auto" type="file" name="file" accept="image/png,image/jpeg,image/webp" aria-label="Picture for @p.RegionName">
@@ -105,6 +104,10 @@
         {
             <p class="mb-0">The grid's regions can't be read right now. Try again in a minute.</p>
         }
+        else if (Model.OwnRegions.Count == 0)
+        {
+            <p class="mb-0">Every region of this grid is on the list.</p>
+        }
         else
         {
             <select class="form-select w-auto" name="regionId" aria-label="Region to add">
@@ -113,7 +116,7 @@
                     <option value="@r.Id">@r.Name</option>
                 }
             </select>
-            <button type="submit" class="btn btn-outline-secondary" icon="plus" disabled="@(Model.OwnRegions.Count == 0 || s.Places.Count >= GridGate.Launcher.Core.Splash.SplashRules.MaxPlaces)">Add a place</button>
+            <button type="submit" class="btn btn-outline-secondary" icon="plus" disabled="@(s.Places.Count >= GridGate.Launcher.Core.Splash.SplashRules.MaxPlaces)">Add a place</button>
         }
     </form>
 </section>
@@ -121,8 +124,11 @@
 <section class="card card-body mb-3" aria-labelledby="news-title">
     <h2 id="news-title">News</h2>
     <form id="front-news-source" method="post" asp-page-handler="NewsSource" class="mb-3">
-        <div class="form-check"><input class="form-check-input" type="radio" id="n-splash" name="source" value="Splash" checked="@(s.NewsSource == FrontNewsSource.Splash)"><label class="form-check-label" for="n-splash">Same as the splash page (its published news)</label></div>
-        <div class="form-check"><input class="form-check-input" type="radio" id="n-own" name="source" value="Own" checked="@(s.NewsSource == FrontNewsSource.Own)"><label class="form-check-label" for="n-own">Its own news (below)</label></div>
+        <fieldset>
+            <legend class="h6">Where the news comes from</legend>
+            <div class="form-check"><input class="form-check-input" type="radio" id="n-splash" name="source" value="Splash" checked="@(s.NewsSource == FrontNewsSource.Splash)"><label class="form-check-label" for="n-splash">Same as the splash page (its published news)</label></div>
+            <div class="form-check"><input class="form-check-input" type="radio" id="n-own" name="source" value="Own" checked="@(s.NewsSource == FrontNewsSource.Own)"><label class="form-check-label" for="n-own">Its own news (below)</label></div>
+        </fieldset>
         <button type="submit" class="btn btn-primary mt-2" icon="save">Save the source</button>
     </form>
 
@@ -133,7 +139,7 @@
         {
             var n = s.News[i];
             <li class="border rounded p-2 mb-2 d-flex flex-wrap align-items-center gap-2">
-                <span class="me-auto"><strong>@n.Date.ToString("yyyy-MM-dd")</strong> @(n.Text.GetValueOrDefault("en") ?? n.Text.Values.FirstOrDefault())@(n.Hidden ? " (hidden)" : "")</span>
+                <span class="me-auto"><strong>@n.Date.ToString("yyyy-MM-dd")</strong> <span class="front-own-news-text">@GridGate.Launcher.Pages.FrontPage.IndexModel.NewsPreview(n)</span>@(n.Hidden ? " (hidden)" : "")</span>
                 <form method="post" asp-page-handler="ToggleNews"><input type="hidden" name="index" value="@i"><input type="hidden" name="key" value="@GridGate.Launcher.Pages.FrontPage.IndexModel.NewsKey(n)"><button type="submit" class="btn btn-sm btn-outline-secondary" icon="eye">@(n.Hidden ? "Show" : "Hide")</button></form>
                 <form method="post" asp-page-handler="RemoveNews"><input type="hidden" name="index" value="@i"><input type="hidden" name="key" value="@GridGate.Launcher.Pages.FrontPage.IndexModel.NewsKey(n)"><button type="submit" class="btn btn-sm btn-outline-danger" icon="trash">Remove</button></form>
             </li>

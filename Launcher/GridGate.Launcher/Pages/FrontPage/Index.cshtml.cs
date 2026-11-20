@@ -14,8 +14,11 @@ namespace GridGate.Launcher.Pages.FrontPage;
 /// The Front page staff editor (<c>/front-page</c>; spec 2026-11-19-front-page-design, "The staff page"): the photo, which live
 /// numbers show, where the places and news come from, and the front page's own lists, kept whichever source is chosen. Plain
 /// forms; every save is live at once and drops the cached live data, so the public page shows it on the next visit. AdminPolicy
-/// by the folder rule; 404 where there is no guest side (<c>GuestSideOnly</c>). AuditMiddleware logs each change.
+/// by the folder rule; 404 where there is no guest side (<c>GuestSideOnly</c>). AuditMiddleware logs each change. A request may be
+/// one picture at the picture store's cap plus room for the form around it, like <c>Pages/Guest/Upload</c>.
 /// </summary>
+[RequestFormLimits(MultipartBodyLengthLimit = MaxRequestBytes)]
+[RequestSizeLimit(MaxRequestBytes)]
 public sealed class IndexModel(FrontPageStore store, [FromKeyedServices("front")] PictureStore pictures, IGridRegions regions,
     IGridController grid, IHttpClientFactory http, FrontPageSnapshot snapshot, OfferedLanguages offered) : PageModel
 {
@@ -30,11 +33,31 @@ public sealed class IndexModel(FrontPageStore store, [FromKeyedServices("front")
         return $"{item.Date:yyyy-MM-dd}-{Convert.ToHexStringLower(hash.AsSpan(0, 6))}";
     }
 
+    /// <summary>The multipart framing, the token, and a place's line in every language around the picture.</summary>
+    private const long FormAllowance = 64 * 1024;
+    private const long MaxRequestBytes = PictureStore.MaxUploadBytes + FormAllowance;
+
+    /// <summary>How much of a news item's text the list shows.</summary>
+    public const int NewsPreviewLength = 80;
+
+    /// <summary>The start of a news item's text (English, else its first language) for the list, cut at a word.</summary>
+    public static string NewsPreview(SplashNewsItem item)
+    {
+        var text = string.Join(' ', (item.Text.GetValueOrDefault("en") ?? item.Text.Values.FirstOrDefault() ?? "")
+            .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+        if (text.Length <= NewsPreviewLength) return text;
+        var cut = text.LastIndexOf(' ', NewsPreviewLength);
+        return text[..(cut > NewsPreviewLength / 2 ? cut : NewsPreviewLength)].TrimEnd() + "…";
+    }
+
     private const string ListChanged = "The list changed in another window, so nothing was changed. Look again and try once more.";
 
     public FrontPageSettings Saved { get; private set; } = FrontPageSettings.Default;
 
-    /// <summary>The grid's own regions (never hypergrid links), for the Add a place picker; empty when the list can't be read.</summary>
+    /// <summary>
+    /// The grid's own regions (never hypergrid links) not on the list yet, for the Add a place picker; empty when the list can't
+    /// be read.
+    /// </summary>
     public IReadOnlyList<GridRegion> OwnRegions { get; private set; } = [];
 
     public bool RegionsUnavailable { get; private set; }
@@ -53,7 +76,7 @@ public sealed class IndexModel(FrontPageStore store, [FromKeyedServices("front")
         Languages = offered.Current();
         var list = await regions.ListAsync(ct);
         RegionsUnavailable = !list.Available;
-        OwnRegions = [.. list.Regions.Where(r => !r.IsLink)];
+        OwnRegions = [.. list.Regions.Where(r => !r.IsLink && Saved.Places.All(p => p.RegionId != r.Id))];
     }
 
     public async Task<IActionResult> OnPostPhotoAsync(IFormFile? file, CancellationToken ct)
@@ -75,11 +98,14 @@ public sealed class IndexModel(FrontPageStore store, [FromKeyedServices("front")
         var list = await regions.ListAsync(ct);
         if (list.Regions.FirstOrDefault(r => r.Id == regionId && !r.IsLink) is not { } region)
             return Fail("That region isn't one of this grid's regions.");
-        return Apply(s => s with { Places = [.. s.Places, new SplashPlace(region.Id, region.Name, new Dictionary<string, string>(), null)] },
+        if (store.Load().Places.Any(p => p.RegionId == region.Id)) return Fail($"{region.Name} is already on the list.");
+        // Checked again under the lock: another window may have added it since (then nothing changes).
+        return Apply(s => s.Places.Any(p => p.RegionId == region.Id) ? null
+                : s with { Places = [.. s.Places, new SplashPlace(region.Id, region.Name, new Dictionary<string, string>(), null)] },
             $"{region.Name} is added.");
     }
 
-    public async Task<IActionResult> OnPostSavePlaceAsync(int index, Guid regionId, Dictionary<string, string>? line, IFormFile? file,
+    public async Task<IActionResult> OnPostSavePlaceAsync(int index, Guid regionId, [FromForm(Name = "line")] Dictionary<string, string>? line, IFormFile? file,
         bool fromMap, CancellationToken ct)
     {
         if (PlaceAt(store.Load(), index, regionId) is not { } place) return Fail(ListChanged);
@@ -117,7 +143,7 @@ public sealed class IndexModel(FrontPageStore store, [FromKeyedServices("front")
     public IActionResult OnPostNewsSource(FrontNewsSource source) =>
         Enum.IsDefined(source) ? Apply(s => s with { NewsSource = source }, "The news' source is saved.") : BadRequest();
 
-    public IActionResult OnPostAddNews(DateOnly date, Dictionary<string, string>? text)
+    public IActionResult OnPostAddNews(DateOnly date, [FromForm(Name = "text")] Dictionary<string, string>? text)
     {
         var words = (text ?? []).Where(t => offered.Current().Contains(t.Key) && !string.IsNullOrWhiteSpace(t.Value))
             .ToDictionary(t => t.Key, t => t.Value.Trim());

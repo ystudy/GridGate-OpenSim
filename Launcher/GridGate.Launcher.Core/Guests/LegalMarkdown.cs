@@ -21,11 +21,17 @@ public static class LegalMarkdown
 
     private static readonly string[] AllowedSchemes = ["http", "https", "mailto"];
 
-    public static string ToHtml(string? markdown)
+    /// <param name="topHeading">
+    /// The level a <c>#</c> heading becomes; the others move down with it, never past h6. A text shown under a page's own h2
+    /// passes 3, so it can't add a heading above or beside that section's; the legal pages keep the operator's levels (1).
+    /// </param>
+    public static string ToHtml(string? markdown, int topHeading = 1)
     {
         if (string.IsNullOrWhiteSpace(markdown)) return "";
         var document = Markdown.Parse(markdown, Pipeline);
         Sanitize(document);
+        foreach (var heading in document.Descendants<HeadingBlock>())
+            heading.Level = Math.Min(6, heading.Level + Math.Max(0, topHeading - 1));
         return document.ToHtml(Pipeline);
     }
 

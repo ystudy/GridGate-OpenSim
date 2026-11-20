@@ -62,6 +62,38 @@ public sealed class FrontPageStoreTests : IDisposable
     }
 
     [Fact]
+    public void Load_reads_the_file_once_until_a_save_or_update()
+    {
+        // Every public visit loads the settings, so they are kept in memory; only this store writes the file.
+        var store = Store();
+        Assert.Empty(store.Save(Full()));
+        var file = Path.Combine(new LauncherPaths(_root, _root, _root).Front, "front.json");
+        Assert.Equal(Photo, store.Load().Photo);
+
+        File.WriteAllText(file, "{}"); // changed behind the store's back: not read again
+        Assert.Equal(Photo, store.Load().Photo);
+        Assert.Equal(2, store.Load().Places.Count);
+
+        Assert.Empty(store.Save(Full() with { Photo = null }));
+        Assert.Null(store.Load().Photo); // a save drops what was kept
+
+        Assert.True(store.Update(s => s with { PlacesSource = FrontPlacesSource.Automatic }).Saved);
+        Assert.Equal(FrontPlacesSource.Automatic, store.Load().PlacesSource);
+    }
+
+    [Fact]
+    public void A_refused_save_keeps_what_was_loaded()
+    {
+        var store = Store();
+        Assert.Empty(store.Save(Full()));
+        Assert.Equal(Photo, store.Load().Photo);
+
+        Assert.NotEmpty(store.Save(Full() with { Photo = "../secret.png" }));
+
+        Assert.Equal(Photo, store.Load().Photo);
+    }
+
+    [Fact]
     public void Refuses_more_places_than_the_limit()
     {
         var store = Store();

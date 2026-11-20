@@ -76,7 +76,7 @@
         {
             <article class="front-news-item">
                 <time datetime="@n.Date.ToString("yyyy-MM-dd")">@n.Date.ToString("D", System.Globalization.CultureInfo.CurrentUICulture)</time>
-                <div class="front-news-text">@Html.Raw(LegalMarkdown.ToHtml(n.Text))</div>
+                <div class="front-news-text">@Html.Raw(LegalMarkdown.ToHtml(n.Text, topHeading: 3))</div>
             </article>
         }
     </section>

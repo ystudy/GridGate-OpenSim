@@ -33,6 +33,24 @@ public sealed class LegalMarkdownTests
     }
 
     [Fact]
+    public void Headings_can_start_lower_and_stop_at_h6()
+    {
+        const string text = "# One\n\n## Two\n\n#### Four\n\n###### Six";
+
+        var lower = LegalMarkdown.ToHtml(text, topHeading: 3);
+
+        Assert.Contains("<h3>One</h3>", lower);
+        Assert.Contains("<h4>Two</h4>", lower);
+        Assert.Contains("<h6>Four</h6>", lower);
+        Assert.Contains("<h6>Six</h6>", lower);
+        Assert.DoesNotContain("<h1>", lower);
+        Assert.DoesNotContain("<h2>", lower);
+        // The legal pages keep the operator's levels.
+        Assert.Contains("<h1>One</h1>", LegalMarkdown.ToHtml(text));
+        Assert.Contains("<h2>Two</h2>", LegalMarkdown.ToHtml(text));
+    }
+
+    [Fact]
     public void Tables_and_strikethrough_render_but_other_extras_are_off()
     {
         var html = LegalMarkdown.ToHtml("""
