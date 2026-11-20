@@ -24,8 +24,8 @@ public sealed class MoneyNotices(MoneyGate gate, IMoneyBooks books, MoneyStatus 
     {
         if (!gate.ServiceHere) return [];
         // Turned on after GridGate started: nothing has failed, the service and its database start with GridGate.
-        if (!status.ServiceRunning && status.ServiceError is null)
-            return [new("money-restart", "Money was turned on after GridGate started. Restart GridGate and then the world (Power → Restart) for money to start.", Info: true)];
+        if (status.WaitingForRestart)
+            return [new("money-restart", MoneyPageRules.StartsOnRestart, Info: true)];
         var notices = new List<MoneyNotice>();
         if (status.ServiceError is not null)
             notices.Add(new("money-service",

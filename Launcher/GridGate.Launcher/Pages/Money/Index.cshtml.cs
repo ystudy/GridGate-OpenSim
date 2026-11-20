@@ -81,6 +81,8 @@ public sealed class IndexModel(IGridController grid, MoneyGate gate, IMoneyBooks
     public (bool Frozen, string Reason) Frozen { get; private set; }
     public (DateTimeOffset At, SelfCheckResult Result)? LastCheck { get; private set; }
     public bool DatabaseDown { get; private set; }
+    /// <summary>Money is saved on but starts with the next GridGate start (<see cref="MoneyStatus.WaitingForRestart"/>).</summary>
+    public bool WaitingForRestart { get; private set; }
     public string? Error { get; private set; }
     public string? Notice { get; private set; }
 
@@ -627,6 +629,10 @@ public sealed class IndexModel(IGridController grid, MoneyGate gate, IMoneyBooks
         ShowServers = grid.CurrentSettings().Plan == OwnerPlan.GridAsset;
         Servers = Saved.PairedServers ?? [];
         PairingUntil = pairing.PendingUntil;
+        // Turned on after GridGate started: the money database is made at the next start, so asking it now would
+        // only report a fault that isn't one.
+        WaitingForRestart = status.WaitingForRestart;
+        if (WaitingForRestart) return;
         if (!string.IsNullOrWhiteSpace(Q))
             try
             {
