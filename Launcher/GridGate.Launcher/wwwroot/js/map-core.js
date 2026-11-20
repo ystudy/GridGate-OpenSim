@@ -23,46 +23,41 @@
 //   onRelayout()                   after a zoom, for elements the page placed in the layer itself
 
 // Which places' tiles to fetch again after each poll. A region that changed (moved, resized, its state; added or gone) has
-// its places watched: where it is and, after a move, where it was. They are fetched again on every poll until the region
-// has stayed the same for settlePolls polls, because a region sends its new picture at the end of its restart, and a
-// restart can fit between two polls. next(before, list) takes the last poll's list and this one's and returns the places,
-// each { x, y, w, h } in squares.
-function mapTileWatch(keyOf, settlePolls) {
-    var watched = {};  // region key -> { places: [...], quiet: polls since its last change }
+// its places watched: where it is and, after a move, where it was. They are fetched again on every poll until settleMs
+// after the region's last change: a region sends its new picture at the end of its restart, which can fit between two
+// polls, and Robust rebuilds its zoomed-out tiles a minute after that. next(before, list, at) takes the last poll's list,
+// this one's and the time in ms, and returns the places, each { x, y, w, h } in squares.
+function mapTileWatch(keyOf, settleMs) {
+    var watched = {};  // region key -> { places: [...], since: when it last changed }
 
     function placeOf(r) { return { x: r.x, y: r.y, w: r.w || r.size || 1, h: r.h || r.size || 1 }; }
     function samePlace(a, b) { return a.x === b.x && a.y === b.y && a.w === b.w && a.h === b.h; }
-    function changedNow(key, places) {
+    function changed(key, places, at) {
         var w = watched[key] || { places: [] };
         places.forEach(function (p) {
             if (!w.places.some(function (q) { return samePlace(p, q); })) w.places.push(p);
         });
-        w.quiet = 0;
+        w.since = at;
         watched[key] = w;
     }
 
     return {
-        next: function (before, list) {
+        next: function (before, list, at) {
             var old = {}, now = {};
             before.forEach(function (r) { old[keyOf(r)] = r; });
             list.forEach(function (r) { now[keyOf(r)] = r; });
             for (var key in now) {
                 var r = now[key], was = old[key];
-                if (!was) changedNow(key, [placeOf(r)]);
-                else if (was.state !== r.state || !samePlace(placeOf(was), placeOf(r))) changedNow(key, [placeOf(r), placeOf(was)]);
-                else if (watched[key]) watched[key].quiet++;
+                if (!was) changed(key, [placeOf(r)], at);
+                else if (was.state !== r.state || !samePlace(placeOf(was), placeOf(r))) changed(key, [placeOf(r), placeOf(was)], at);
             }
             for (var gone in old) {
-                if (!(gone in now)) changedNow(gone, [placeOf(old[gone])]);
-            }
-            // A region gone before the last poll is in neither list; it settles all the same.
-            for (var k in watched) {
-                if (!(k in now) && !(k in old)) watched[k].quiet++;
+                if (!(gone in now)) changed(gone, [placeOf(old[gone])], at);
             }
             var places = [];
             for (var w in watched) {
                 places = places.concat(watched[w].places);
-                if (watched[w].quiet >= settlePolls) delete watched[w];
+                if (at - watched[w].since >= settleMs) delete watched[w];
             }
             return places;
         }
@@ -71,7 +66,8 @@ function mapTileWatch(keyOf, settlePolls) {
 
 function startMapView(map, options) {
     var MIN_ZOOM = 1, MAX_ZOOM = 8, TILE_PX = 256, WORLD = 65536;
-    var MISSING_RETRY_MS = 60000, CLICK_SLOP_PX = 5, SETTLE_POLLS = 2;
+    // SETTLE_MS: Robust rebuilds zoomed-out tiles 60 s after a change (MapImageService), so a little longer than that.
+    var MISSING_RETRY_MS = 60000, CLICK_SLOP_PX = 5, SETTLE_MS = 70000;
     function noop() { }
     var onClick = options.onClick || noop, onHover = options.onHover || noop, onLeave = options.onLeave || noop;
     var onRegions = options.onRegions || noop, onRelayout = options.onRelayout || noop, fitFirstView = options.fitFirst || noop;
@@ -94,7 +90,7 @@ function startMapView(map, options) {
     var tileVersion = 0;   // bumped when the regions change, so changed tiles skip the browser's cache
     var regions = [];      // the latest region list
     var regionsJson = "";
-    var watch = mapTileWatch(keyOf, SETTLE_POLLS);  // which tiles to fetch again after each poll
+    var watch = mapTileWatch(keyOf, SETTLE_MS);  // which tiles to fetch again after each poll
     var markers = {};      // region key -> marker element
     var fitted = false;
 
@@ -313,7 +309,7 @@ function startMapView(map, options) {
             var text = JSON.stringify(list);
             // Every poll, also one that brings the same list: a changed region's tiles are fetched until it settles.
             // Not on the first list: its tiles are loading for the first time anyway.
-            var places = regionsJson === "" ? [] : watch.next(regions, list);
+            var places = regionsJson === "" ? [] : watch.next(regions, list, Date.now());
             if (text !== regionsJson) {
                 showRegions(list);
                 regionsJson = text;
