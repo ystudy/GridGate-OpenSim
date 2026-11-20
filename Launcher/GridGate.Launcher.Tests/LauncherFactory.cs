@@ -107,6 +107,7 @@ internal sealed class LauncherFactory : WebApplicationFactory<Program>
         builder.ConfigureLogging(l => l.AddProvider(new CapturingLoggerProvider(Logs)));
         builder.ConfigureTestServices(services =>
         {
+            services.AddSingleton<Microsoft.AspNetCore.Hosting.IStartupFilter, NoWebRootWatchers>();
             services.RemoveAll<IGridController>();
             services.AddSingleton<IGridController>(Grid);
             services.RemoveAll<IRobustClient>();
