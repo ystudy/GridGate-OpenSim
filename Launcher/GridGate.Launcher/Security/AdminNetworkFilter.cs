@@ -20,7 +20,7 @@ public sealed class AdminNetworkFilter(RequestDelegate next, Func<LauncherSettin
     /// Whether the request is open to every address whatever the list says: the setup pages (their own gate guards them; the
     /// list is empty during setup anyway) and, only on a plan with a guest side (<see cref="AdminRule.HasStaffPages"/>), the
     /// pages guests and the public use: the front page ("/" itself, a GET without the port-8001 keys, and "/home"), the guest
-    /// pages, the legal and contact pages, sign-up, the support-ticket pages and the bot-protection endpoints.
+    /// pages, the legal and contact pages, sign-up, the support-ticket pages, the bot-protection endpoints, the front page's pictures ("/front") and the world map with its data ("/map", "/world").
     /// </summary>
     public static bool Exempt(HttpRequest r)
     {
@@ -31,7 +31,7 @@ public sealed class AdminNetworkFilter(RequestDelegate next, Func<LauncherSettin
     }
 
     private static readonly string[] PublicPaths =
-        ["/home", "/guest", "/terms", "/privacy", "/cookies", "/contact", "/signup", "/api/bots", "/welcome", "/theme", "/support", "/language", "/economy", "/coins"];
+        ["/home", "/guest", "/terms", "/privacy", "/cookies", "/contact", "/signup", "/api/bots", "/welcome", "/theme", "/support", "/language", "/economy", "/coins", "/front", "/map", "/world"];
 
     public Task InvokeAsync(HttpContext ctx)
     {
