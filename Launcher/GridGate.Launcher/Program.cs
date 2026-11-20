@@ -405,6 +405,7 @@ builder.Services.AddSingleton(sp => new GridGate.Launcher.Core.Front.FrontPageSt
 builder.Services.AddSingleton(sp => new ThemeStore(paths, sp.GetRequiredKeyedService<PictureStore>("theme"), sp.GetRequiredService<ILogger<ThemeStore>>()));
 builder.Services.AddSingleton<SplashSnapshot>();
 builder.Services.AddSingleton<GridGate.Launcher.Front.FrontPageSnapshot>();
+builder.Services.AddSingleton<GridGate.Launcher.World.WorldMapSnapshot>();
 builder.Services.AddSingleton<GridGate.Launcher.Front.FrontMapTiles>();
 builder.Services.AddSingleton<GridGate.Launcher.Front.FrontPageView>();
 // The Home dashboard's counts (design 2026-11-05-dashboard), cached a minute.
@@ -555,6 +556,7 @@ DashboardApi.Map(app);
 SetupApi.Map(app);
 SplashApi.Map(app);
 FrontApi.Map(app);
+WorldMapApi.Map(app);
 EconomyApi.Map(app);
 app.MapRazorPages();
 
