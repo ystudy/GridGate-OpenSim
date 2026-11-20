@@ -59,6 +59,8 @@ namespace OpenSim.Services.GridService
         protected static HypergridLinker m_HypergridLinker;
 
         protected IAuthenticationService m_AuthenticationService = null;
+        // GridGate: the map tiles, so a region that moves doesn't leave its picture at its old place (MapImageService).
+        protected IMapImageService m_MapImageService = null;
         protected bool m_AllowDuplicateNames = false;
         protected bool m_AllowHypergridMapSearch = false;
 
@@ -97,6 +99,12 @@ namespace OpenSim.Services.GridService
                     object[] args = [config];
                     m_AuthenticationService = ServerUtils.LoadPlugin<IAuthenticationService>(authService, args);
                 }
+
+                // GridGate: with a map service, a region registering at a new place has the tiles of the squares it
+                // left removed. Without one, old pictures stay, as upstream.
+                string mapService = gridConfig.GetString("MapImageService", string.Empty);
+                if (!string.IsNullOrEmpty(mapService))
+                    m_MapImageService = ServerUtils.LoadPlugin<IMapImageService>(mapService, [config]);
                 m_AllowDuplicateNames = gridConfig.GetBoolean("AllowDuplicateNames", m_AllowDuplicateNames);
                 m_AllowHypergridMapSearch = gridConfig.GetBoolean("AllowHypergridMapSearch", m_AllowHypergridMapSearch);
 
@@ -408,6 +416,8 @@ namespace OpenSim.Services.GridService
                     m_log.DebugFormat("[GRID SERVICE]: Database exception: {0}", e);
                     return $"[GRID SERVICE] Register failed to delete to update region {regionInfos.RegionID}";
                 }
+
+                RemoveLeftMapTiles(region, regionInfos, scopeID);
             }
 
             // Everything is ok, let's register
@@ -467,6 +477,41 @@ namespace OpenSim.Services.GridService
         {
             return String.Format("{0}/{1} at <{2},{3}>",
                 reg.RegionName, reg.RegionID, reg.RegionCoordX, reg.RegionCoordY);
+        }
+
+        /// <summary>
+        /// GridGate: a region moved from <paramref name="old"/> to <paramref name="moved"/>. Removes the map tile of every
+        /// square of the old place the region no longer covers, so maps stop showing it there. Squares it still covers
+        /// keep their picture until the region uploads its new one. A failure is logged and doesn't stop the registration.
+        /// </summary>
+        private void RemoveLeftMapTiles(RegionData old, GridRegion moved, UUID scopeID)
+        {
+            if (m_MapImageService is null)
+                return;
+
+            int size = (int)Constants.RegionSize;
+            int oldX = old.coordX, oldY = old.coordY;
+            int oldW = Math.Max(old.sizeX, size) / size, oldH = Math.Max(old.sizeY, size) / size;
+            int newX = (int)Util.WorldToRegionLoc((uint)moved.RegionLocX), newY = (int)Util.WorldToRegionLoc((uint)moved.RegionLocY);
+            int newW = Math.Max(moved.RegionSizeX, size) / size, newH = Math.Max(moved.RegionSizeY, size) / size;
+
+            for (int x = oldX; x < oldX + oldW; x++)
+            {
+                for (int y = oldY; y < oldY + oldH; y++)
+                {
+                    if (x >= newX && x < newX + newW && y >= newY && y < newY + newH)
+                        continue;
+                    try
+                    {
+                        if (!m_MapImageService.RemoveMapTile(x, y, scopeID, out string reason))
+                            m_log.Warn($"[GRID SERVICE]: Could not remove the map tile at {x}-{y} that {moved.RegionName} left: {reason}");
+                    }
+                    catch (Exception e)
+                    {
+                        m_log.Warn($"[GRID SERVICE]: Could not remove the map tile at {x}-{y} that {moved.RegionName} left: {e.Message}");
+                    }
+                }
+            }
         }
 
         public bool DeregisterRegion(UUID regionID)
