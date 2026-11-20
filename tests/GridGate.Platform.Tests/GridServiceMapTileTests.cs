@@ -32,6 +32,37 @@ public class GridServiceMapTileTests
     }
 
     [Fact]
+    public void A_region_that_stopped_and_started_elsewhere_has_its_old_place_tile_removed()
+    {
+        // What a move really is: the region stops (it deregisters, and Robust deletes its record by default), then
+        // starts at its new place. Seen on the VM: the first fix only looked at the record, which was gone by then.
+        var (grid, maps) = Make();
+        var id = UUID.Random();
+
+        Assert.Equal(string.Empty, grid.RegisterRegion(Scope, Region(id, "R3", 1002, 1002)));
+        Assert.True(grid.DeregisterRegion(id));
+        Assert.Equal(string.Empty, grid.RegisterRegion(Scope, Region(id, "R3", 1003, 1003)));
+
+        Assert.Equal([(1002, 1002)], maps.Removed);
+    }
+
+    [Fact]
+    public void A_region_that_stopped_and_started_in_place_removes_nothing()
+    {
+        var (grid, maps) = Make();
+        var id = UUID.Random();
+
+        Assert.Equal(string.Empty, grid.RegisterRegion(Scope, Region(id, "Home", 1000, 1000)));
+        Assert.True(grid.DeregisterRegion(id));
+        Assert.Equal(string.Empty, grid.RegisterRegion(Scope, Region(id, "Home", 1000, 1000)));
+        // Moving later still removes only the place it left then.
+        Assert.True(grid.DeregisterRegion(id));
+        Assert.Equal(string.Empty, grid.RegisterRegion(Scope, Region(id, "Home", 1004, 1000)));
+
+        Assert.Equal([(1000, 1000)], maps.Removed);
+    }
+
+    [Fact]
     public void A_first_registration_or_a_restart_in_place_removes_nothing()
     {
         var (grid, maps) = Make();
