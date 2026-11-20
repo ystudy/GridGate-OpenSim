@@ -50,6 +50,15 @@ public interface IRobustClient
 public sealed class RobustClient(HttpClient http, Func<LauncherSettings> settings) : IRobustClient
 {
     /// <summary>
+    /// How long a connection to Robust may take. Robust is on this computer or the grid's own (a LAN or a fast link), so a
+    /// computer that is off or unreachable is known in seconds and sign-in says so instead of waiting HttpClient's 100.
+    /// </summary>
+    public static readonly TimeSpan ConnectTimeout = TimeSpan.FromSeconds(5);
+
+    /// <summary>How long a whole call may take once connected: every call is a short XML lookup.</summary>
+    public static readonly TimeSpan Timeout = TimeSpan.FromSeconds(30);
+
+    /// <summary>
     /// Robust's get_region_range filters regions by their origin (south-west corner), and the largest region is 4096 m =
     /// 16 squares, so a region reaching into an area can start up to this many squares west or south of it.
     /// </summary>
