@@ -167,3 +167,36 @@
     margin-top: 2.5rem; padding: 2.5rem 1.5rem; text-align: center; border-radius: 1rem;
     background: radial-gradient(ellipse at bottom, #12206b 0%, var(--gg-surface) 75%); border: 1px solid var(--gg-border);
 }
+
+/* The world map (spec 2026-11-20-public-map-design): the invitation for visitors, and the map with its card. */
+.guest-site .map-invite { text-align: center; }
+.guest-site .map-invite-box {
+    max-width: 36rem; margin: 2rem auto 0; padding: 2rem 1.5rem;
+    background: var(--gg-surface); border: 1px solid var(--gg-border); border-radius: 1rem; box-shadow: var(--gg-glow);
+}
+.guest-site .map-invite-box p { color: var(--gg-muted); }
+.guest-site .map-head { display: flex; align-items: center; gap: .75rem; margin-bottom: 1rem; }
+.guest-site .map-head h1 { margin: 0 auto 0 0; }
+.guest-site .map-unavailable { color: var(--gg-muted); }
+.guest-site .world-map-wrap { position: relative; }
+.guest-site .world-map {
+    min-height: max(24rem, calc(100vh - 16rem)); background: var(--gg-bg); border: 1px solid var(--gg-border); border-radius: 1rem;
+}
+.guest-site .world-map .map-marker { border: 2px solid rgba(255, 255, 255, .8); background-color: rgba(255, 255, 255, .06); }
+.guest-site .world-map .map-marker.selected { border-color: var(--gg-yellow); outline-color: var(--gg-yellow); }
+.guest-site .world-map .map-marker-name { font-weight: 700; text-shadow: 0 1px 3px #000; }
+.guest-site .world-card {
+    position: absolute; top: .75rem; right: .75rem; z-index: 10; width: min(22rem, calc(100% - 1.5rem)); padding: 1rem 1.1rem;
+    background: var(--gg-surface); border: 1px solid var(--gg-border); border-radius: 1rem; box-shadow: var(--gg-glow);
+}
+.guest-site .world-card[hidden] { display: none; }
+.guest-site #world-card-close { position: absolute; top: .75rem; right: .75rem; }
+.guest-site #world-card-name { margin: 0 2rem .35rem 0; font-size: 1.25rem; overflow-wrap: anywhere; }
+.guest-site #world-card-people { margin-bottom: .75rem; color: var(--gg-muted); }
+.guest-site #world-teleport { width: 100%; text-transform: uppercase; letter-spacing: .03em; }
+.guest-site .world-link { display: flex; align-items: center; gap: .5rem; margin-top: .75rem; }
+.guest-site .world-link code { flex: 1; min-width: 0; overflow-wrap: anywhere; font-size: .8rem; color: var(--gg-link); }
+.guest-site .world-card-help { display: block; margin-top: .6rem; font-size: .85rem; }
+@media (max-width: 575.98px) {
+    .guest-site .world-card { top: auto; bottom: .75rem; left: .75rem; right: .75rem; width: auto; }
+}

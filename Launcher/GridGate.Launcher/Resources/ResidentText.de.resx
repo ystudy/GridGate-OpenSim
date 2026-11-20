@@ -13,6 +13,7 @@
   <data name="Layout.Register" xml:space="preserve"><value>Registrieren</value></data>
   <data name="Layout.Menu" xml:space="preserve"><value>Menü</value></data>
   <data name="Layout.MenuHome" xml:space="preserve"><value>Startseite</value></data>
+  <data name="Layout.MenuMap" xml:space="preserve"><value>Weltkarte</value></data>
   <data name="Layout.MenuConnect" xml:space="preserve"><value>So verbinden Sie sich</value></data>
   <data name="Layout.MenuResetPassword" xml:space="preserve"><value>Passwort zurücksetzen</value></data>
   <data name="Layout.Copyright" xml:space="preserve"><value>© {0}. Alle Rechte vorbehalten.</value></data>
@@ -644,4 +645,15 @@
   <data name="MyCoins.Type.wallet_merge" xml:space="preserve"><value>Geldbörsen zusammengelegt</value></data>
   <data name="MyCoins.Type.fee_moved" xml:space="preserve"><value>Aus den Gebühren des Grids</value></data>
   <data name="MyCoins.WhatWithObject" xml:space="preserve"><value>{0}: {1}</value></data>
+  <data name="Map.Title" xml:space="preserve"><value>Weltkarte</value></data>
+  <data name="Map.SignInTitle" xml:space="preserve"><value>Melden Sie sich an, um die Karte zu erkunden</value></data>
+  <data name="Map.SignInText" xml:space="preserve"><value>Sehen Sie alle Regionen unserer Welt und teleportieren Sie sich direkt in eine.</value></data>
+  <data name="Map.Unavailable" xml:space="preserve"><value>Die Karte kann gerade nicht angezeigt werden. Versuchen Sie es in einer Minute erneut.</value></data>
+  <data name="Map.NeedsJs" xml:space="preserve"><value>Die Karte braucht JavaScript.</value></data>
+  <data name="Map.PeopleHere" xml:space="preserve"><value>Gerade hier: {0}</value></data>
+  <data name="Map.Teleport" xml:space="preserve"><value>Hierher teleportieren</value></data>
+  <data name="Map.ViewerHelp" xml:space="preserve"><value>Viewer nicht geöffnet? So verbinden Sie sich</value></data>
+  <data name="Map.Close" xml:space="preserve"><value>Schließen</value></data>
+  <data name="Map.ZoomIn" xml:space="preserve"><value>Vergrößern</value></data>
+  <data name="Map.ZoomOut" xml:space="preserve"><value>Verkleinern</value></data>
 </root>

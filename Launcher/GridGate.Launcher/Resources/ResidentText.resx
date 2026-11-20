@@ -12,6 +12,7 @@
   <data name="Layout.Register" xml:space="preserve"><value>Register</value></data>
   <data name="Layout.Menu" xml:space="preserve"><value>Menu</value></data>
   <data name="Layout.MenuHome" xml:space="preserve"><value>Home</value></data>
+  <data name="Layout.MenuMap" xml:space="preserve"><value>World map</value></data>
   <data name="Layout.MenuConnect" xml:space="preserve"><value>How to connect</value></data>
   <data name="Layout.MenuResetPassword" xml:space="preserve"><value>Reset password</value></data>
   <data name="Layout.Copyright" xml:space="preserve"><value>© {0}. All rights reserved.</value></data>
@@ -644,4 +645,15 @@
   <data name="MyCoins.Type.wallet_merge" xml:space="preserve"><value>Wallets joined</value></data>
   <data name="MyCoins.Type.fee_moved" xml:space="preserve"><value>From the grid's fees</value></data>
   <data name="MyCoins.WhatWithObject" xml:space="preserve"><value>{0}: {1}</value></data>
+  <data name="Map.Title" xml:space="preserve"><value>World map</value></data>
+  <data name="Map.SignInTitle" xml:space="preserve"><value>Sign in to explore the map</value></data>
+  <data name="Map.SignInText" xml:space="preserve"><value>See every region of our world and teleport straight into one.</value></data>
+  <data name="Map.Unavailable" xml:space="preserve"><value>The map can't be shown right now. Try again in a minute.</value></data>
+  <data name="Map.NeedsJs" xml:space="preserve"><value>The map needs JavaScript.</value></data>
+  <data name="Map.PeopleHere" xml:space="preserve"><value>People here now: {0}</value></data>
+  <data name="Map.Teleport" xml:space="preserve"><value>Teleport here</value></data>
+  <data name="Map.ViewerHelp" xml:space="preserve"><value>Viewer didn't open? How to connect</value></data>
+  <data name="Map.Close" xml:space="preserve"><value>Close</value></data>
+  <data name="Map.ZoomIn" xml:space="preserve"><value>Zoom in</value></data>
+  <data name="Map.ZoomOut" xml:space="preserve"><value>Zoom out</value></data>
 </root>

@@ -13,6 +13,7 @@
   <data name="Layout.Register" xml:space="preserve"><value>S'inscrire</value></data>
   <data name="Layout.Menu" xml:space="preserve"><value>Menu</value></data>
   <data name="Layout.MenuHome" xml:space="preserve"><value>Accueil</value></data>
+  <data name="Layout.MenuMap" xml:space="preserve"><value>Carte du monde</value></data>
   <data name="Layout.MenuConnect" xml:space="preserve"><value>Comment se connecter</value></data>
   <data name="Layout.MenuResetPassword" xml:space="preserve"><value>Réinitialiser le mot de passe</value></data>
   <data name="Layout.Copyright" xml:space="preserve"><value>© {0}. Tous droits réservés.</value></data>
@@ -644,4 +645,15 @@
   <data name="MyCoins.Type.wallet_merge" xml:space="preserve"><value>Portefeuilles réunis</value></data>
   <data name="MyCoins.Type.fee_moved" xml:space="preserve"><value>Depuis les frais de la grille</value></data>
   <data name="MyCoins.WhatWithObject" xml:space="preserve"><value>{0} : {1}</value></data>
+  <data name="Map.Title" xml:space="preserve"><value>Carte du monde</value></data>
+  <data name="Map.SignInTitle" xml:space="preserve"><value>Connectez-vous pour explorer la carte</value></data>
+  <data name="Map.SignInText" xml:space="preserve"><value>Découvrez toutes les régions de notre monde et téléportez-vous directement dans l’une d’elles.</value></data>
+  <data name="Map.Unavailable" xml:space="preserve"><value>La carte ne peut pas être affichée pour le moment. Réessayez dans une minute.</value></data>
+  <data name="Map.NeedsJs" xml:space="preserve"><value>La carte a besoin de JavaScript.</value></data>
+  <data name="Map.PeopleHere" xml:space="preserve"><value>Personnes ici en ce moment : {0}</value></data>
+  <data name="Map.Teleport" xml:space="preserve"><value>Se téléporter ici</value></data>
+  <data name="Map.ViewerHelp" xml:space="preserve"><value>Le viewer ne s’est pas ouvert ? Comment se connecter</value></data>
+  <data name="Map.Close" xml:space="preserve"><value>Fermer</value></data>
+  <data name="Map.ZoomIn" xml:space="preserve"><value>Zoom avant</value></data>
+  <data name="Map.ZoomOut" xml:space="preserve"><value>Zoom arrière</value></data>
 </root>

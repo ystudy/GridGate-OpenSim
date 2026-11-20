@@ -1,0 +1,67 @@
+@page "/map"
+@model GridGate.Launcher.Pages.MapModel
+@{
+    Layout = "_GuestLayout";
+    ViewData["Title"] = T["Map.Title"].Value;
+    ViewData["Wide"] = true;
+}
+@* The world map (spec 2026-11-20-public-map-design). Signed out: the invitation, and no region at all on the page. *@
+@if (!Model.ShowMap)
+{
+    <section id="map-invite" class="map-invite">
+        <h1>@T["Map.Title"]</h1>
+        @if (Model.Numbers.Count > 0)
+        {
+            <section id="map-numbers" class="front-numbers" aria-label="@T["Home.NumbersLabel"]">
+                @foreach (var n in Model.Numbers)
+                {
+                    <div class="front-number">
+                        <span class="front-number-value">@n.Value</span>
+                        <span class="front-number-label">@T[n.Key]</span>
+                    </div>
+                }
+            </section>
+        }
+        <div class="map-invite-box">
+            <h2>@T["Map.SignInTitle"]</h2>
+            <p>@T["Map.SignInText"]</p>
+            <div class="front-actions">
+                <a id="map-sign-in" class="btn btn-lg btn-primary" href="/guest/sign-in?returnUrl=%2Fmap" icon="sign-in">@T["Common.SignIn"]</a>
+                @if (Model.SignUpOpen)
+                {
+                    <a id="map-join" class="btn btn-lg btn-secondary" href="/signup" icon="plus">@T["Common.CreateAccount"]</a>
+                }
+            </div>
+        </div>
+    </section>
+}
+else
+{
+    <div class="map-head">
+        <h1>@T["Map.Title"]</h1>
+        <span class="btn-group">
+            <button type="button" id="zoom-out" class="btn btn-outline-secondary" icon="none" aria-label="@T["Map.ZoomOut"]" hidden>&minus;</button>
+            <button type="button" id="zoom-in" class="btn btn-outline-secondary" icon="none" aria-label="@T["Map.ZoomIn"]" hidden>+</button>
+        </span>
+    </div>
+    <p id="map-unavailable" class="map-unavailable" role="status" hidden>@T["Map.Unavailable"]</p>
+    <noscript><p class="map-unavailable">@T["Map.NeedsJs"]</p></noscript>
+    @* The card sits beside the map, not in it: the map takes the pointer for dragging, which would swallow the card's clicks. *@
+    <div class="world-map-wrap">
+        <div id="world-map" class="region-map world-map" data-tiles="/world/tile" data-regions="/world/regions"
+             data-people="@T["Map.PeopleHere"]" data-copied="@T["Connect.Copied"]" data-copy-selected="@T["Connect.CopySelected"]"></div>
+        <div id="world-card" class="world-card" hidden>
+            <button type="button" id="world-card-close" class="btn-close btn-close-white" aria-label="@T["Map.Close"]"></button>
+            <h2 id="world-card-name"></h2>
+            <p id="world-card-people"></p>
+            <a id="world-teleport" class="btn btn-primary" icon="none">@T["Map.Teleport"]</a>
+            <div class="world-link">
+                <code id="world-link"></code>
+                <button type="button" id="world-copy" class="btn btn-sm btn-outline-secondary" icon="none">@T["Connect.Copy"]</button>
+            </div>
+            <a class="world-card-help" href="/guest/connect">@T["Map.ViewerHelp"]</a>
+        </div>
+    </div>
+    <script src="/js/map-core.js"></script>
+    <script src="/js/world-map.js"></script>
+}

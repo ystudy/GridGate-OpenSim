@@ -216,7 +216,8 @@ builder.Services.AddRazorPages(o =>
     // on a Region Server or a Connected Server.
     // The operator's legal pages and the sign-up page are public in the same way.
     // The coins page too (money plan 2): where the viewer's Buy currency window sends residents.
-    foreach (var publicPage in new[] { "/Home", "/Legal", "/SignUp", "/Coins" })
+    // The world map too: the page itself says who sees regions (WorldMapAccess).
+    foreach (var publicPage in new[] { "/Home", "/Legal", "/SignUp", "/Coins", "/Map" })
         o.Conventions.AddPageApplicationModelConvention(publicPage, m => m.Filters.Add(new GuestSideOnly()));
     // The owner's legal editor: the Security folder's owner policy, and not there where there is no guest side.
     o.Conventions.AddPageApplicationModelConvention("/Security/Legal", m => m.Filters.Add(new GuestSideOnly()));
@@ -242,7 +243,7 @@ builder.Services.AddRazorPages(o =>
     // The same for the Email pages: email is for the guest side's sign-up and password reset.
     foreach (var emailPage in new[] { "/Security/Email", "/Security/EmailWording", "/Security/Wording", "/Security/Languages", "/Security/Translate" })
         o.Conventions.AddPageApplicationModelConvention(emailPage, m => m.Filters.Add(new GuestSideOnly()));
-    foreach (var open in new[] { "/Login", "/Login/Code", "/Logout", "/Welcome", "/Waiting", "/SetupDone", "/Setup", "/Home", "/Legal", "/SignUp", "/Guest/SignIn", "/Guest/SignInCode", "/Guest/ForgotPassword", "/Guest/ResetPassword", "/Guest/Confirm", "/Guest/ConfirmEmail", "/Guest/Connect", "/Language", "/Coins" })
+    foreach (var open in new[] { "/Login", "/Login/Code", "/Logout", "/Welcome", "/Waiting", "/SetupDone", "/Setup", "/Home", "/Legal", "/SignUp", "/Guest/SignIn", "/Guest/SignInCode", "/Guest/ForgotPassword", "/Guest/ResetPassword", "/Guest/Confirm", "/Guest/ConfirmEmail", "/Guest/Connect", "/Language", "/Coins", "/Map" })
         o.Conventions.AllowAnonymousToPage(open);
     o.Conventions.AllowAnonymousToFolder("/Setup");
     // Support tickets for guests: open to anyone (each page checks the ticket's link or cookie), only where there is a guest side.
@@ -256,7 +257,7 @@ builder.Services.AddRazorPages(o =>
     o.Conventions.AddPageApplicationModelConvention("/Language", m => m.Filters.Add(new GuestSideOnly()));
     foreach (var folder in new[] { "/Guest", "/Support" })
         o.Conventions.AddFolderApplicationModelConvention(folder, m => m.Filters.Add(new ResidentLanguageFilter(welcome: false)));
-    foreach (var page in new[] { "/Home", "/Legal", "/SignUp", "/Coins" })
+    foreach (var page in new[] { "/Home", "/Legal", "/SignUp", "/Coins", "/Map" })
         o.Conventions.AddPageApplicationModelConvention(page, m => m.Filters.Add(new ResidentLanguageFilter(welcome: false)));
     // The dashboard's forms post here: a POST to "/" belongs to the port-8001 contract (LegacyRootPolicy).
     o.Conventions.AddPageRoute("/Index", "dashboard");
