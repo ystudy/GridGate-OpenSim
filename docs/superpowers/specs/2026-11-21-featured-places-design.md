@@ -84,8 +84,12 @@ Each card shows the parcel's own snapshot (About Land), else its region's map ti
   200 kept). Visitors who ask at once share one fetch.
 - Cards use `/featured/picture/{parcel}.jpg`: only for a place the asker may see; the snapshot when there is one and it
   converts, else the region's tile, else 404 (the card then shows its blank background). It replaces `/featured/map/{region}.jpg`.
-- Where there's no local Robust (a Region Server or Connected Server), snapshots fail and cards show map tiles.
-- *Designer's calls:* 512 px, quality 85, 2 MB, one hour, 200 kept, two conversions at once.
+- A Region Server or Connected Server has no public side, so no Featured page at all.
+- **Safety (after review):** the converter reads the image size from the codestream's header first and refuses anything
+  over 2048 on a side or anything that isn't a raw codestream, so a tiny file claiming a huge image never reaches the
+  decoder. The launcher's whole fetch gives up after 30 s, sends at most two conversions at once, asks again at once when
+  the converter was busy (503), and turns any unexpected error into "no picture" (the card shows the map tile).
+- *Designer's calls:* 512 px, quality 85, 2 MB, 2048 on a side, one hour, 200 kept, two conversions at once, 30 s a fetch.
 
 ## Ratings (*designer's call*)
 

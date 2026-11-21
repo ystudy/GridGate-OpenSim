@@ -55,6 +55,40 @@ public sealed class SnapshotConverterTests
         Assert.Equal([0xFF, 0xD8], body[..2]);
     }
 
+    /// <summary>A JPEG 2000 codestream header (SOC, SIZ) claiming <paramref name="width"/> x <paramref name="height"/>, then junk.</summary>
+    private static byte[] Claiming(uint width, uint height)
+    {
+        var b = new byte[64];
+        b[0] = 0xFF; b[1] = 0x4F; b[2] = 0xFF; b[3] = 0x51; b[4] = 0; b[5] = 41;
+        void Put(int at, uint v) { b[at] = (byte)(v >> 24); b[at + 1] = (byte)(v >> 16); b[at + 2] = (byte)(v >> 8); b[at + 3] = (byte)v; }
+        Put(8, width); Put(12, height); // Xsiz, Ysiz; XOsiz and YOsiz stay 0
+        return b;
+    }
+
+    [Theory]
+    [InlineData(30000u, 30000u)]
+    [InlineData(1024u, 1000000u)]
+    [InlineData(4096u, 16u)]
+    public void A_huge_claimed_size_is_refused_before_decoding(uint width, uint height)
+    {
+        var decodes = SnapshotConverter.Decodes;
+
+        Assert.Null(SnapshotConverter.ToJpeg(Claiming(width, height)));
+        Assert.Equal(400, SnapshotConverter.Answer(new MemoryStream(Claiming(width, height))).Status);
+        Assert.Equal(decodes, SnapshotConverter.Decodes); // refused from the header, never handed to the decoder
+    }
+
+    [Fact]
+    public void The_texture_size_is_read_from_its_header()
+    {
+        using var original = CSJ2K.J2kImage.FromBytes(Texture());
+
+        Assert.Equal((original.Width, original.Height), SnapshotConverter.SizeOf(Texture()));
+        Assert.Equal((30000, 20), SnapshotConverter.SizeOf(Claiming(30000, 20)));
+        Assert.Null(SnapshotConverter.SizeOf([0x00, 0x00, 0x00, 0x0C, 0x6A, 0x50, 0x20, 0x20])); // a JP2 wrapper, not a codestream
+        Assert.Null(SnapshotConverter.SizeOf([0xFF, 0x4F, 0xFF, 0x51]));                         // cut short
+    }
+
     [Fact]
     public void Over_2_MB_is_413()
     {

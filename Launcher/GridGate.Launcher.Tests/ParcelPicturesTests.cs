@@ -27,22 +27,51 @@ public sealed class ParcelPicturesTests
         public HttpStatusCode ConvertStatus { get; set; } = HttpStatusCode.OK;
         public byte[]? Sent { get; private set; }
         public TaskCompletionSource? Gate { get; set; }
+        /// <summary>The asset's body never arrives (Robust froze after sending the headers).</summary>
+        public bool StallBody { get; set; }
+        /// <summary>Converter answers to give first, before <see cref="ConvertStatus"/>.</summary>
+        public Queue<HttpStatusCode> ConvertFirst { get; } = new();
+        /// <summary>Throws this instead of answering.</summary>
+        public Exception? Throw { get; set; }
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             lock (Asked) Asked.Add(request.Method + " " + request.RequestUri!.AbsolutePath);
             if (Gate is { } gate) await gate.Task;
+            if (Throw is { } e) throw e;
             if (request.Method == HttpMethod.Get && request.RequestUri!.AbsolutePath == $"/assets/{Snapshot}/data")
-                return new HttpResponseMessage(AssetStatus) { Content = new ByteArrayContent(Texture) };
+                return new HttpResponseMessage(AssetStatus) { Content = StallBody ? new StreamContent(new StalledStream()) : new ByteArrayContent(Texture) };
             if (request.Method == HttpMethod.Post && request.RequestUri!.AbsolutePath == "/gridgate/j2k")
             {
                 Sent = await request.Content!.ReadAsByteArrayAsync(ct);
-                var answer = new HttpResponseMessage(ConvertStatus) { Content = new ByteArrayContent(ConvertStatus == HttpStatusCode.OK ? Jpeg : []) };
+                var status = ConvertFirst.Count > 0 ? ConvertFirst.Dequeue() : ConvertStatus;
+                var answer = new HttpResponseMessage(status) { Content = new ByteArrayContent(status == HttpStatusCode.OK ? Jpeg : []) };
                 answer.Content.Headers.ContentType = new MediaTypeHeaderValue("image/jpeg");
                 return answer;
             }
             return new HttpResponseMessage(HttpStatusCode.NotFound);
         }
+    }
+
+    /// <summary>A body that never sends a byte, until the reader gives up.</summary>
+    private sealed class StalledStream : Stream
+    {
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => 0; set => throw new NotSupportedException(); }
+        public override void Flush() { }
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken ct = default)
+        {
+            await Task.Delay(Timeout.Infinite, ct);
+            return 0;
+        }
+        public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken ct) => ReadAsync(buffer.AsMemory(offset, count), ct).AsTask();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 
     private sealed class Clients(HttpMessageHandler handler) : IHttpClientFactory
@@ -103,6 +132,60 @@ public sealed class ParcelPicturesTests
     public async Task Failure_gives_empty(HttpStatusCode asset, HttpStatusCode convert)
     {
         var robust = new FakeRobust { AssetStatus = asset, ConvertStatus = convert };
+
+        Assert.Empty(await Pictures(robust, new FakeTimeProvider()).JpegAsync(Snapshot, Ct));
+    }
+
+    [Fact]
+    public async Task A_stalled_fetch_gives_up()
+    {
+        var robust = new FakeRobust { StallBody = true };
+        var time = new FakeTimeProvider();
+        var pictures = Pictures(robust, time);
+
+        var ask = pictures.JpegAsync(Snapshot, Ct);
+        for (var i = 0; i < 100 && !ask.IsCompleted; i++)
+        {
+            time.Advance(ParcelPictures.FetchTimeout);
+            await Task.Delay(10, Ct);
+        }
+
+        Assert.True(ask.IsCompleted, "the fetch never gave up");
+        Assert.Empty(await ask);
+    }
+
+    [Fact]
+    public async Task A_busy_converter_is_asked_again_at_once()
+    {
+        var robust = new FakeRobust();
+        robust.ConvertFirst.Enqueue(HttpStatusCode.ServiceUnavailable);
+        var pictures = Pictures(robust, new FakeTimeProvider());
+
+        Assert.Empty(await pictures.JpegAsync(Snapshot, Ct));
+        Assert.Equal(Jpeg, await pictures.JpegAsync(Snapshot, Ct)); // busy isn't kept as a failure
+    }
+
+    [Fact]
+    public async Task A_failure_is_kept_five_minutes()
+    {
+        var robust = new FakeRobust { ConvertStatus = HttpStatusCode.BadRequest };
+        var time = new FakeTimeProvider();
+        var pictures = Pictures(robust, time);
+
+        await pictures.JpegAsync(Snapshot, Ct);
+        time.Advance(TimeSpan.FromMinutes(4));
+        await pictures.JpegAsync(Snapshot, Ct);
+        Assert.Equal(2, robust.Asked.Count);
+
+        time.Advance(TimeSpan.FromMinutes(2));
+        await pictures.JpegAsync(Snapshot, Ct);
+        Assert.Equal(4, robust.Asked.Count);
+    }
+
+    [Fact]
+    public async Task An_unexpected_error_gives_empty_not_an_exception()
+    {
+        var robust = new FakeRobust { Throw = new InvalidCastException("odd") };
 
         Assert.Empty(await Pictures(robust, new FakeTimeProvider()).JpegAsync(Snapshot, Ct));
     }

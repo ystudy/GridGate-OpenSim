@@ -4,8 +4,11 @@ using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.IO;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Threading;
 using CSJ2K;
+
+[assembly: InternalsVisibleTo("GridGate.Snapshots.Tests")]
 
 namespace GridGate.Robust.Snapshots
 {
@@ -20,17 +23,42 @@ namespace GridGate.Robust.Snapshots
 
         public const int MaxWidth = 512;
 
+        /// <summary>The largest side taken: the biggest texture a viewer uploads.</summary>
+        public const int MaxSide = 2048;
+
         private const long Quality = 85;
 
         // Decoding is heavy: at most two at once, so a burst of asks can't take Robust's whole CPU.
         private static readonly SemaphoreSlim Running = new SemaphoreSlim(2, 2);
 
+        private static int _decodes;
+
+        /// <summary>How many textures were handed to the decoder (tests check a refused one never is).</summary>
+        internal static int Decodes => Volatile.Read(ref _decodes);
+
+        /// <summary>
+        /// The image size a raw JPEG 2000 codestream says it has (its SIZ marker: SOC <c>FF 4F</c>, SIZ <c>FF 51</c>, then
+        /// Lsiz, Rsiz and the big-endian Xsiz, Ysiz, XOsiz, YOsiz), read before anything is decoded. Null for anything else,
+        /// such as a JP2-wrapped file, which the decoder refuses anyway.
+        /// </summary>
+        public static (int Width, int Height)? SizeOf(byte[] j2k)
+        {
+            if (j2k is null || j2k.Length < 24 || j2k[0] != 0xFF || j2k[1] != 0x4F || j2k[2] != 0xFF || j2k[3] != 0x51) return null;
+            long Read(int at) => ((long)j2k[at] << 24) | ((long)j2k[at + 1] << 16) | ((long)j2k[at + 2] << 8) | j2k[at + 3];
+            long width = Read(8) - Read(16), height = Read(12) - Read(20);
+            if (width <= 0 || height <= 0 || width > int.MaxValue || height > int.MaxValue) return null;
+            return ((int)width, (int)height);
+        }
+
         /// <summary>The texture as a JPEG at most <paramref name="maxWidth"/> wide (height kept in proportion), or null when it can't be read.</summary>
         public static byte[]? ToJpeg(byte[] j2k, int maxWidth = MaxWidth)
         {
-            if (j2k is null || j2k.Length == 0) return null;
+            // A few hundred bytes can claim a 30000 x 30000 image: refused from the header, before the decoder allocates it.
+            // Viewers make textures at most 2048 on a side.
+            if (SizeOf(j2k) is not { } size || size.Width > MaxSide || size.Height > MaxSide) return null;
             try
             {
+                Interlocked.Increment(ref _decodes);
                 using var decoded = J2kImage.FromBytes(j2k);
                 if (decoded is null || decoded.Width <= 0 || decoded.Height <= 0) return null;
                 var width = Math.Min(decoded.Width, maxWidth);
