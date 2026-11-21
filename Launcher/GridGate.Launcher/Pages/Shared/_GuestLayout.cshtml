@@ -81,6 +81,7 @@
                         <a id="menu-map" href="/map">@Html.Raw(GridGate.Launcher.Navigation.ButtonIcons.Svg("map-pin"))@T["Layout.MenuMap"]</a>
                         <a id="menu-featured" href="/featured">@Html.Raw(GridGate.Launcher.Navigation.ButtonIcons.Svg("star"))@T["Layout.MenuFeatured"]</a>
                         <a id="menu-residents" href="/residents">@Html.Raw(GridGate.Launcher.Navigation.ButtonIcons.Svg("person"))@T["Layout.MenuResidents"]</a>
+                        <a id="menu-avatar" href="/guest">@Html.Raw(GridGate.Launcher.Navigation.ButtonIcons.Svg("id-card"))@T["Layout.MenuAvatar"]</a>
                         <a id="menu-connect" href="/guest/connect">@Html.Raw(GridGate.Launcher.Navigation.ButtonIcons.Svg("link"))@T["Layout.MenuConnect"]</a>
                         <a id="help-link" href="/support">@Html.Raw(GridGate.Launcher.Navigation.ButtonIcons.Svg("help"))@T["Layout.Help"]</a>
                         <a id="menu-reset" href="/guest/forgot-password">@Html.Raw(GridGate.Launcher.Navigation.ButtonIcons.Svg("key"))@T["Layout.MenuResetPassword"]</a>
@@ -92,6 +93,11 @@
     </div>
 </header>
 <main class="container py-4">
+    @* The Avatar page's tabs, on its five pages, for a resident signed in at the guest door (spec 2026-11-21-avatar-page-design). *@
+    @if (ViewData["AvatarTab"] is string avatarTab && residentName is not null)
+    {
+        <partial name="_AvatarTabs" model="avatarTab" />
+    }
     @RenderBody()
 </main>
 @* The footer: the legal pages the operator has written, the copyright line, the staff door (not for staff already signed in),

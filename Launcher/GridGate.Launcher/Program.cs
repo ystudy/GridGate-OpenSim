@@ -417,6 +417,8 @@ builder.Services.AddSingleton(sp => new GridGate.Launcher.Core.Guests.PublicProf
 builder.Services.AddSingleton<IPublicProfiles>(sp => new PublicProfiles(sp.GetRequiredService<Func<LauncherSettings>>(),
     sp.GetRequiredService<ILogger<PublicProfiles>>()));
 builder.Services.AddSingleton<GridGate.Launcher.Residents.ResidentDirectory>();
+// What a resident's avatar wears, for the Avatar tab (spec 2026-11-21-avatar-page-design).
+builder.Services.AddSingleton<GridGate.Launcher.Guests.AvatarLooks>();
 // Parcel snapshots for the Featured cards: Robust's asset service and its GridGate converter, on the private port.
 builder.Services.AddHttpClient(GridGate.Launcher.Featured.ParcelPictures.ClientName, c => c.Timeout = TimeSpan.FromSeconds(15));
 builder.Services.AddSingleton(sp => new GridGate.Launcher.Featured.ParcelPictures(sp.GetRequiredService<IHttpClientFactory>(),
@@ -574,6 +576,7 @@ FrontApi.Map(app);
 WorldMapApi.Map(app);
 FeaturedApi.Map(app);
 ResidentsApi.Map(app);
+AvatarPictureApi.Map(app);
 EconomyApi.Map(app);
 app.MapRazorPages();
 

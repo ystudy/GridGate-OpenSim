@@ -1,0 +1,24 @@
+@using GridGate.Launcher.Core.Settings
+@inject Func<LauncherSettings> Settings
+@inject GridGate.Launcher.Guests.IarRights IarRights
+@model string
+@* The Avatar page's tabs (spec 2026-11-21-avatar-page-design, "The tab bar"): the resident's five pages read as one. The model is
+   the current tab. Inventory only where that page is open to them, as its link elsewhere. *@
+@{
+    var resident = (await Microsoft.AspNetCore.Authentication.AuthenticationHttpContextExtensions.AuthenticateAsync(Context, GridGate.Launcher.Security.AuthSchemes.Guest)).Principal;
+    var inventory = resident is not null && GridGate.Launcher.Iar.IarPagesOnlyAttribute.Shown(Settings(), IarRights, resident);
+    var tabs = new List<(string Id, string Href, string Icon, string Key)>
+    {
+        ("avatar", "/guest", "person", "Avatar.TabAvatar"),
+        ("map", "/map", "map-pin", "Avatar.TabMap"),
+    };
+    if (inventory) tabs.Add(("inventory", "/guest/inventory", "box", "Avatar.TabInventory"));
+    tabs.Add(("profile", "/guest/account", "id-card", "Avatar.TabProfile"));
+    tabs.Add(("download", "/guest/connect", "download", "Avatar.TabDownload"));
+}
+<nav id="avatar-tabs" class="avatar-tabs" aria-label="@T["Avatar.Title"]">
+    @foreach (var tab in tabs)
+    {
+        <a id="avatar-tab-@tab.Id" href="@tab.Href" class="avatar-tab @(tab.Id == Model ? "active" : "")" aria-current="@(tab.Id == Model ? "page" : null)">@Html.Raw(GridGate.Launcher.Navigation.ButtonIcons.Svg(tab.Icon))@T[tab.Key]</a>
+    }
+</nav>

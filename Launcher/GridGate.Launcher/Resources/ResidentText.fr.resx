@@ -724,4 +724,44 @@
   <data name="Account.PublicSaved" xml:space="preserve"><value>Enregistré.</value></data>
   <data name="Account.PublicSee" xml:space="preserve"><value>Voir ma page</value></data>
   <data name="Account.PublicHeld" xml:space="preserve"><value>L’équipe a retiré votre profil de la page des résidents.</value></data>
+  <data name="Layout.MenuAvatar" xml:space="preserve"><value>Avatar</value></data>
+  <data name="Avatar.Title" xml:space="preserve"><value>Avatar</value></data>
+  <data name="Avatar.TabAvatar" xml:space="preserve"><value>Avatar</value></data>
+  <data name="Avatar.TabMap" xml:space="preserve"><value>Carte du monde</value></data>
+  <data name="Avatar.TabInventory" xml:space="preserve"><value>Inventaire</value></data>
+  <data name="Avatar.TabProfile" xml:space="preserve"><value>Profil</value></data>
+  <data name="Avatar.TabDownload" xml:space="preserve"><value>Télécharger</value></data>
+  <data name="Avatar.NoPicture" xml:space="preserve"><value>Choisissez une photo de profil dans le profil de votre viewer et elle s’affichera ici.</value></data>
+  <data name="Avatar.InWorldIn" xml:space="preserve"><value>Dans le monde en ce moment, à {0}</value></data>
+  <data name="Avatar.InWorld" xml:space="preserve"><value>Dans le monde en ce moment</value></data>
+  <data name="Avatar.NotInWorld" xml:space="preserve"><value>Pas dans le monde en ce moment</value></data>
+  <data name="Avatar.SeePublicPage" xml:space="preserve"><value>Voir ma page publique</value></data>
+  <data name="Avatar.ShowOnResidents" xml:space="preserve"><value>M’afficher sur la page des résidents</value></data>
+  <data name="Avatar.Wearing" xml:space="preserve"><value>Ce que vous portez</value></data>
+  <data name="Avatar.LookUnavailable" xml:space="preserve"><value>L’apparence de votre avatar ne peut pas être lue pour le moment. Réessayez dans quelques minutes.</value></data>
+  <data name="Avatar.LookNotSaved" xml:space="preserve"><value>L’apparence de votre avatar est enregistrée la première fois que vous entrez dans le monde.</value></data>
+  <data name="Avatar.Body" xml:space="preserve"><value>Corps</value></data>
+  <data name="Avatar.Clothes" xml:space="preserve"><value>Vêtements</value></data>
+  <data name="Avatar.Attached" xml:space="preserve"><value>Attaché</value></data>
+  <data name="Avatar.Huds" xml:space="preserve"><value>HUD</value></data>
+  <data name="Avatar.ItemGone" xml:space="preserve"><value>Un objet qui n’est plus dans votre inventaire</value></data>
+  <data name="Avatar.By" xml:space="preserve"><value>par {0}</value></data>
+  <data name="Avatar.Things" xml:space="preserve"><value>Vos pages</value></data>
+  <data name="Avatar.WearShape" xml:space="preserve"><value>Silhouette</value></data>
+  <data name="Avatar.WearSkin" xml:space="preserve"><value>Peau</value></data>
+  <data name="Avatar.WearHair" xml:space="preserve"><value>Cheveux</value></data>
+  <data name="Avatar.WearEyes" xml:space="preserve"><value>Yeux</value></data>
+  <data name="Avatar.WearShirt" xml:space="preserve"><value>Chemise</value></data>
+  <data name="Avatar.WearPants" xml:space="preserve"><value>Pantalon</value></data>
+  <data name="Avatar.WearShoes" xml:space="preserve"><value>Chaussures</value></data>
+  <data name="Avatar.WearSocks" xml:space="preserve"><value>Chaussettes</value></data>
+  <data name="Avatar.WearJacket" xml:space="preserve"><value>Veste</value></data>
+  <data name="Avatar.WearGloves" xml:space="preserve"><value>Gants</value></data>
+  <data name="Avatar.WearUndershirt" xml:space="preserve"><value>Débardeur</value></data>
+  <data name="Avatar.WearUnderpants" xml:space="preserve"><value>Caleçon</value></data>
+  <data name="Avatar.WearSkirt" xml:space="preserve"><value>Jupe</value></data>
+  <data name="Avatar.WearAlpha" xml:space="preserve"><value>Alpha</value></data>
+  <data name="Avatar.WearTattoo" xml:space="preserve"><value>Tatouage</value></data>
+  <data name="Avatar.WearPhysics" xml:space="preserve"><value>Physique</value></data>
+  <data name="Avatar.WearUniversal" xml:space="preserve"><value>Universel</value></data>
 </root>

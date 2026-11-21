@@ -724,4 +724,44 @@
   <data name="Account.PublicSaved" xml:space="preserve"><value>Guardado.</value></data>
   <data name="Account.PublicSee" xml:space="preserve"><value>Ver a minha página</value></data>
   <data name="Account.PublicHeld" xml:space="preserve"><value>A equipa retirou o seu perfil da página de residentes.</value></data>
+  <data name="Layout.MenuAvatar" xml:space="preserve"><value>Avatar</value></data>
+  <data name="Avatar.Title" xml:space="preserve"><value>Avatar</value></data>
+  <data name="Avatar.TabAvatar" xml:space="preserve"><value>Avatar</value></data>
+  <data name="Avatar.TabMap" xml:space="preserve"><value>Mapa do mundo</value></data>
+  <data name="Avatar.TabInventory" xml:space="preserve"><value>Inventário</value></data>
+  <data name="Avatar.TabProfile" xml:space="preserve"><value>Perfil</value></data>
+  <data name="Avatar.TabDownload" xml:space="preserve"><value>Transferir</value></data>
+  <data name="Avatar.NoPicture" xml:space="preserve"><value>Escolha uma foto de perfil no perfil do seu visualizador e ela aparece aqui.</value></data>
+  <data name="Avatar.InWorldIn" xml:space="preserve"><value>No mundo agora, em {0}</value></data>
+  <data name="Avatar.InWorld" xml:space="preserve"><value>No mundo agora</value></data>
+  <data name="Avatar.NotInWorld" xml:space="preserve"><value>Fora do mundo agora</value></data>
+  <data name="Avatar.SeePublicPage" xml:space="preserve"><value>Ver a minha página pública</value></data>
+  <data name="Avatar.ShowOnResidents" xml:space="preserve"><value>Mostrar-me na página de residentes</value></data>
+  <data name="Avatar.Wearing" xml:space="preserve"><value>O que está a usar</value></data>
+  <data name="Avatar.LookUnavailable" xml:space="preserve"><value>Não é possível ler o aspeto do seu avatar agora. Tente novamente daqui a alguns minutos.</value></data>
+  <data name="Avatar.LookNotSaved" xml:space="preserve"><value>O aspeto do seu avatar é guardado da primeira vez que entra no mundo.</value></data>
+  <data name="Avatar.Body" xml:space="preserve"><value>Corpo</value></data>
+  <data name="Avatar.Clothes" xml:space="preserve"><value>Roupa</value></data>
+  <data name="Avatar.Attached" xml:space="preserve"><value>Anexado</value></data>
+  <data name="Avatar.Huds" xml:space="preserve"><value>HUD</value></data>
+  <data name="Avatar.ItemGone" xml:space="preserve"><value>Um item que já não está no seu inventário</value></data>
+  <data name="Avatar.By" xml:space="preserve"><value>de {0}</value></data>
+  <data name="Avatar.Things" xml:space="preserve"><value>As suas páginas</value></data>
+  <data name="Avatar.WearShape" xml:space="preserve"><value>Forma</value></data>
+  <data name="Avatar.WearSkin" xml:space="preserve"><value>Pele</value></data>
+  <data name="Avatar.WearHair" xml:space="preserve"><value>Cabelo</value></data>
+  <data name="Avatar.WearEyes" xml:space="preserve"><value>Olhos</value></data>
+  <data name="Avatar.WearShirt" xml:space="preserve"><value>Camisa</value></data>
+  <data name="Avatar.WearPants" xml:space="preserve"><value>Calças</value></data>
+  <data name="Avatar.WearShoes" xml:space="preserve"><value>Sapatos</value></data>
+  <data name="Avatar.WearSocks" xml:space="preserve"><value>Meias</value></data>
+  <data name="Avatar.WearJacket" xml:space="preserve"><value>Casaco</value></data>
+  <data name="Avatar.WearGloves" xml:space="preserve"><value>Luvas</value></data>
+  <data name="Avatar.WearUndershirt" xml:space="preserve"><value>Camisola interior</value></data>
+  <data name="Avatar.WearUnderpants" xml:space="preserve"><value>Roupa interior</value></data>
+  <data name="Avatar.WearSkirt" xml:space="preserve"><value>Saia</value></data>
+  <data name="Avatar.WearAlpha" xml:space="preserve"><value>Alfa</value></data>
+  <data name="Avatar.WearTattoo" xml:space="preserve"><value>Tatuagem</value></data>
+  <data name="Avatar.WearPhysics" xml:space="preserve"><value>Física</value></data>
+  <data name="Avatar.WearUniversal" xml:space="preserve"><value>Universal</value></data>
 </root>
