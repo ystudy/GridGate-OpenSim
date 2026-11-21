@@ -30,7 +30,8 @@ public sealed class PeopleActions(IPeopleDirectory people, StaffActions staff, F
     EmailSender sender, IRobustClient robust, IRobustNames names, IRobustEmails emails, IStaffDirectory directory, HeldNames held,
     PasswordResets resets, StaffSessions sessions, GuestStamps stamps, IGridController grid, IAccountRemover remover, IEstateRemover estates,
     RegionRights rights, UploadRights uploads, IarRights iarRights, AccountHolds holds, SuspendedStore suspended, EmailTokens tokens, PendingEmailChanges emailChanges, AuditLog audit,
-    ResidentLanguages languages, EmailLanguage emailLanguage, ILogger<PeopleActions> log)
+    ResidentLanguages languages, EmailLanguage emailLanguage, GridGate.Launcher.Core.Guests.PublicProfileChoices publicProfiles,
+    GridGate.Launcher.Residents.ResidentDirectory residentDirectory, ILogger<PeopleActions> log)
 {
     public const string OnHold = "This account is on hold.";
     public const string Moving = "Their regions are moving back to the grid's estate. Try again in a minute.";
@@ -214,6 +215,8 @@ public sealed class PeopleActions(IPeopleDirectory people, StaffActions staff, F
         PersonTask.Unsuspend => UnsuspendAsync(actor, ip, principal, ct),
         PersonTask.AllowUpload => UploadRightAsync(actor, ip, principal, true, ct),
         PersonTask.StopUpload => UploadRightAsync(actor, ip, principal, false, ct),
+        PersonTask.HoldProfile => ProfileHoldAsync(actor, ip, principal, true, ct),
+        PersonTask.ReleaseProfile => ProfileHoldAsync(actor, ip, principal, false, ct),
         _ => Task.FromResult(new ChangeOutcome(false, "Use the page for that.")),
     };
 
@@ -238,6 +241,39 @@ public sealed class PeopleActions(IPeopleDirectory people, StaffActions staff, F
         Write(actor, ip, "upload-right-changed", $"{LogText.Clean(name, 64)}: {(allow ? "off -> on" : "on -> off")}", "ok");
         return new(true, allow ? $"{name} may upload models now." : $"{name} may not upload models any more.");
     }
+
+    /// <summary>Whether the person is on the Residents page, off it, or held off it by staff.</summary>
+    public GridGate.Launcher.Core.Guests.PublicProfileState PublicProfileOf(Guid principal) => publicProfiles.StateOf(principal);
+
+    /// <summary>
+    /// Takes the person's profile off the Residents page so they can't put it back (<paramref name="hold"/>), or allows it again
+    /// (back to off: they choose afresh). Audited as <c>public-profile-changed</c>; already as asked is not a change.
+    /// </summary>
+    private async Task<ChangeOutcome> ProfileHoldAsync(ClaimsPrincipal actor, string? ip, Guid principal, bool hold, CancellationToken ct)
+    {
+        var (person, problem) = await LookAsync(actor, principal, ct);
+        if (person is null) return new(false, problem ?? Gone);
+        var name = person.FullName;
+        if (Refusal(actor, person, hold ? PersonTask.HoldProfile : PersonTask.ReleaseProfile) is { } refusal)
+        {
+            Write(actor, ip, "public-profile-changed", LogText.Clean(name, 64), "refused");
+            return new(false, refusal);
+        }
+        var was = publicProfiles.StateOf(principal);
+        var held = was == GridGate.Launcher.Core.Guests.PublicProfileState.Held;
+        if (held == hold)
+            return new(true, hold ? $"{name} is already off the Residents page." : $"{name} wasn't taken off the Residents page.");
+        if (hold) publicProfiles.Hold(principal);
+        else publicProfiles.Release(principal);
+        residentDirectory.Invalidate();
+        Write(actor, ip, "public-profile-changed", $"{LogText.Clean(name, 64)}: {(hold ? $"{Word(was)} -> held" : "held -> off")}", "ok");
+        return new(true, hold
+            ? $"{name} is off the Residents page and can't put their profile back."
+            : $"{name} may choose to be on the Residents page again.");
+    }
+
+    private static string Word(GridGate.Launcher.Core.Guests.PublicProfileState state) =>
+        state == GridGate.Launcher.Core.Guests.PublicProfileState.On ? "shown" : "off";
 
     /// <summary>The person's inventory backup switches and own limits.</summary>
     public IarPersonRights IarRightsOf(Guid principal) => iarRights.For(principal);
@@ -379,6 +415,8 @@ public sealed class PeopleActions(IPeopleDirectory people, StaffActions staff, F
         stamps.Rotate(principal);
         sessions.EndAll(principal);
         languages.Remove(principal);
+        publicProfiles.Forget(principal);
+        residentDirectory.Invalidate();
 
         Write(actor, ip, "deleted", target, estateLeft ? "failed" : "ok");
         return estateLeft

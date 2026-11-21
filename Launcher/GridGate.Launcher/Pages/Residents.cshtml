@@ -1,0 +1,108 @@
+@page "/residents"
+@model GridGate.Launcher.Pages.ResidentsModel
+@using GridGate.Launcher.Residents
+@{
+    Layout = "_GuestLayout";
+    ViewData["Title"] = T["Residents.Title"].Value;
+    var view = Model.View;
+}
+@section Head {
+    @* Residents agreed to the grid's website, not to search engines keeping their names (spec 2026-11-21-resident-profiles-design). *@
+    <meta name="robots" content="noindex">
+}
+@* The Residents directory (spec 2026-11-21-resident-profiles-design): residents who chose to be shown. The head, numbers,
+   form and pages use the Featured page's look. *@
+<section class="featured-head">
+    <h1>@T["Residents.Title"]</h1>
+    <p class="tone-text featured-intro">@T["Residents.Intro"]</p>
+</section>
+
+@if (!Model.Available)
+{
+    <p id="residents-unavailable" class="featured-empty" role="status">@T["Residents.Unavailable"]</p>
+}
+else
+{
+    @if (Model.Numbers.Count > 0)
+    {
+        <section id="residents-numbers" class="front-numbers" aria-label="@T["Residents.Title"]">
+            @foreach (var n in Model.Numbers)
+            {
+                <div class="front-number">
+                    <span class="front-number-value">@n.Value</span>
+                    <span class="front-number-label">@T[n.Key]</span>
+                </div>
+            }
+        </section>
+    }
+
+    @if (view.Shown == 0)
+    {
+        <p id="residents-none" class="featured-empty">@T["Residents.None"]</p>
+        <p><a id="residents-add-me" class="btn btn-primary residents-add-me" href="/guest/account#public-profile">@T["Residents.AddMe"]</a></p>
+    }
+    else
+    {
+        <form id="residents-filter" class="featured-filter" method="get" action="/residents" role="search">
+            <input class="form-control" type="search" id="residents-q" name="q" value="@view.Filter.Q" maxlength="100"
+                   placeholder="@T["Residents.Search"]" aria-label="@T["Residents.Search"]">
+            <select class="form-select" name="sort" aria-label="@T["Residents.Sort"]">
+                <option value="newest" selected="@(view.Filter.Sort == "newest")">@T["Residents.SortNewest"]</option>
+                <option value="name" selected="@(view.Filter.Sort == "name")">@T["Residents.SortName"]</option>
+            </select>
+            <button type="submit" class="btn btn-primary">@T["Featured.Show"]</button>
+        </form>
+
+        @if (!view.Matched)
+        {
+            <p id="residents-no-match" class="featured-empty" role="status">@T["Residents.NoMatch"]</p>
+        }
+        else
+        {
+            <div id="residents-list" class="front-cards-grid residents-cards">
+                @foreach (var p in view.Page)
+                {
+                    var since = GridGate.Launcher.Pages.ResidentsModel.Since(p);
+                    <article class="front-card card resident-card">
+                        <a class="resident-card-link" href="@ResidentQuery.LinkOf(p)">
+                            @if (p.ImageId == Guid.Empty)
+                            {
+                                <div class="front-card-picture front-card-blank resident-card-picture" aria-hidden="true"></div>
+                            }
+                            else
+                            {
+                                <img class="front-card-picture resident-card-picture" src="/residents/picture/@(p.Id).jpg" alt="" loading="lazy">
+                            }
+                            <div class="front-card-body">
+                                <h2 class="front-card-name">@p.Name</h2>
+                                @if (since is not null)
+                                {
+                                    <p class="resident-since">@T["Residents.MemberSince", since]</p>
+                                }
+                                @if (p.About.Length > 0)
+                                {
+                                    <p class="resident-about">@ResidentQuery.Short(p.About)</p>
+                                }
+                            </div>
+                        </a>
+                    </article>
+                }
+            </div>
+            @if (view.PageCount > 1)
+            {
+                <nav class="featured-pages" aria-label="@T["Featured.Page", view.PageNumber, view.PageCount]">
+                    @if (view.PageNumber > 1)
+                    {
+                        <a id="residents-previous" class="btn btn-secondary" href="@Model.PageLink(view.PageNumber - 1)">@T["Featured.Previous"]</a>
+                    }
+                    <span class="featured-page">@T["Featured.Page", view.PageNumber, view.PageCount]</span>
+                    @if (view.PageNumber < view.PageCount)
+                    {
+                        <a id="residents-next" class="btn btn-secondary" href="@Model.PageLink(view.PageNumber + 1)">@T["Featured.Next"]</a>
+                    }
+                </nav>
+            }
+        }
+        <p class="featured-note"><a id="residents-add-me" href="/guest/account#public-profile">@T["Residents.AddMe"]</a></p>
+    }
+}

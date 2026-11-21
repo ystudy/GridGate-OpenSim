@@ -1,7 +1,7 @@
 namespace GridGate.Launcher.Core.Security;
 
 /// <summary>A task on the People list and a person's page.</summary>
-public enum PersonTask { Edit, ResetLink, SignOut, Suspend, Unsuspend, Delete, Inventory, AllowUpload, StopUpload, IarRights }
+public enum PersonTask { Edit, ResetLink, SignOut, Suspend, Unsuspend, Delete, Inventory, AllowUpload, StopUpload, IarRights, HoldProfile, ReleaseProfile }
 
 /// <summary>
 /// What the rules need to know about a person: the role they are judged by (the higher of their current role and the one they
@@ -33,6 +33,7 @@ public static class PeopleRules
     public static string? Refusal(StaffRole actor, PersonFacts target, PersonTask task)
     {
         if (task is PersonTask.AllowUpload or PersonTask.StopUpload or PersonTask.IarRights) return UploadRefusal(actor, target);
+        if (task is PersonTask.HoldProfile or PersonTask.ReleaseProfile) return ProfileRefusal(actor, target);
         if (target.IsOwner) return StaffChanges.OwnerRefusal;
         if (target.Waiting) return Waiting;
         if (task is PersonTask.Suspend or PersonTask.Unsuspend)
@@ -49,6 +50,18 @@ public static class PeopleRules
             PersonTask.Delete when !target.Suspended => SuspendFirst,
             _ => null,
         };
+    }
+
+    // Taking a profile off the Residents page (spec 2026-11-21-resident-profiles-design, "Staff") is moderation, like suspending:
+    // every staff member may do it for residents; only the owner for staff; nobody for the owner or themself (they use their
+    // own Account page).
+    private static string? ProfileRefusal(StaffRole actor, PersonFacts target)
+    {
+        if (target.Waiting) return Waiting;
+        if (target.IsOwner) return StaffChanges.OwnerRefusal;
+        if (target.IsActor) return Self;
+        if (target.Judged != StaffRole.None && actor != StaffRole.Owner) return OwnerChangesStaff;
+        return actor == StaffRole.None ? SupervisorOnly : null;
     }
 
     // The upload right (and the inventory backup switches and limits, which follow the same rule) is not a change to the person's

@@ -115,7 +115,7 @@ public sealed class FeaturedPageTests
     }
 
     /// <summary>Robust's asset service and converter, answering one snapshot.</summary>
-    private sealed class SnapshotRobust(Guid snapshot) : HttpMessageHandler
+    internal sealed class SnapshotRobust(Guid snapshot) : HttpMessageHandler
     {
         public static readonly byte[] Jpeg = [0xFF, 0xD8, 0xFF, 0xE0, 7, 7];
 
