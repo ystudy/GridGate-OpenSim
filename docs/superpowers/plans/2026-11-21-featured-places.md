@@ -106,3 +106,25 @@ Keys (English): `Featured.Title` "Featured places"; `Featured.Intro` "Places res
 - [ ] `dotnet build GridGate.sln -c Release` → 0 errors (CI builds the whole solution).
 - [ ] Browser: `/featured` on the scratch launcher (no Robust there, so expect the "unavailable" or empty state), at 1280 and 375 px; the menu link.
 - [ ] `bash .github/scripts/check-old-name.sh` clean.
+
+---
+
+## Part 2 (2026-11-21): parcel snapshots through a Robust converter
+
+### Task 7: The Robust converter add-on
+
+**Files:** Create `addon-modules/GridGateSnapshots/` (`GridGateSnapshots.csproj` like GridGateTraffic's, plus references to `OpenSim.Framework.Servers.HttpServer`, `OpenSim.Server.Base`, `OpenSim.Server.Handlers`, `CSJ2K` and `System.Drawing.Common` from `bin`; `SnapshotConverter.cs`; `GridGateSnapshotsConnector.cs`); `tests/GridGate.Snapshots.Tests/`; `GridGate.sln`; CI (Linux and Windows); `bin/Robust.HG.ini.proto` `[ServiceList]` line `GridGateSnapshotsConnector = "${Const|PrivatePort}/GridGateSnapshots.dll:GridGateSnapshotsConnector"`; `GridConfigWriterTests` asserts it reaches Robust's ini.
+
+**Interfaces:** `public static byte[]? SnapshotConverter.ToJpeg(byte[] j2k, int maxWidth = 512)`; `public static (int Status, byte[] Body) SnapshotConverter.Answer(Stream body)` (200 JPEG, 400, 413, 503); `GridGateSnapshotsConnector(IConfigSource, IHttpServer, string)` adds a POST `/gridgate/j2k` stream handler calling `Answer`.
+
+- [ ] Failing tests: `Converts_a_real_texture` (bin/assets `eyes.j2c` → JPEG SOI `FF D8`, width ≤ 512 and height scaled alike); `Junk_is_refused` (null; `Answer` 400); `Over_2_MB_is_413`; `Robust_lists_the_converter` (launcher config test).
+- [ ] Implement; run; commit `feat(snapshots): Robust converts JPEG 2000 snapshots to JPEG on its private port`.
+
+### Task 8: Cards show snapshots
+
+**Files:** `ListedParcels.cs` (`SnapshotId`), `Featured/ParcelPictures.cs` (fetch, convert, keep), `FeaturedApi.cs` (`/featured/picture/{parcelId:guid}.jpg` replaces the map route), `Featured.cshtml`, `AccessTests.cs`, `FeaturedPageTests.cs`, `ParcelPicturesTests.cs`.
+
+**Interfaces:** `ParcelPictures(IHttpClientFactory, Func<LauncherSettings>, TimeProvider)` with `Task<byte[]> JpegAsync(Guid snapshotId, CancellationToken)` (empty when there is none or it failed; kept 1 h, 200 max, concurrent askers share one fetch).
+
+- [ ] Failing tests: `Snapshot_fetched_converted_and_kept` (fake handler: `/assets/{id}/data` then `/gridgate/j2k`; second ask within the hour makes no request); `Over_2_MB_texture_is_not_sent`; `Failure_gives_empty`; page tests: card `img` src `/featured/picture/{parcel}.jpg`; picture route 404 for an Adult-only place to a visitor and for unknown ids.
+- [ ] Implement; run; commit `feat(featured): cards show the parcel's own snapshot`.

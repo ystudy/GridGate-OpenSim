@@ -20,11 +20,6 @@ making an account, and a resident can find somewhere to go and teleport straight
 
 ## Not in this change (left for the owner)
 
-- **Parcel snapshots are not shown yet; every card shows its region's map tile.** Snapshots are JPEG 2000 textures. The
-  converter OpenSim ships (`bin/CSJ2K.dll`) only returns `System.Drawing` images, which the launcher doesn't use (it
-  draws with SkiaSharp and runs without libgdiplus). The two ways to convert are the owner's to pick: add the CoreJ2K
-  NuGet package (a new third-party dependency) to the launcher, or a small Robust handler that converts with the
-  CSJ2K and System.Drawing Robust already has. The page is built so the snapshot slots in where the tile is now.
 - Showing other grids' places (hypergrid links), events, classifieds, or a staff editor for this page.
 - In-world search (the viewer's Search window) reading the same directory.
 - **Places on a Region Server's regions** (a second computer). Each computer's regions keep their parcels in that
@@ -74,6 +69,24 @@ Places residents chose to show. Teleport straight in with your viewer.
   (`IGridRegions`). A stopped region's places drop out, so every Teleport link can work.
 - A region's own access rules still apply at teleport time, as on the map.
 
+## Pictures (added 2026-11-21; the owner chose the Robust converter)
+
+Each card shows the parcel's own snapshot (About Land), else its region's map tile, else the plain card.
+
+- **Robust converts, the launcher fetches.** Snapshots are JPEG 2000 textures. A new Robust add-on,
+  `addon-modules/GridGateSnapshots`, answers `POST /gridgate/j2k` on Robust's **private** port: JPEG 2000 bytes in, a JPEG
+  at most 512 px wide out (quality 85), 400 for anything it can't read, 413 over 2 MB, 503 when two conversions are
+  already running. It uses the `CSJ2K.dll` and `System.Drawing.Common` Robust already ships, and Robust loads it from one
+  `[ServiceList]` line, so no OpenSim file changes and nothing new is downloaded. It holds no asset service of its own (a
+  second copy of Robust's could fight the first over the asset store).
+- The launcher reads `land.SnapshotUUID`, fetches the texture from Robust's asset service (`GET /assets/{id}/data`, at
+  most 2 MB), has Robust convert it, and keeps the JPEG for an hour (a snapshot never changes under the same id; at most
+  200 kept). Visitors who ask at once share one fetch.
+- Cards use `/featured/picture/{parcel}.jpg`: only for a place the asker may see; the snapshot when there is one and it
+  converts, else the region's tile, else 404 (the card then shows its blank background). It replaces `/featured/map/{region}.jpg`.
+- Where there's no local Robust (a Region Server or Connected Server), snapshots fail and cards show map tiles.
+- *Designer's calls:* 512 px, quality 85, 2 MB, one hour, 200 kept, two conversions at once.
+
 ## Ratings (*designer's call*)
 
 - A place's rating is its region's maturity (`opensim.regionsettings.maturity`: 0 General, 1 Moderate, 2 Adult; a region
@@ -120,8 +133,8 @@ A new region add-on, `addon-modules/GridGateTraffic`, beside GridGateMoney, so n
 
 - **Public traffic can't load the grid:** the directory is built at most once a minute and shared by every visitor, with
   short database timeouts (as `FrontPageSnapshot` and `WorldMapSnapshot`). Map tiles go through the front page's tile
-  cache (`FrontMapTiles`, generalised to any region), served at `/featured/map/{regionId}.jpg` **only for a region that
-  has a place on the directory the asker may see**; anything else is 404.
+  cache (`FrontMapTiles`, generalised to any region); pictures are served only for a place the asker may see (see
+  Pictures); anything else is 404.
 - **Words:** every visitor-facing word in `ResidentText`, all six built-in languages. Residents' own text (names,
   descriptions) is shown as plain text, never as HTML.
 - **Look:** the public look (`guest.css` variables, `_GuestLayout`), cards like the front page's.
