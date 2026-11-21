@@ -304,12 +304,17 @@ public sealed class AccessTests
             // signed in (WorldMapAccess), 404 where there is no guest side.
             "route /world/regions",
             "route /world/tile/{z:int}/{x:int}/{y:int}",
+            // The Featured page's map pictures (spec 2026-11-21-featured-places-design): only a region with a place the asker
+            // may see on the page answers, 404 where there is no guest side.
+            "route /featured/map/{id:guid}.jpg",
             // The public front page: SetupGate shows it at "/" to anyone not signed in as staff, where there is a guest side.
             // How coins work here, where those windows send residents (money plan 2).
             "page coins",
             "page home",
             // The world map: the page itself shows regions only to a signed-in resident or staff member (WorldMapAccess).
             "page map",
+            // The Featured places directory: parcels residents put in search; Adult ones only for a signed-in resident or staff.
+            "page featured",
             // The guest door: any account at level 0 or more signs in here, to the guest pages only.
             "page guest/sign-in",
             // A resident's two-factor code step: only does anything with the pending cookie the guest password step leaves.

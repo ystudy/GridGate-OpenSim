@@ -215,3 +215,22 @@
 .guest-site .account-lead h1 { font-size: clamp(2rem, 13cqi, 4rem); line-height: 1.05; margin-bottom: .75rem; overflow-wrap: anywhere; hyphens: auto; }
 .guest-site .account-line { margin: 0; font-size: clamp(1.05rem, 2.2vw, 1.3rem); font-weight: 600; }
 .guest-site .account-card { width: 100%; }
+
+/* The Featured places directory (spec 2026-11-21-featured-places-design): the numbers and cards are the front page's. */
+.guest-site .featured-head { margin-top: 1rem; }
+.guest-site .featured-intro { font-size: clamp(1.05rem, 2.2vw, 1.3rem); font-weight: 600; }
+.guest-site .featured-note { margin: 1rem 0 0; color: var(--gg-muted); }
+.guest-site .featured-empty { margin-top: 1.5rem; font-size: 1.1rem; }
+.guest-site .featured-filter { display: flex; flex-wrap: wrap; gap: .5rem; margin: 1.25rem 0; }
+.guest-site .featured-filter .form-control { flex: 1 1 14rem; min-width: 0; }
+.guest-site .featured-filter .form-select { flex: 0 1 auto; width: auto; max-width: 100%; }
+.guest-site .featured-filter .btn { text-transform: uppercase; letter-spacing: .03em; }
+.guest-site .featured-card .front-card-body { display: flex; flex-direction: column; gap: .4rem; height: 100%; }
+.guest-site .featured-card .front-card-name { overflow-wrap: anywhere; }
+.guest-site .featured-where { margin: 0; color: var(--gg-muted); font-weight: 600; }
+.guest-site .featured-rating { display: inline-block; margin-inline-start: .4rem; padding: 0 .45rem; border-radius: .4rem; font-size: .8rem; font-weight: 700; color: #111111; background: var(--gg-yellow); }
+.guest-site .featured-rating-2 { color: #ffffff; background: #b02a37; }
+.guest-site .featured-description { margin: 0; display: -webkit-box; -webkit-line-clamp: 3; line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; white-space: pre-line; }
+.guest-site .featured-visits { margin: 0; color: var(--gg-muted); }
+.guest-site .featured-teleport { margin-top: auto; align-self: flex-start; text-transform: uppercase; letter-spacing: .03em; }
+.guest-site .featured-pages { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: .75rem; margin-top: 1.5rem; }
