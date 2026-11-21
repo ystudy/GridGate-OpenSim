@@ -94,6 +94,9 @@ jobs:
       - name: Traffic module tests
         run: dotnet test --project tests/GridGate.Traffic.Tests -c Release
 
+      - name: Robust snapshot converter tests
+        run: dotnet test --project tests/GridGate.Snapshots.Tests -c Release
+
       # GridGate's changes to OpenSim's script money functions (llGiveMoney, llTransferLindenDollars, PERMISSION_DEBIT).
       - name: Script money tests
         run: dotnet test --project tests/GridGate.Lsl.Tests -c Release
@@ -186,6 +189,9 @@ jobs:
 
       - name: Traffic module tests
         run: dotnet test --project tests/GridGate.Traffic.Tests -c Release
+
+      - name: Robust snapshot converter tests
+        run: dotnet test --project tests/GridGate.Snapshots.Tests -c Release
 
       # GridGate's changes to OpenSim's script money functions (llGiveMoney, llTransferLindenDollars, PERMISSION_DEBIT).
       - name: Script money tests

@@ -155,6 +155,15 @@ public sealed class GridConfigWriterTests : IDisposable
         Assert.Equal("GridGateTraffic", Region().Get("Dwell", "DwellModule"));
     }
 
+    /// <summary>Featured places' pictures: Robust loads GridGate's snapshot converter on its private port.</summary>
+    [Fact]
+    public void Robust_lists_the_snapshot_converter()
+    {
+        Write(Make());
+        Assert.Equal("${Const|PrivatePort}/GridGateSnapshots.dll:GridGateSnapshotsConnector",
+            Robust().Get("ServiceList", "GridGateSnapshotsConnector"));
+    }
+
     [Fact]
     public void Region_ready_reports_to_the_gridgate_route_and_templates_name_the_grid_GridGate()
     {
