@@ -3,9 +3,12 @@
 @{
     ViewData["Title"] = T["Common.SignIn"].Value;
 }
-<div class="card card-body shadow-sm mx-auto sign-in-card">
-<h1>@T["Common.SignIn"]</h1>
-<p class="tone-text">@T["SignIn.Intro"]</p>
+<div class="account-split">
+<div class="account-lead">
+    <h1>@T["Common.SignIn"]</h1>
+    <p class="tone-text account-line">@T["SignIn.Intro"]</p>
+</div>
+<div class="card card-body shadow-sm account-card">
 <error-box text="@Model.Error" />
 <form method="post">
     <label class="form-label mt-3" asp-for="Name">@T["Common.AvatarName"]</label>
@@ -30,4 +33,5 @@
 {
     <p class="mt-2 mb-0"><a href="/signup">@T["Common.CreateAccount"]</a></p>
 }
+</div>
 </div>

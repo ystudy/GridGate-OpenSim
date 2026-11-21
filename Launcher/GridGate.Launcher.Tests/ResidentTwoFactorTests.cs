@@ -162,6 +162,21 @@ public sealed class ResidentTwoFactorTests
     }
 
     [Fact]
+    public async Task Code_page_has_headline_left_and_form_right()
+    {
+        await using var f = Factory();
+        Enrol(f, Residents(f), TestAuth.GuestId, "Test Guest");
+        var client = Client(f);
+        using var password = await PasswordAsync(client, "Test Guest");
+        Assert.Equal("/guest/sign-in/code", password.Headers.Location?.OriginalString);
+
+        var page = await PageAsync(client, "/guest/sign-in/code");
+
+        AccountPagesLookTests.AssertSplit(page, "Two-factor code", line: true);
+        Assert.NotNull(page.QuerySelector(".account-card input[name=Code]"));
+    }
+
+    [Fact]
     public async Task Two_factor_carries_the_return()
     {
         await using var f = Factory();

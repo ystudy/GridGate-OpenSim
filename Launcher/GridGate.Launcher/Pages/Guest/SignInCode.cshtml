@@ -3,9 +3,12 @@
 @{
     ViewData["Title"] = T["SignInCode.Title"].Value;
 }
-<div class="card card-body shadow-sm mx-auto sign-in-card">
-<h1>@T["SignInCode.Title"]</h1>
-<p>@T["SignInCode.Intro"]</p>
+<div class="account-split">
+<div class="account-lead">
+    <h1>@T["SignInCode.Title"]</h1>
+    <p class="tone-text account-line">@T["SignInCode.Intro"]</p>
+</div>
+<div class="card card-body shadow-sm account-card">
 <error-box text="@Model.Error" />
 @if (Model.TwoFactorUnknown)
 {
@@ -17,4 +20,5 @@
     <button type="submit" class="btn btn-primary w-100 mt-4">@T["Common.SignIn"]</button>
 </form>
 <p class="mt-3 mb-0"><a href="/guest/sign-in">@T["SignInCode.StartAgain"]</a></p>
+</div>
 </div>
