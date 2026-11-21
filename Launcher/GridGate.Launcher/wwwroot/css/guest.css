@@ -219,6 +219,8 @@
 /* The Featured places directory (spec 2026-11-21-featured-places-design): the numbers and cards are the front page's. */
 .guest-site .featured-head { margin-top: 1rem; }
 .guest-site .featured-intro { font-size: clamp(1.05rem, 2.2vw, 1.3rem); font-weight: 600; }
+/* Four tiles two to a row on a phone, so the places start sooner. */
+.guest-site #featured-numbers { grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr)); }
 .guest-site .featured-note { margin: 1rem 0 0; color: var(--gg-muted); }
 .guest-site .featured-empty { margin-top: 1.5rem; font-size: 1.1rem; }
 .guest-site .featured-filter { display: flex; flex-wrap: wrap; gap: .5rem; margin: 1.25rem 0; }
