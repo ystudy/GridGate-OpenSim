@@ -657,4 +657,45 @@
   <data name="Map.Close" xml:space="preserve"><value>Закрыть</value></data>
   <data name="Map.ZoomIn" xml:space="preserve"><value>Приблизить</value></data>
   <data name="Map.ZoomOut" xml:space="preserve"><value>Отдалить</value></data>
+  <data name="Layout.MenuFeatured" xml:space="preserve"><value>Избранное</value></data>
+  <data name="Featured.Title" xml:space="preserve"><value>Избранные места</value></data>
+  <data name="Featured.Intro" xml:space="preserve"><value>Места, которые жители решили показать. Телепортируйтесь прямо туда через свой вьюер.</value></data>
+  <data name="Featured.StatPlaces" xml:space="preserve"><value>Места</value></data>
+  <data name="Featured.StatVisits" xml:space="preserve"><value>Недавние визиты</value></data>
+  <data name="Featured.StatCategories" xml:space="preserve"><value>Категории</value></data>
+  <data name="Featured.StatRegions" xml:space="preserve"><value>Регионы</value></data>
+  <data name="Featured.TeleportNote" xml:space="preserve"><value>Ссылки телепорта открывают ваш вьюер.</value></data>
+  <data name="Featured.Search" xml:space="preserve"><value>Искать места</value></data>
+  <data name="Featured.AnyCategory" xml:space="preserve"><value>Все категории</value></data>
+  <data name="Featured.AnyRating" xml:space="preserve"><value>Любой рейтинг</value></data>
+  <data name="Featured.Sort" xml:space="preserve"><value>Сортировка</value></data>
+  <data name="Featured.SortVisits" xml:space="preserve"><value>Самые посещаемые</value></data>
+  <data name="Featured.SortName" xml:space="preserve"><value>По названию</value></data>
+  <data name="Featured.Show" xml:space="preserve"><value>Показать</value></data>
+  <data name="Featured.Teleport" xml:space="preserve"><value>Телепорт</value></data>
+  <data name="Featured.Visits" xml:space="preserve"><value>Недавних визитов: {0}</value></data>
+  <data name="Featured.VisitOne" xml:space="preserve"><value>Недавних визитов: 1</value></data>
+  <data name="Featured.Unnamed" xml:space="preserve"><value>Место без названия</value></data>
+  <data name="Featured.None" xml:space="preserve"><value>Пока в списке нет мест. Чтобы добавить своё: во вьюере «О земле» → «Параметры» → «Показывать в поиске».</value></data>
+  <data name="Featured.NoMatch" xml:space="preserve"><value>Ничего не найдено. Попробуйте другие слова или другую категорию.</value></data>
+  <data name="Featured.Unavailable" xml:space="preserve"><value>Каталог сейчас недоступен. Попробуйте через минуту.</value></data>
+  <data name="Featured.Previous" xml:space="preserve"><value>Назад</value></data>
+  <data name="Featured.Next" xml:space="preserve"><value>Далее</value></data>
+  <data name="Featured.Page" xml:space="preserve"><value>Страница {0} из {1}</value></data>
+  <data name="Featured.RatingGeneral" xml:space="preserve"><value>Общий</value></data>
+  <data name="Featured.RatingModerate" xml:space="preserve"><value>Умеренный</value></data>
+  <data name="Featured.RatingAdult" xml:space="preserve"><value>Для взрослых</value></data>
+  <data name="Featured.Category1" xml:space="preserve"><value>Место грида</value></data>
+  <data name="Featured.Category2" xml:space="preserve"><value>Для взрослых</value></data>
+  <data name="Featured.Category3" xml:space="preserve"><value>Искусство и культура</value></data>
+  <data name="Featured.Category4" xml:space="preserve"><value>Бизнес</value></data>
+  <data name="Featured.Category5" xml:space="preserve"><value>Образование</value></data>
+  <data name="Featured.Category6" xml:space="preserve"><value>Игры</value></data>
+  <data name="Featured.Category7" xml:space="preserve"><value>Место встреч</value></data>
+  <data name="Featured.Category8" xml:space="preserve"><value>Для новичков</value></data>
+  <data name="Featured.Category9" xml:space="preserve"><value>Парки и природа</value></data>
+  <data name="Featured.Category10" xml:space="preserve"><value>Жилые</value></data>
+  <data name="Featured.Category11" xml:space="preserve"><value>Магазины</value></data>
+  <data name="Featured.Category12" xml:space="preserve"><value>Сцена</value></data>
+  <data name="Featured.Category13" xml:space="preserve"><value>Другое</value></data>
 </root>

@@ -657,4 +657,45 @@
   <data name="Map.Close" xml:space="preserve"><value>Schließen</value></data>
   <data name="Map.ZoomIn" xml:space="preserve"><value>Vergrößern</value></data>
   <data name="Map.ZoomOut" xml:space="preserve"><value>Verkleinern</value></data>
+  <data name="Layout.MenuFeatured" xml:space="preserve"><value>Empfohlen</value></data>
+  <data name="Featured.Title" xml:space="preserve"><value>Empfohlene Orte</value></data>
+  <data name="Featured.Intro" xml:space="preserve"><value>Orte, die Bewohner zeigen möchten. Mit deinem Viewer direkt hinteleportieren.</value></data>
+  <data name="Featured.StatPlaces" xml:space="preserve"><value>Orte</value></data>
+  <data name="Featured.StatVisits" xml:space="preserve"><value>Letzte Besuche</value></data>
+  <data name="Featured.StatCategories" xml:space="preserve"><value>Kategorien</value></data>
+  <data name="Featured.StatRegions" xml:space="preserve"><value>Regionen</value></data>
+  <data name="Featured.TeleportNote" xml:space="preserve"><value>Teleport-Links öffnen deinen Viewer.</value></data>
+  <data name="Featured.Search" xml:space="preserve"><value>Orte suchen</value></data>
+  <data name="Featured.AnyCategory" xml:space="preserve"><value>Alle Kategorien</value></data>
+  <data name="Featured.AnyRating" xml:space="preserve"><value>Alle Einstufungen</value></data>
+  <data name="Featured.Sort" xml:space="preserve"><value>Sortieren</value></data>
+  <data name="Featured.SortVisits" xml:space="preserve"><value>Meistbesucht</value></data>
+  <data name="Featured.SortName" xml:space="preserve"><value>Nach Name</value></data>
+  <data name="Featured.Show" xml:space="preserve"><value>Anzeigen</value></data>
+  <data name="Featured.Teleport" xml:space="preserve"><value>Teleportieren</value></data>
+  <data name="Featured.Visits" xml:space="preserve"><value>{0} letzte Besuche</value></data>
+  <data name="Featured.VisitOne" xml:space="preserve"><value>1 letzter Besuch</value></data>
+  <data name="Featured.Unnamed" xml:space="preserve"><value>Ort ohne Namen</value></data>
+  <data name="Featured.None" xml:space="preserve"><value>Noch sind keine Orte eingetragen. So trägst du deinen ein: im Viewer Land-Info → Optionen → In Suche anzeigen.</value></data>
+  <data name="Featured.NoMatch" xml:space="preserve"><value>Keine Orte gefunden. Versuche andere Wörter oder eine andere Kategorie.</value></data>
+  <data name="Featured.Unavailable" xml:space="preserve"><value>Das Verzeichnis kann gerade nicht gelesen werden. Versuche es in einer Minute noch einmal.</value></data>
+  <data name="Featured.Previous" xml:space="preserve"><value>Zurück</value></data>
+  <data name="Featured.Next" xml:space="preserve"><value>Weiter</value></data>
+  <data name="Featured.Page" xml:space="preserve"><value>Seite {0} von {1}</value></data>
+  <data name="Featured.RatingGeneral" xml:space="preserve"><value>Allgemein</value></data>
+  <data name="Featured.RatingModerate" xml:space="preserve"><value>Moderat</value></data>
+  <data name="Featured.RatingAdult" xml:space="preserve"><value>Erwachsene</value></data>
+  <data name="Featured.Category1" xml:space="preserve"><value>Grid-Ort</value></data>
+  <data name="Featured.Category2" xml:space="preserve"><value>Erwachsene</value></data>
+  <data name="Featured.Category3" xml:space="preserve"><value>Kunst &amp; Kultur</value></data>
+  <data name="Featured.Category4" xml:space="preserve"><value>Geschäft</value></data>
+  <data name="Featured.Category5" xml:space="preserve"><value>Bildung</value></data>
+  <data name="Featured.Category6" xml:space="preserve"><value>Spiele</value></data>
+  <data name="Featured.Category7" xml:space="preserve"><value>Treffpunkt</value></data>
+  <data name="Featured.Category8" xml:space="preserve"><value>Für Neulinge</value></data>
+  <data name="Featured.Category9" xml:space="preserve"><value>Parks &amp; Natur</value></data>
+  <data name="Featured.Category10" xml:space="preserve"><value>Wohnen</value></data>
+  <data name="Featured.Category11" xml:space="preserve"><value>Einkaufen</value></data>
+  <data name="Featured.Category12" xml:space="preserve"><value>Bühne</value></data>
+  <data name="Featured.Category13" xml:space="preserve"><value>Sonstiges</value></data>
 </root>

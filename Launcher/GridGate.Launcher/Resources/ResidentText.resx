@@ -657,4 +657,45 @@
   <data name="Map.Close" xml:space="preserve"><value>Close</value></data>
   <data name="Map.ZoomIn" xml:space="preserve"><value>Zoom in</value></data>
   <data name="Map.ZoomOut" xml:space="preserve"><value>Zoom out</value></data>
+  <data name="Layout.MenuFeatured" xml:space="preserve"><value>Featured</value></data>
+  <data name="Featured.Title" xml:space="preserve"><value>Featured places</value></data>
+  <data name="Featured.Intro" xml:space="preserve"><value>Places residents chose to show. Teleport straight in with your viewer.</value></data>
+  <data name="Featured.StatPlaces" xml:space="preserve"><value>Places</value></data>
+  <data name="Featured.StatVisits" xml:space="preserve"><value>Recent visits</value></data>
+  <data name="Featured.StatCategories" xml:space="preserve"><value>Categories</value></data>
+  <data name="Featured.StatRegions" xml:space="preserve"><value>Regions</value></data>
+  <data name="Featured.TeleportNote" xml:space="preserve"><value>Teleport links open your viewer.</value></data>
+  <data name="Featured.Search" xml:space="preserve"><value>Search places</value></data>
+  <data name="Featured.AnyCategory" xml:space="preserve"><value>Every category</value></data>
+  <data name="Featured.AnyRating" xml:space="preserve"><value>Every rating</value></data>
+  <data name="Featured.Sort" xml:space="preserve"><value>Sort</value></data>
+  <data name="Featured.SortVisits" xml:space="preserve"><value>Most visited</value></data>
+  <data name="Featured.SortName" xml:space="preserve"><value>By name</value></data>
+  <data name="Featured.Show" xml:space="preserve"><value>Show</value></data>
+  <data name="Featured.Teleport" xml:space="preserve"><value>Teleport</value></data>
+  <data name="Featured.Visits" xml:space="preserve"><value>{0} recent visits</value></data>
+  <data name="Featured.VisitOne" xml:space="preserve"><value>1 recent visit</value></data>
+  <data name="Featured.Unnamed" xml:space="preserve"><value>Unnamed place</value></data>
+  <data name="Featured.None" xml:space="preserve"><value>No places are listed yet. To list yours: in your viewer, About Land → Options → Show in search.</value></data>
+  <data name="Featured.NoMatch" xml:space="preserve"><value>No places match. Try other words or another category.</value></data>
+  <data name="Featured.Unavailable" xml:space="preserve"><value>The directory can't be read right now. Try again in a minute.</value></data>
+  <data name="Featured.Previous" xml:space="preserve"><value>Previous</value></data>
+  <data name="Featured.Next" xml:space="preserve"><value>Next</value></data>
+  <data name="Featured.Page" xml:space="preserve"><value>Page {0} of {1}</value></data>
+  <data name="Featured.RatingGeneral" xml:space="preserve"><value>General</value></data>
+  <data name="Featured.RatingModerate" xml:space="preserve"><value>Moderate</value></data>
+  <data name="Featured.RatingAdult" xml:space="preserve"><value>Adult</value></data>
+  <data name="Featured.Category1" xml:space="preserve"><value>Grid location</value></data>
+  <data name="Featured.Category2" xml:space="preserve"><value>Adult</value></data>
+  <data name="Featured.Category3" xml:space="preserve"><value>Arts &amp; culture</value></data>
+  <data name="Featured.Category4" xml:space="preserve"><value>Business</value></data>
+  <data name="Featured.Category5" xml:space="preserve"><value>Educational</value></data>
+  <data name="Featured.Category6" xml:space="preserve"><value>Gaming</value></data>
+  <data name="Featured.Category7" xml:space="preserve"><value>Hangout</value></data>
+  <data name="Featured.Category8" xml:space="preserve"><value>Newcomer friendly</value></data>
+  <data name="Featured.Category9" xml:space="preserve"><value>Parks &amp; nature</value></data>
+  <data name="Featured.Category10" xml:space="preserve"><value>Residential</value></data>
+  <data name="Featured.Category11" xml:space="preserve"><value>Shopping</value></data>
+  <data name="Featured.Category12" xml:space="preserve"><value>Stage</value></data>
+  <data name="Featured.Category13" xml:space="preserve"><value>Other</value></data>
 </root>
