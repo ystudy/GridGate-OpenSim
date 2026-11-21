@@ -116,14 +116,14 @@ public sealed class GuestAccessTests
         var page = new HtmlParser().ParseDocument(await guest.GetStringAsync("/guest", Ct));
 
         var main = page.QuerySelector("main")!.TextContent;
-        Assert.Contains("You're signed in as Test Guest.", main);
+        Assert.Equal("Test Guest", page.QuerySelector("main h1")!.TextContent.Trim()); // the Avatar tab: their avatar's name is the title
         Assert.Contains("Connect with Firestorm", main);
         Assert.Equal("https://www.firestormviewer.org/downloads/", page.QuerySelector("main a[href^='https://www.firestormviewer.org']")!.GetAttribute("href"));
         var s = f.Store.LoadOrCreate();
         Assert.Equal(GridEndpoints.LoginUri(s, HostAddress.Effective(s.Hostname)), page.QuerySelector("main code")!.TextContent);
         Assert.Contains("Avalon", main);
         Assert.All(page.QuerySelectorAll("header nav a"), a => // no staff navigation: only the public menu's pages
-            Assert.Contains(a.GetAttribute("href"), new[] { "/home", "/map", "/featured", "/residents", "/guest/connect", "/support", "/guest/forgot-password" }));
+            Assert.Contains(a.GetAttribute("href"), new[] { "/home", "/map", "/featured", "/residents", "/guest", "/guest/connect", "/support", "/guest/forgot-password" }));
         Assert.DoesNotContain("href=\"/people\"", page.Body!.InnerHtml);
         Assert.DoesNotContain("href=\"/logout\"", page.Body!.InnerHtml);
     }

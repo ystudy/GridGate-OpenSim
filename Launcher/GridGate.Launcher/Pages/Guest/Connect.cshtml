@@ -2,6 +2,7 @@
 @model GridGate.Launcher.Pages.Guest.ConnectModel
 @{
     ViewData["Title"] = T["Common.HowToConnect"].Value;
+    ViewData["AvatarTab"] = "download";
 }
 <h1>@T["Connect.Heading", Model.GridName]</h1>
 <p class="text-body-secondary">@T["Connect.Choose", Model.GridName]</p>

@@ -3,6 +3,7 @@
 @using GridGate.Launcher.Guests
 @{
     ViewData["Title"] = T["Account.Title"].Value;
+    ViewData["AvatarTab"] = "profile";
 }
 <h1>@T["Account.Title"]</h1>
 @if (Model.Account is not { } a)

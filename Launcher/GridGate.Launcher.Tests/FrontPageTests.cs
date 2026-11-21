@@ -61,7 +61,7 @@ public sealed class FrontPageTests
         var staff = page.QuerySelector("footer a#staff-link[href='/login']")!;
         Assert.Equal("Staff sign in", staff.TextContent.Trim());
         Assert.All(page.QuerySelectorAll("header nav a"), a => // no staff navigation: only the public menu's pages
-            Assert.Contains(a.GetAttribute("href"), new[] { "/home", "/map", "/featured", "/residents", "/guest/connect", "/support", "/guest/forgot-password" }));
+            Assert.Contains(a.GetAttribute("href"), new[] { "/home", "/map", "/featured", "/residents", "/guest", "/guest/connect", "/support", "/guest/forgot-password" }));
         Assert.DoesNotContain("Your world", page.Body!.TextContent);
     }
 

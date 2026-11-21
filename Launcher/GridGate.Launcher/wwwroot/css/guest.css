@@ -264,3 +264,41 @@
 @media (max-width: 575.98px) { .guest-site .resident-details { grid-template-columns: 1fr; } .guest-site .resident-details dd { margin-bottom: .5rem; } }
 .guest-site .resident-picks { margin-top: 2.5rem; }
 .guest-site .resident-picks h3.front-card-name { font-size: 1.1rem; overflow-wrap: anywhere; }
+
+/* The Avatar page (spec 2026-11-21-avatar-page-design): the tab bar on its five pages, and the Avatar tab. */
+.guest-site .avatar-tabs { display: flex; gap: .4rem; overflow-x: auto; margin: 0 0 1.5rem; padding-bottom: .25rem; border-bottom: 1px solid var(--gg-border); }
+.guest-site .avatar-tab {
+    display: inline-flex; align-items: center; gap: .4rem; flex: 0 0 auto; padding: .55rem .95rem; border-radius: .75rem .75rem 0 0;
+    color: var(--gg-muted); font-weight: 700; text-transform: uppercase; letter-spacing: .03em; text-decoration: none; white-space: nowrap;
+}
+.guest-site .avatar-tab:hover { color: #fff; background: var(--gg-surface); }
+.guest-site .avatar-tab.active { color: #fff; background: var(--gg-surface); box-shadow: inset 0 -3px 0 var(--gg-yellow); }
+.guest-site .avatar-tab:focus-visible { outline: 3px solid var(--gg-yellow); outline-offset: -3px; }
+.guest-site .avatar-card { display: grid; gap: 1.5rem; align-items: start; }
+@media (min-width: 768px) { .guest-site .avatar-card { grid-template-columns: minmax(14rem, 20rem) 1fr; } }
+.guest-site .avatar-photo {
+    display: block; width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border: 1px solid var(--gg-border); border-radius: 1rem;
+    box-shadow: var(--gg-glow); background: radial-gradient(ellipse at top, #12206b 0%, var(--gg-bg) 80%);
+}
+.guest-site .avatar-hint { margin: .5rem 0 0; color: var(--gg-muted); font-size: .95rem; }
+.guest-site .avatar-text h1 { overflow-wrap: anywhere; margin-bottom: .25rem; }
+.guest-site .avatar-since { margin-bottom: .5rem; font-weight: 600; }
+.guest-site .avatar-presence { display: flex; align-items: center; gap: .5rem; font-weight: 600; color: var(--gg-muted); }
+.guest-site .avatar-dot { width: .7rem; height: .7rem; border-radius: 50%; background: #6c757d; flex: 0 0 auto; }
+.guest-site .avatar-presence-on { color: #fff; }
+.guest-site .avatar-presence-on .avatar-dot { background: #2fd27a; box-shadow: 0 0 .6rem #2fd27a; }
+.guest-site .avatar-section { margin-top: 2.5rem; }
+.guest-site .avatar-groups { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr)); }
+.guest-site .avatar-group { padding: 1rem 1.15rem; }
+.guest-site .avatar-group h3 { font-size: 1rem; margin-bottom: .6rem; }
+.guest-site .avatar-group ul { list-style: none; margin: 0; padding: 0; display: grid; gap: .45rem; }
+.guest-site .avatar-group li { overflow-wrap: anywhere; }
+.guest-site .avatar-type { display: inline-block; margin-inline-end: .4rem; padding: 0 .45rem; border-radius: .4rem; font-size: .8rem; font-weight: 700; color: #111111; background: var(--gg-yellow); }
+.guest-site .avatar-item { font-weight: 600; }
+.guest-site .avatar-creator { display: block; color: var(--gg-muted); font-size: .9rem; }
+.guest-site .avatar-columns { display: grid; gap: 1rem; margin-top: 2.5rem; }
+@media (min-width: 768px) { .guest-site .avatar-columns { grid-template-columns: 1fr 1fr; } }
+.guest-site .avatar-box { padding: 1.15rem 1.25rem; }
+.guest-site .avatar-box h2 { font-size: 1.25rem; }
+.guest-site .avatar-box code { overflow-wrap: anywhere; }
+.guest-site .avatar-links { list-style: none; padding: 0; display: grid; gap: .4rem; }

@@ -724,4 +724,44 @@
   <data name="Account.PublicSaved" xml:space="preserve"><value>Сохранено.</value></data>
   <data name="Account.PublicSee" xml:space="preserve"><value>Открыть мою страницу</value></data>
   <data name="Account.PublicHeld" xml:space="preserve"><value>Команда убрала ваш профиль со страницы жителей.</value></data>
+  <data name="Layout.MenuAvatar" xml:space="preserve"><value>Аватар</value></data>
+  <data name="Avatar.Title" xml:space="preserve"><value>Аватар</value></data>
+  <data name="Avatar.TabAvatar" xml:space="preserve"><value>Аватар</value></data>
+  <data name="Avatar.TabMap" xml:space="preserve"><value>Карта мира</value></data>
+  <data name="Avatar.TabInventory" xml:space="preserve"><value>Инвентарь</value></data>
+  <data name="Avatar.TabProfile" xml:space="preserve"><value>Профиль</value></data>
+  <data name="Avatar.TabDownload" xml:space="preserve"><value>Скачать</value></data>
+  <data name="Avatar.NoPicture" xml:space="preserve"><value>Выберите фото профиля в профиле вашего вьюера, и оно появится здесь.</value></data>
+  <data name="Avatar.InWorldIn" xml:space="preserve"><value>Сейчас в мире: {0}</value></data>
+  <data name="Avatar.InWorld" xml:space="preserve"><value>Сейчас в мире</value></data>
+  <data name="Avatar.NotInWorld" xml:space="preserve"><value>Сейчас не в мире</value></data>
+  <data name="Avatar.SeePublicPage" xml:space="preserve"><value>Открыть мою публичную страницу</value></data>
+  <data name="Avatar.ShowOnResidents" xml:space="preserve"><value>Показать меня на странице жителей</value></data>
+  <data name="Avatar.Wearing" xml:space="preserve"><value>Что на вас надето</value></data>
+  <data name="Avatar.LookUnavailable" xml:space="preserve"><value>Сейчас не удаётся прочитать внешний вид вашего аватара. Попробуйте ещё раз через несколько минут.</value></data>
+  <data name="Avatar.LookNotSaved" xml:space="preserve"><value>Внешний вид аватара сохраняется, когда вы впервые входите в мир.</value></data>
+  <data name="Avatar.Body" xml:space="preserve"><value>Тело</value></data>
+  <data name="Avatar.Clothes" xml:space="preserve"><value>Одежда</value></data>
+  <data name="Avatar.Attached" xml:space="preserve"><value>Прикреплено</value></data>
+  <data name="Avatar.Huds" xml:space="preserve"><value>HUD</value></data>
+  <data name="Avatar.ItemGone" xml:space="preserve"><value>Предмета больше нет в вашем инвентаре</value></data>
+  <data name="Avatar.By" xml:space="preserve"><value>автор: {0}</value></data>
+  <data name="Avatar.Things" xml:space="preserve"><value>Ваши страницы</value></data>
+  <data name="Avatar.WearShape" xml:space="preserve"><value>Фигура</value></data>
+  <data name="Avatar.WearSkin" xml:space="preserve"><value>Кожа</value></data>
+  <data name="Avatar.WearHair" xml:space="preserve"><value>Волосы</value></data>
+  <data name="Avatar.WearEyes" xml:space="preserve"><value>Глаза</value></data>
+  <data name="Avatar.WearShirt" xml:space="preserve"><value>Рубашка</value></data>
+  <data name="Avatar.WearPants" xml:space="preserve"><value>Брюки</value></data>
+  <data name="Avatar.WearShoes" xml:space="preserve"><value>Обувь</value></data>
+  <data name="Avatar.WearSocks" xml:space="preserve"><value>Носки</value></data>
+  <data name="Avatar.WearJacket" xml:space="preserve"><value>Куртка</value></data>
+  <data name="Avatar.WearGloves" xml:space="preserve"><value>Перчатки</value></data>
+  <data name="Avatar.WearUndershirt" xml:space="preserve"><value>Майка</value></data>
+  <data name="Avatar.WearUnderpants" xml:space="preserve"><value>Трусы</value></data>
+  <data name="Avatar.WearSkirt" xml:space="preserve"><value>Юбка</value></data>
+  <data name="Avatar.WearAlpha" xml:space="preserve"><value>Альфа</value></data>
+  <data name="Avatar.WearTattoo" xml:space="preserve"><value>Тату</value></data>
+  <data name="Avatar.WearPhysics" xml:space="preserve"><value>Физика</value></data>
+  <data name="Avatar.WearUniversal" xml:space="preserve"><value>Универсальный</value></data>
 </root>
