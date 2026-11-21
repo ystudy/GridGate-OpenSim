@@ -88,6 +88,27 @@ public sealed class AccountPagesLookTests
     }
 
     [Fact]
+    public async Task Sign_up_has_headline_left_and_wide_form_right()
+    {
+        await using var rig = SignUpsTests.Factory();
+        var page = await PageAsync(Client(rig.F), "/signup");
+
+        AssertSplit(page, "Create an account", line: true);
+        Assert.NotNull(page.QuerySelector(".account-split.account-split-wide"));
+        Assert.NotNull(page.QuerySelector(".account-card form#sign-up"));
+    }
+
+    [Fact]
+    public async Task Sign_up_closed_shows_headline_alone()
+    {
+        await using var rig = SignUpsTests.Factory(open: false);
+        var page = await PageAsync(Client(rig.F), "/signup");
+
+        AssertSplit(page, "Create an account", line: false);
+        Assert.Contains("This grid isn't open for sign-ups yet.", page.QuerySelector(".account-card")!.TextContent);
+    }
+
+    [Fact]
     public async Task Staff_login_keeps_the_staff_card()
     {
         await using var f = Factory();
