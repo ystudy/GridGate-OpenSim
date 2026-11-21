@@ -3,25 +3,29 @@
 @{
     ViewData["Title"] = T["Legal.Terms"].Value;
 }
-<h1>@Model.GridName</h1>
-<h2>@T["Legal.Terms"]</h2>
-<p class="text-body-secondary">@T["Terms.Version", Model.Version]</p>
+@* The page head, the text in one reading card, then the accept card (spec 2026-11-21-last-pages-restyle-design). *@
+<section class="featured-head">
+    <h1>@T["Legal.Terms"]</h1>
+    <p class="featured-intro">@Model.GridName · @T["Terms.Version", Model.Version]</p>
+</section>
 @if (Model.Error is not null)
 {
-    <div class="alert alert-warning" role="alert">@Model.Error</div>
+    <div class="alert alert-warning page-text-note" role="alert">@Model.Error</div>
 }
-<article>@Html.Raw(Model.Html)</article>
+<article class="card page-text">@Html.Raw(Model.Html)</article>
 
+<div id="terms-accept" class="card page-text page-text-action">
 @if (Model.Accepted)
 {
-    <p>@T["Terms.Accepted"]</p>
-    <p><a href="@Model.Next">@T["Common.Continue"]</a></p>
+    <p class="mb-3">@T["Terms.Accepted"]</p>
+    <p class="mb-0"><a class="btn btn-primary page-text-button" href="@Model.Next">@T["Common.Continue"]</a></p>
 }
 else
 {
     <form method="post" action="/guest/terms" asp-antiforgery="true">
         <input type="hidden" name="Version" value="@Model.Version">
         <input type="hidden" name="ReturnUrl" value="@Model.ReturnUrl">
-        <button type="submit" class="btn btn-primary">@T["Terms.Accept"]</button>
+        <button type="submit" class="btn btn-primary btn-lg page-text-button">@T["Terms.Accept"]</button>
     </form>
 }
+</div>

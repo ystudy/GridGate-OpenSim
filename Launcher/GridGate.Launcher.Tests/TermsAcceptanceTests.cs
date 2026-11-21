@@ -111,6 +111,10 @@ public sealed class TermsAcceptanceTests
         Assert.Contains("Version 1", main);
         Assert.Equal("I accept these terms", page.QuerySelector("form[action='/guest/terms'] button")!.TextContent.Trim());
         Assert.Equal("Terms - Avalon", page.Title);
+        // The page head, the text in a reading card, the accept button in its own card (spec 2026-11-21-last-pages-restyle-design).
+        Assert.Equal("Avalon · Version 1", page.QuerySelector("main .featured-head > h1 + p")!.TextContent.Trim());
+        Assert.NotNull(page.QuerySelector("main article.card.page-text"));
+        Assert.NotNull(page.QuerySelector("#terms-accept.card form button.btn-primary"));
     }
 
     [Fact]

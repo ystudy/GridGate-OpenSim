@@ -37,6 +37,19 @@ public sealed class ConnectPageTests
     }
 
     [Fact]
+    public async Task Page_is_the_head_then_cards_with_a_yellow_download()
+    {
+        await using var f = Factory();
+        var page = await PageAsync(f);
+
+        Assert.Equal("How to connect to Avalon", page.QuerySelector("main .featured-head > h1")!.TextContent.Trim());
+        foreach (var id in new[] { "viewer-firestorm", "viewer-others", "grid-settings-panel", "steps", "help" })
+            Assert.NotNull(page.QuerySelector($"section#{id}.card"));
+        Assert.NotNull(page.QuerySelector("#viewer-firestorm a.btn.btn-primary"));
+        Assert.Null(page.QuerySelector("main .panel"));
+    }
+
+    [Fact]
     public async Task Settings_match_what_robust_is_told()
     {
         await using var f = Factory(settings: s => s with { Hostname = "grid.example.org" });

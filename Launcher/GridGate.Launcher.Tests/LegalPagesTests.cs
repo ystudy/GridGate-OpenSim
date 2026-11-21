@@ -127,6 +127,8 @@ public sealed class LegalPagesTests
         Assert.Equal("Terms", page.QuerySelector("main h1")!.TextContent);
         Assert.Equal("Version 4, 30 October 2026", page.QuerySelector("main h1 + p")!.TextContent.Trim());
         Assert.Equal("Test heading", page.QuerySelector("main article h2")!.TextContent);
+        Assert.NotNull(page.QuerySelector("main .featured-head > h1 + p.featured-intro"));
+        Assert.NotNull(page.QuerySelector("main article.card.page-text"));
         Assert.Equal("one", page.QuerySelector("main article strong")!.TextContent);
         Assert.Null(page.QuerySelector("main article a")!.GetAttribute("href"));
         Assert.Empty(page.QuerySelectorAll("main article script"));

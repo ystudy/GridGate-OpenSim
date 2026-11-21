@@ -108,6 +108,19 @@ public sealed class AccountPagesLookTests
         Assert.Contains("This grid isn't open for sign-ups yet.", page.QuerySelector(".account-card")!.TextContent);
     }
 
+    /// <summary>The message pages of sign-up, email change and help (spec 2026-11-21-last-pages-restyle-design) use the split too.</summary>
+    [Theory]
+    [InlineData("/guest/confirm", "Confirm your email", false)]
+    [InlineData("/guest/confirm-email", "Confirm your new email", false)]
+    [InlineData("/support/confirm", "Send your ticket", false)]
+    [InlineData("/support/lost-link", "Lost your ticket link?", true)]
+    [InlineData("/support/ticket?id=00000000-0000-0000-0000-000000000001", "This link has run out", false)]
+    public async Task Message_pages_have_headline_left_and_card_right(string path, string headline, bool line)
+    {
+        await using var f = Factory();
+        AssertSplit(await PageAsync(Client(f), path), headline, line);
+    }
+
     [Fact]
     public async Task Staff_login_keeps_the_staff_card()
     {
