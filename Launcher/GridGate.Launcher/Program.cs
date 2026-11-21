@@ -410,6 +410,10 @@ builder.Services.AddSingleton<GridGate.Launcher.World.WorldMapSnapshot>();
 builder.Services.AddSingleton<IListedParcels>(sp => new ListedParcels(sp.GetRequiredService<Func<LauncherSettings>>(),
     sp.GetRequiredService<ILogger<ListedParcels>>()));
 builder.Services.AddSingleton<GridGate.Launcher.Featured.FeaturedDirectory>();
+// Parcel snapshots for the Featured cards: Robust's asset service and its GridGate converter, on the private port.
+builder.Services.AddHttpClient(GridGate.Launcher.Featured.ParcelPictures.ClientName, c => c.Timeout = TimeSpan.FromSeconds(15));
+builder.Services.AddSingleton(sp => new GridGate.Launcher.Featured.ParcelPictures(sp.GetRequiredService<IHttpClientFactory>(),
+    sp.GetRequiredService<Func<LauncherSettings>>(), sp.GetRequiredService<TimeProvider>()));
 builder.Services.AddSingleton<GridGate.Launcher.Front.FrontMapTiles>();
 builder.Services.AddSingleton<GridGate.Launcher.Front.FrontPageView>();
 // The Home dashboard's counts (design 2026-11-05-dashboard), cached a minute.

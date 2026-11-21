@@ -304,9 +304,9 @@ public sealed class AccessTests
             // signed in (WorldMapAccess), 404 where there is no guest side.
             "route /world/regions",
             "route /world/tile/{z:int}/{x:int}/{y:int}",
-            // The Featured page's map pictures (spec 2026-11-21-featured-places-design): only a region with a place the asker
-            // may see on the page answers, 404 where there is no guest side.
-            "route /featured/map/{id:guid}.jpg",
+            // The Featured page's pictures (spec 2026-11-21-featured-places-design): only a place the asker may see on the page
+            // answers (its snapshot, else its region's map tile), 404 where there is no guest side.
+            "route /featured/picture/{id:guid}.jpg",
             // The public front page: SetupGate shows it at "/" to anyone not signed in as staff, where there is a guest side.
             // How coins work here, where those windows send residents (money plan 2).
             "page coins",

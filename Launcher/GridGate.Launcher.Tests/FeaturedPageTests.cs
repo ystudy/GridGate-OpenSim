@@ -2,7 +2,10 @@ using System.Net;
 using AngleSharp.Html.Dom;
 using AngleSharp.Html.Parser;
 using GridGate.Launcher.Core.Grid;
+using GridGate.Launcher.Core.Settings;
 using GridGate.Launcher.Endpoints;
+using GridGate.Launcher.Featured;
+using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
 namespace GridGate.Launcher.Tests;
@@ -56,7 +59,7 @@ public sealed class FeaturedPageTests
         Assert.Contains("Shopping", card.QuerySelector(".featured-where")!.TextContent);
         Assert.Equal("213 recent visits", card.QuerySelector(".featured-visits")!.TextContent.Trim());
         Assert.Equal(start + "Sunny%20Bay/128/64/25", card.QuerySelector("a.featured-teleport")!.GetAttribute("href"));
-        Assert.Equal("/featured/map/" + Bay.Id + ".jpg", card.QuerySelector("img.front-card-picture")!.GetAttribute("src"));
+        Assert.Equal("/featured/picture/" + FeaturedQueryTests.Parcel(1, Bay, "").Id + ".jpg", card.QuerySelector("img.front-card-picture")!.GetAttribute("src"));
         var second = page.QuerySelectorAll("#featured-places .front-card")[1];
         Assert.Equal(start + "Sunny%20Bay", second.QuerySelector("a.featured-teleport")!.GetAttribute("href"));
         Assert.Equal("1 recent visit", second.QuerySelector(".featured-visits")!.TextContent.Trim());
@@ -95,19 +98,67 @@ public sealed class FeaturedPageTests
     }
 
     [Fact]
-    public async Task Map_picture_only_for_shown_regions()
+    public async Task Picture_only_for_shown_places()
     {
         await using var f = Factory();
-        List(f, FeaturedQueryTests.Parcel(2, Club, "Red room", category: 2, rating: 2));
+        var adult = FeaturedQueryTests.Parcel(2, Club, "Red room", category: 2, rating: 2);
+        List(f, adult);
         var visitor = WorldMapApiTests.Client(f);
 
-        using var adultOnly = await visitor.GetAsync($"/featured/map/{Club.Id}.jpg", Ct);
-        using var notListed = await visitor.GetAsync($"/featured/map/{Bay.Id}.jpg", Ct);
-        using var unknown = await visitor.GetAsync($"/featured/map/{Guid.NewGuid()}.jpg", Ct);
+        using var adultOnly = await visitor.GetAsync($"/featured/picture/{adult.Id}.jpg", Ct);
+        using var unknown = await visitor.GetAsync($"/featured/picture/{Guid.NewGuid()}.jpg", Ct);
+        using var oldRoute = await visitor.GetAsync($"/featured/map/{Club.Id}.jpg", Ct);
 
         Assert.Equal(HttpStatusCode.NotFound, adultOnly.StatusCode);
-        Assert.Equal(HttpStatusCode.NotFound, notListed.StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, unknown.StatusCode);
+        Assert.NotEqual(HttpStatusCode.OK, oldRoute.StatusCode); // the old map route is gone (an unknown address goes to sign-in)
+    }
+
+    /// <summary>Robust's asset service and converter, answering one snapshot.</summary>
+    private sealed class SnapshotRobust(Guid snapshot) : HttpMessageHandler
+    {
+        public static readonly byte[] Jpeg = [0xFF, 0xD8, 0xFF, 0xE0, 7, 7];
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            var path = request.RequestUri!.AbsolutePath;
+            if (request.Method == HttpMethod.Get && path == $"/assets/{snapshot}/data")
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent([0xFF, 0x4F, 0xFF, 0x51]) });
+            if (request.Method == HttpMethod.Post && path == "/gridgate/j2k")
+            {
+                var answer = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(Jpeg) };
+                answer.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("image/jpeg");
+                return Task.FromResult(answer);
+            }
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
+        }
+    }
+
+    [Fact]
+    public async Task Picture_is_the_parcels_own_snapshot()
+    {
+        var snapshot = Guid.Parse("0d000000-0000-0000-0000-0000000000b2");
+        await using var f = new LauncherFactory(s => s with
+        {
+            GridName = "Avalon",
+            SetupToken = null,
+            Setup = s.Setup with { OwnerCreated = true, Finished = true, Owner = new OwnerInfo("Test", "Owner", TestAuth.OwnerId) },
+        })
+        {
+            Before = TestAuth.Apply,
+            ExtraServices = services => services.AddHttpClient(ParcelPictures.ClientName)
+                .ConfigurePrimaryHttpMessageHandler(() => new SnapshotRobust(snapshot)),
+        };
+        f.Regions.Result = new GridRegionList([Bay], true);
+        var shop = FeaturedQueryTests.Parcel(1, Bay, "Beach shop") with { SnapshotId = snapshot };
+        List(f, shop);
+
+        using var r = await WorldMapApiTests.Client(f).GetAsync($"/featured/picture/{shop.Id}.jpg", Ct);
+
+        Assert.Equal(HttpStatusCode.OK, r.StatusCode);
+        Assert.Equal("image/jpeg", r.Content.Headers.ContentType?.MediaType);
+        Assert.Equal(SnapshotRobust.Jpeg, await r.Content.ReadAsByteArrayAsync(Ct));
+        Assert.Equal("public, max-age=300", r.Headers.CacheControl?.ToString());
     }
 
     [Fact]

@@ -65,8 +65,11 @@ public sealed class FeaturedModel(Func<LauncherSettings> settings, FeaturedDirec
             : link;
     }
 
-    /// <summary>Whether the grid answered recently that it has no map tile for the region: the card is drawn blank.</summary>
-    public bool NoPicture(FeaturedPlace p) => tiles.KnownMissing(p.Region.Id);
+    /// <summary>
+    /// Whether the card is drawn blank: no snapshot of its own, and the grid answered recently that it has no map tile for
+    /// the region.
+    /// </summary>
+    public bool NoPicture(FeaturedPlace p) => p.Parcel.SnapshotId == Guid.Empty && tiles.KnownMissing(p.Region.Id);
 
     /// <summary>This page's address with the current choices and <paramref name="page"/>, for Previous and Next.</summary>
     public string PageLink(int page)

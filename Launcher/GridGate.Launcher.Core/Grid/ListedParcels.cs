@@ -10,8 +10,9 @@ namespace GridGate.Launcher.Core.Grid;
 /// <param name="Rating">0 General, 1 Moderate, 2 Adult (<see cref="ListedParcels.RatingOf"/>).</param>
 /// <param name="Visits">The parcel's traffic: recent visits, as GridGate's region module keeps it in <c>land.Dwell</c>.</param>
 /// <param name="HasLandingPoint">The parcel sends arrivals to a set landing point (<see cref="X"/>, <see cref="Y"/>, <see cref="Z"/>).</param>
+/// <param name="SnapshotId">The snapshot texture its owner set in About Land; empty when none.</param>
 public sealed record ListedParcel(Guid Id, Guid RegionId, string Name, string Description, int Category, int Rating, int Visits,
-    bool HasLandingPoint, float X, float Y, float Z);
+    bool HasLandingPoint, float X, float Y, float Z, Guid SnapshotId = default);
 
 /// <param name="Available">False when the database could not be asked; <see cref="Parcels"/> is then empty.</param>
 public sealed record ListedParcelList(IReadOnlyList<ListedParcel> Parcels, bool Available)
@@ -51,7 +52,7 @@ public sealed class ListedParcels(Func<LauncherSettings> settings, ILogger<Liste
 
     private const string Query =
         "SELECT l.UUID, l.RegionUUID, l.Name, l.Description, l.Category, l.LandFlags, l.Dwell, l.LandingType, " +
-        "l.UserLocationX, l.UserLocationY, l.UserLocationZ, rs.maturity " +
+        "l.UserLocationX, l.UserLocationY, l.UserLocationZ, rs.maturity, l.SnapshotUUID " +
         "FROM land l LEFT JOIN regionsettings rs ON rs.regionUUID = l.RegionUUID WHERE (l.LandFlags & 4096) <> 0";
 
     private int _warned;
@@ -89,7 +90,7 @@ public sealed class ListedParcels(Func<LauncherSettings> settings, ILogger<Liste
                     RatingOf(r.IsDBNull(11) ? null : Convert.ToInt32(r.GetValue(11)), category, flags),
                     r.IsDBNull(6) ? 0 : Math.Max(0, Convert.ToInt32(r.GetValue(6))),
                     !r.IsDBNull(7) && Convert.ToInt32(r.GetValue(7)) == LandingPoint && (x != 0 || y != 0 || z != 0),
-                    x, y, z));
+                    x, y, z, Snapshot(r, 12)));
             }
             return new ListedParcelList(list, true);
         }
@@ -108,6 +109,10 @@ public sealed class ListedParcels(Func<LauncherSettings> settings, ILogger<Liste
             return ListedParcelList.Unavailable;
         }
     }
+
+    /// <summary>A snapshot id, or empty when the column is NULL, blank or not an id.</summary>
+    private static Guid Snapshot(MySqlDataReader r, int i) =>
+        !r.IsDBNull(i) && Guid.TryParse(r.GetValue(i).ToString(), out var id) ? id : Guid.Empty;
 
     private static string Text(MySqlDataReader r, int i) => r.IsDBNull(i) ? "" : r.GetString(i).Trim();
 
