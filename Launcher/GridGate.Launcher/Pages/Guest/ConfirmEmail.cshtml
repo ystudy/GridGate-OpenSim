@@ -4,8 +4,12 @@
 @{
     ViewData["Title"] = T["ConfirmEmail.Title"].Value;
 }
-<div class="card card-body shadow-sm mx-auto sign-in-card">
-<h1>@T["ConfirmEmail.Title"]</h1>
+@* The account split (spec 2026-11-21-last-pages-restyle-design): the headline left, the card right. *@
+<div class="account-split">
+<div class="account-lead">
+    <h1>@T["ConfirmEmail.Title"]</h1>
+</div>
+<div class="card card-body shadow-sm account-card">
 @switch (Model.Result)
 {
     case EmailLinkResult.Done:
@@ -22,4 +26,5 @@
         break;
 }
 <p class="mb-0"><a href="/guest/account">@T["ConfirmEmail.ToAccount"]</a></p>
+</div>
 </div>

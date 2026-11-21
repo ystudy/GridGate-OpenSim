@@ -185,8 +185,13 @@ public sealed partial class SupportPagesTests
         var t = Assert.Single(r.Store.All());
         Assert.Equal(TicketState.Open, t.State);
         Assert.Equal(TestAuth.GuestAccount.PrincipalId, t.Sender.Account);
-        Assert.NotNull((await PageAsync(guest, "/support")).QuerySelector($"#my-tickets a[href='/support/ticket?id={t.Id}']"));
-        Assert.Equal("Region won't start", (await PageAsync(guest, "/support/ticket?id=" + t.Id)).QuerySelector("h1")!.TextContent);
+        var help = await PageAsync(guest, "/support");
+        Assert.NotNull(help.QuerySelector($".account-lead #my-tickets a[href='/support/ticket?id={t.Id}']"));
+        Assert.NotNull(help.QuerySelector(".account-split > .account-card #support-form"));
+        var ticket = await PageAsync(guest, "/support/ticket?id=" + t.Id);
+        Assert.Equal("Region won't start", ticket.QuerySelector("h1")!.TextContent);
+        Assert.NotEmpty(ticket.QuerySelectorAll("#messages > li.card.ticket-message"));
+        Assert.NotNull(ticket.QuerySelector("form#reply.card"));
     }
 
     [Fact]

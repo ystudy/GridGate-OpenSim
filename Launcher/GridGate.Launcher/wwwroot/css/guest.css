@@ -302,3 +302,59 @@
 .guest-site .avatar-box h2 { font-size: 1.25rem; }
 .guest-site .avatar-box code { overflow-wrap: anywhere; }
 .guest-site .avatar-links { list-style: none; padding: 0; display: grid; gap: .4rem; }
+
+/* The last pages in the new look (spec 2026-11-21-last-pages-restyle-design). A long text (legal pages, accepting the terms)
+   sits in one card at a reading width; headings inside it keep their normal case so long legal headings stay readable. */
+.guest-site .page-text { max-width: 48rem; margin-top: 1.5rem; padding: 1.5rem 1.75rem; font-size: 1.05rem; line-height: 1.65; overflow-wrap: anywhere; }
+.guest-site .page-text h1, .guest-site .page-text h2, .guest-site .page-text h3, .guest-site .page-text h4 { text-transform: none; letter-spacing: 0; font-weight: 700; margin-top: 1.25rem; }
+.guest-site .page-text h1 { font-size: 1.6rem; }
+.guest-site .page-text h2 { font-size: 1.35rem; }
+.guest-site .page-text h3 { font-size: 1.15rem; }
+.guest-site .page-text > :first-child { margin-top: 0; }
+.guest-site .page-text > :last-child { margin-bottom: 0; }
+.guest-site .page-text-note { max-width: 48rem; margin: 1.25rem 0 0; }
+.guest-site .page-text-action { text-align: center; }
+.guest-site .page-text-button { text-transform: uppercase; letter-spacing: .03em; }
+@media (max-width: 575.98px) { .guest-site .page-text { padding: 1.1rem 1.15rem; } }
+
+/* Help: the resident's tickets under the headline, then a ticket's messages as cards, staff ones with a blue edge. */
+.guest-site .support-tickets { margin-top: 1.75rem; }
+.guest-site .support-tickets h2 { font-size: 1.1rem; margin-bottom: .6rem; }
+.guest-site .support-tickets ul { list-style: none; margin: 0; padding: 0; display: grid; gap: .5rem; }
+.guest-site .support-tickets li { display: flex; flex-wrap: wrap; align-items: baseline; gap: .25rem .75rem; padding: .65rem .85rem; background: var(--gg-surface); border: 1px solid var(--gg-border); border-radius: .75rem; }
+.guest-site .support-tickets a { flex: 1 1 12rem; min-width: 0; color: #fff; font-weight: 600; text-decoration: none; overflow-wrap: anywhere; }
+.guest-site .support-tickets a:hover .support-ticket-subject { text-decoration: underline; }
+.guest-site .support-ticket-number { color: var(--gg-yellow); font-weight: 800; }
+.guest-site .support-ticket-state { color: var(--gg-muted); font-size: .9rem; font-weight: 600; }
+.guest-site .support-lost { margin-top: 1.25rem; }
+.guest-site .ticket-head { margin-top: .5rem; }
+.guest-site .ticket-head h1 { overflow-wrap: anywhere; }
+.guest-site .ticket-messages { display: grid; gap: .75rem; max-width: 52rem; margin: 1.5rem 0; padding: 0; }
+.guest-site .ticket-message { padding: 1rem 1.15rem; box-shadow: none; }
+.guest-site .ticket-message-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: .25rem 1rem; margin-bottom: .5rem; }
+.guest-site .ticket-message-head span { color: var(--gg-muted); font-size: .9rem; }
+.guest-site .ticket-staff { border-left: 4px solid var(--gg-blue); box-shadow: var(--gg-glow); }
+.guest-site .ticket-reply { max-width: 52rem; }
+.guest-site .ticket-reply .btn { text-transform: uppercase; letter-spacing: .03em; }
+.guest-site .ticket-closed { max-width: 52rem; font-weight: 600; }
+
+/* How to connect: the viewer choices, the settings, the steps and help as glowing cards; Firestorm's Download in yellow. */
+.guest-site .connect-approved { margin-top: 1.25rem; }
+.guest-site .connect-grid { display: grid; gap: 1rem; margin-top: 1.5rem; }
+@media (min-width: 768px) { .guest-site .connect-grid { grid-template-columns: 1fr 1fr; } }
+.guest-site .connect-card { padding: 1.15rem 1.25rem; }
+.guest-site .connect-wide { margin-top: 1rem; }
+.guest-site .connect-card-main { border-color: var(--gg-yellow); }
+.guest-site .connect-card-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .5rem; margin-bottom: .75rem; }
+.guest-site .connect-card-head h2 { margin: 0; font-size: 1.25rem; }
+.guest-site .connect-card-note { color: var(--gg-muted); font-size: .9rem; }
+.guest-site .connect-badge { padding: .15rem .55rem; border-radius: .4rem; font-size: .8rem; font-weight: 700; color: var(--gg-yellow-text); background: var(--gg-yellow); }
+.guest-site .connect-systems { margin-bottom: .75rem; font-weight: 600; }
+.guest-site .connect-download { align-self: flex-start; margin-bottom: .75rem; text-transform: uppercase; letter-spacing: .03em; }
+.guest-site .connect-list { list-style: none; margin: 0 0 .75rem; padding: 0; display: grid; gap: .45rem; }
+.guest-site .connect-list li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: .25rem 1rem; }
+.guest-site .connect-list a { font-weight: 600; }
+.guest-site .connect-pre { margin: 0 0 .75rem; padding: .85rem 1rem; white-space: pre-wrap; word-break: break-all; color: #fff; background: var(--gg-bg); border: 1px solid var(--gg-border); border-radius: .6rem; }
+.guest-site .connect-steps { margin: 0; padding-inline-start: 1.25rem; display: grid; gap: .6rem; }
+.guest-site .connect-uri { display: block; margin-top: .35rem; padding: .45rem .65rem; font-size: 1.1rem; font-weight: 700; color: #fff; background: var(--gg-bg); border: 1px solid var(--gg-yellow); border-radius: .5rem; user-select: all; overflow-wrap: anywhere; }
+.guest-site .connect-no-support { margin-top: 1.5rem; color: var(--gg-muted); text-align: center; font-size: .9rem; }

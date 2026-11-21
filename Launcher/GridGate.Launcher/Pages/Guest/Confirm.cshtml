@@ -3,8 +3,12 @@
 @{
     ViewData["Title"] = T["Confirm.Title"].Value;
 }
-<div class="card card-body shadow-sm mx-auto sign-in-card">
-<h1>@T["Confirm.Title"]</h1>
+@* The account split (spec 2026-11-21-last-pages-restyle-design): the headline left, the card right. *@
+<div class="account-split">
+<div class="account-lead">
+    <h1>@T["Confirm.Title"]</h1>
+</div>
+<div class="card card-body shadow-sm account-card">
 @if (Model.Busy)
 {
     <p role="alert">@T["Common.SignUpBusy"]</p>
@@ -18,4 +22,5 @@ else
     <p role="alert">@T["Confirm.Expired"]</p>
     <p class="mb-0"><a href="/signup">@T["Confirm.SignUpAgain"]</a> · <a href="/guest/sign-in">@T["Confirm.SignInForNewLink"]</a></p>
 }
+</div>
 </div>

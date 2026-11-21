@@ -4,10 +4,13 @@
     Layout = "_GuestLayout";
     ViewData["Title"] = Model.PageTitle;
 }
-<h1>@Model.PageTitle</h1>
+@* The page head and one reading card (spec 2026-11-21-last-pages-restyle-design). *@
+<section class="featured-head">
+    <h1>@Model.PageTitle</h1>
+    <p class="featured-intro">@T["Legal.VersionSaved", Model.Version, Model.Saved]</p>
+</section>
 @if (Model.ShownIn is not null)
 {
-    <div class="alert alert-info" role="note">@Model.ShownIn</div>
+    <div class="alert alert-info page-text-note" role="note">@Model.ShownIn</div>
 }
-<p class="text-body-secondary">@T["Legal.VersionSaved", Model.Version, Model.Saved]</p>
-<article>@Html.Raw(Model.Html)</article>
+<article class="card page-text">@Html.Raw(Model.Html)</article>

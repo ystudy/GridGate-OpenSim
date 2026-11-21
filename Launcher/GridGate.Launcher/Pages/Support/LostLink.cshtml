@@ -3,8 +3,16 @@
 @{
     ViewData["Title"] = T["Support.LostTitle"].Value;
 }
-<div class="card card-body shadow-sm mx-auto sign-in-card">
-<h1>@T["Support.LostHeading"]</h1>
+@* The account split (spec 2026-11-21-last-pages-restyle-design): the headline left, the card right. *@
+<div class="account-split">
+<div class="account-lead">
+    <h1>@T["Support.LostHeading"]</h1>
+    @if (!Model.Sent)
+    {
+        <p class="account-line">@T["Support.LostIntro"]</p>
+    }
+</div>
+<div class="card card-body shadow-sm account-card">
 @if (Model.Sent)
 {
     <p id="lost-link-reply" role="status">@T["Support.LostSent"]</p>
@@ -12,7 +20,6 @@
 }
 else
 {
-    <p>@T["Support.LostIntro"]</p>
     <error-box text="@Model.Error" />
     <form id="lost-link" method="post">
         <label class="form-label" asp-for="Email">@T["Common.Email"]</label>
@@ -21,4 +28,5 @@ else
         <button type="submit" class="btn btn-primary w-100 mt-3">@T["Support.SendNewLink"]</button>
     </form>
 }
+</div>
 </div>

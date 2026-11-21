@@ -6,35 +6,48 @@
 @{
     ViewData["Title"] = T["Support.Title"].Value;
 }
-<h1 class="tone-text">@T["Support.Title"]</h1>
+@* Help in the account pages' wide split (spec 2026-11-21-last-pages-restyle-design): the headline, the line, the resident's
+   tickets and the lost-link link on the left, the form's card on the right. *@
+<div class="account-split account-split-wide">
+<div class="account-lead">
+    <h1>@T["Support.Title"]</h1>
+    @if (!Model.CheckEmail)
+    {
+        <p class="tone-text account-line">@T["Support.Intro"]</p>
+        @if (Model.Mine.Count > 0)
+        {
+            <section id="my-tickets" class="support-tickets">
+                <h2>@T["Support.YourTickets"]</h2>
+                <ul>
+                    @foreach (var t in Model.Mine)
+                    {
+                        <li><a href="/support/ticket?id=@t.Id"><span class="support-ticket-number">@t.Number</span> <span class="support-ticket-subject">@t.Subject</span></a><span class="support-ticket-state">@TicketView.StateText(t.State, T)</span></li>
+                    }
+                </ul>
+            </section>
+        }
+        @if (Model.Account is null && Model.AnonymousOpen)
+        {
+            <p class="support-lost"><a href="/support/lost-link">@T["Support.LostLink"]</a></p>
+        }
+    }
+</div>
+<div class="card card-body shadow-sm account-card">
 @if (Model.CheckEmail)
 {
-    <div id="support-reply" class="alert alert-success" role="status">@T["Support.CheckEmail"]</div>
-    <p><a href="/support">@T["Support.StartAnother"]</a></p>
+    <p id="support-reply" class="mb-3" role="status">@T["Support.CheckEmail"]</p>
+    <p class="mb-0"><a href="/support">@T["Support.StartAnother"]</a></p>
 }
 else
 {
-    <p class="tone-text">@T["Support.Intro"]</p>
-    @if (Model.Mine.Count > 0)
-    {
-        <section id="my-tickets" class="panel mb-3">
-            <div class="panel-head"><h2>@T["Support.YourTickets"]</h2></div>
-            <ul class="panel-rows">
-                @foreach (var t in Model.Mine)
-                {
-                    <li><a class="component-label" href="/support/ticket?id=@t.Id">@t.Number</a> <span>@t.Subject</span><span class="ms-auto row-sub">@TicketView.StateText(t.State, T)</span></li>
-                }
-            </ul>
-        </section>
-    }
     <error-box text="@Model.Error" />
     @if (Model.Account is null && !Model.AnonymousOpen)
     {
-        <div id="support-sign-in" class="alert alert-warning" role="status">@T["Support.EmailOff"] <a href="/guest/sign-in">@T["Common.SignIn"]</a></div>
+        <p id="support-sign-in" class="mb-0" role="status">@T["Support.EmailOff"] <a href="/guest/sign-in">@T["Common.SignIn"]</a></p>
     }
     else
     {
-        <form id="support-form" method="post" class="panel">
+        <form id="support-form" method="post">
             @if (Model.Account is { } a)
             {
                 <p class="mb-0">@T.With("Support.From", ResidentHtml.Strong(a.FirstName + " " + a.LastName))</p>
@@ -74,12 +87,10 @@ else
             {
                 <partial name="_BotFields" />
             }
-            <button type="submit" class="btn btn-primary mt-3">@T["Support.Send"]</button>
+            <button type="submit" class="btn btn-primary w-100 mt-3">@T["Support.Send"]</button>
             <p class="form-text mt-2 mb-0">@T["Support.NoPasswords"]</p>
         </form>
-        @if (Model.Account is null)
-        {
-            <p class="mt-3"><a href="/support/lost-link">@T["Support.LostLink"]</a></p>
-        }
     }
 }
+</div>
+</div>
