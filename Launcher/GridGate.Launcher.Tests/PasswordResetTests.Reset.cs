@@ -78,6 +78,41 @@ public sealed partial class PasswordResetTests
     private static RecoverySettings CodeForAll => new(RecoveryRule.EmailLinkAndCode, RecoveryRule.EmailLinkAndCode, RecoveryRule.EmailLinkAndCode);
 
     [Fact]
+    public async Task Forgot_password_has_headline_left_and_form_right()
+    {
+        await using var rig = Factory();
+        var page = await PageAsync(Client(rig), "/guest/forgot-password");
+
+        AccountPagesLookTests.AssertSplit(page, "Forgot password", line: true);
+        Assert.NotNull(page.QuerySelector(".account-card form#forgot"));
+        Assert.Equal("Back to sign in", page.QuerySelector(".account-card a[href='/guest/sign-in']")?.TextContent.Trim());
+    }
+
+    [Fact]
+    public async Task Reset_form_has_headline_left_and_back_link()
+    {
+        await using var rig = Factory();
+        var token = await LinkTokenAsync(rig, "Ann Smith", "ann@example.com");
+
+        var page = await PageAsync(Client(rig), "/guest/reset-password?token=" + token);
+
+        AccountPagesLookTests.AssertSplit(page, "Choose a new password", line: true);
+        Assert.NotNull(page.QuerySelector(".account-card form#reset"));
+        Assert.Equal("Back to sign in", page.QuerySelector(".account-card a[href='/guest/sign-in']")?.TextContent.Trim());
+    }
+
+    [Fact]
+    public async Task Expired_link_shows_headline_alone()
+    {
+        await using var rig = Factory();
+
+        var page = await PageAsync(Client(rig), "/guest/reset-password?token=" + new string('A', 43));
+
+        AccountPagesLookTests.AssertSplit(page, "Choose a new password", line: false);
+        Assert.NotNull(page.QuerySelector(".account-card #reset-expired"));
+    }
+
+    [Fact]
     public async Task Full_reset_then_sign_in_with_new_password()
     {
         await using var rig = Factory();
