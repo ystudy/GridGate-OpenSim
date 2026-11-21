@@ -106,7 +106,8 @@ public sealed class GuestSignInTests
         using var home = await client.GetAsync("/guest", Ct);
         Assert.Equal(HttpStatusCode.OK, home.StatusCode);
         // Resource text is HTML-encoded (the apostrophe is &#x27;), so the words are read from the parsed page.
-        Assert.Contains("You're signed in as Test Guest.", new HtmlParser().ParseDocument(await home.Content.ReadAsStringAsync(Ct)).Body!.TextContent);
+        // The Avatar tab: their avatar's name is the title.
+        Assert.Equal("Test Guest", new HtmlParser().ParseDocument(await home.Content.ReadAsStringAsync(Ct)).QuerySelector("main h1")!.TextContent.Trim());
     }
 
     [Fact]
