@@ -18,6 +18,9 @@ public sealed class GridConfigWriter(LauncherPaths paths, Func<MoneySettings, Mo
     /// <summary>The region module's name, as OpenSim's <c>[Economy] EconomyModule</c> chooses it.</summary>
     public const string MoneyModuleName = "GridGateMoneyModule";
 
+    /// <summary>GridGate's parcel traffic counter (addon-modules/GridGateTraffic), OpenSim's dwell module in every region.</summary>
+    public const string TrafficModuleName = "GridGateTraffic";
+
     private static readonly string[] ThirdParties = ["outworldz.com", "hyperica.com", "gloebit.com"];
 
     // What a preset grid's own OpenSim.ini decides for the regions: these whole sections, and these single keys.
@@ -315,6 +318,8 @@ public sealed class GridConfigWriter(LauncherPaths paths, Func<MoneySettings, Mo
         }
         os.Set("RegionReady", "enabled", "true");
         os.Set("RegionReady", "alert_uri", $"http://127.0.0.1:{s.WebPort}/gridgate/regionready");
+        // Each parcel's recent visits (spec 2026-11-21-featured-places-design): About Land's Traffic and the Featured page.
+        os.Set("Dwell", "DwellModule", TrafficModuleName);
         SetSmartStart(os, s);
         os.Set("YEngine", "ScriptEnginesPath", Fwd(paths.ScriptEngines));
         var moneySection = MoneySection(s, instance, money);
