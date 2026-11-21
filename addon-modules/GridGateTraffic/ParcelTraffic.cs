@@ -54,6 +54,9 @@ namespace GridGate.Region.Traffic
             return value;
         }
 
+        /// <summary>Takes <paramref name="value"/> as the parcel's number from <paramref name="now"/> (OpenSim changed it).</summary>
+        public void Reseed(Guid parcel, double value, DateTimeOffset now) => _parcels[parcel] = (value, now);
+
         private (double Value, DateTimeOffset Since) Get(Guid parcel, DateTimeOffset now, double seed) =>
             _parcels.TryGetValue(parcel, out var kept) ? kept : (seed, now);
     }

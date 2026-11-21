@@ -14,8 +14,9 @@ making an account, and a resident can find somewhere to go and teleport straight
 - **A directory of the parcels residents put in search** (not a bigger copy of the front page's list).
 - **Everyone can see it**, signed in or not. Unlike the world map, only listed parcels show, never the whole grid.
 - **Pictures:** each place's own snapshot (About Land), with the region's map tile when there is none.
-- **Visits:** counted per parcel by the regions themselves, filling OpenSim's own parcel "Traffic" number (always 0
-  today), which the directory reads and residents also see in About Land.
+- **Visits:** counted per parcel by the regions themselves, in OpenSim's own parcel "Traffic" number, which the directory
+  reads and residents also see in About Land. (Correction after review: that number isn't 0 today. OpenSim's built-in
+  `LandObject.OnFrame` fills it with avatar-minutes fading over about 18 hours; GridGate's counter replaces that.)
 
 ## Not in this change (left for the owner)
 
@@ -26,6 +27,9 @@ making an account, and a resident can find somewhere to go and teleport straight
   CSJ2K and System.Drawing Robust already has. The page is built so the snapshot slots in where the tile is now.
 - Showing other grids' places (hypergrid links), events, classifieds, or a staff editor for this page.
 - In-world search (the viewer's Search window) reading the same directory.
+- **Places on a Region Server's regions** (a second computer). Each computer's regions keep their parcels in that
+  computer's own database, and the launcher reads only its own, so a multi-computer grid lists only the main computer's
+  places. A fix would have regions report their listed parcels to the launcher, as GridGateMoney's `PlaceReporter` does.
 
 ## The page
 
@@ -72,7 +76,8 @@ Places residents chose to show. Teleport straight in with your viewer.
 
 ## Ratings (*designer's call*)
 
-- A place's rating is its region's maturity (`opensim.regionsettings.maturity`: 0 General, 1 Moderate, 2 Adult), raised to
+- A place's rating is its region's maturity (`opensim.regionsettings.maturity`: 0 General, 1 Moderate, 2 Adult; a region
+  whose settings can't be read counts as Adult, so it is never shown to strangers), raised to
   **Adult** for a parcel in the Adult category (2) and to at least **Moderate** for a parcel with "Mature content"
   (`ParcelFlags.MaturePublish`, `0x40000`).
 - **Visitors who aren't signed in see General and Moderate places only.** Signed-in residents and staff (the map's
@@ -91,6 +96,13 @@ A new region add-on, `addon-modules/GridGateTraffic`, beside GridGateMoney, so n
 
 - It is OpenSim's `IDwellModule` (`[Dwell] DwellModule = GridGateTraffic`, written by `GridConfigWriter` for every
   region), replacing `DefaultDwellModule`, so About Land's Traffic and the land table's `Dwell` column show its number.
+- **One small GridGate change in OpenSim** (marked `// GridGate:`, as GridGate's other OpenSim changes are): a new marker
+  interface `IKeepsOwnDwell`, and `LandObject.OnFrame` skips its avatar-minute sum when the dwell module is one. Without
+  it, OpenSim would overwrite the visit count with minutes spent every 2.5 minutes. (The owner chose "a small change in
+  GridGate's OpenSim" for this counter; the plan's "add-on only" was the designer's and is dropped.)
+- **First start:** the column then holds OpenSim's old minutes, so on a region's first start with the module (no
+  `GridGateTraffic-<region>.started` file in its folder) every parcel starts from 0, the first pass (a minute in) stores
+  that, and the file is left. *Designer's call.*
 - **A visit:** a root avatar arriving on a parcel (`EventManager.OnAvatarEnteringNewParcel`). Not counted: NPCs, child
   agents, the parcel's owner (or for a group-owned parcel, nobody is excluded), and any parcel while the estate has
   "Block dwell" set. Each avatar counts **once per parcel per UTC day** (kept in memory; a restart may count someone twice
@@ -98,10 +110,11 @@ A new region add-on, `addon-modules/GridGateTraffic`, beside GridGateMoney, so n
 - **Fading:** the number is "recent visits": on each visit and on an hourly pass it is multiplied by `exp(-Δt / 30 days)`
   and a visit adds 1, so a steady stream of N visits a day settles near 30 N, and a place nobody visits fades toward 0.
   Δt counts only time the region runs (OpenSim keeps no "last changed" time for the column). *Designer's call.*
-- **Saving:** a counted visit saves that parcel at once (`SimulationDataService.StoreLandObject`); the hourly pass saves
-  each parcel whose whole number changed, and closing the region saves the rest. The column is an integer, so the stored
+- **Saving:** a counted visit saves that parcel at once (`SimulationDataService.StoreLandObject`); the passes (a minute
+  after start, then hourly, and when the region closes) save each parcel whose whole number changed. The column is an integer, so the stored
   value is rounded; the module keeps the exact value in memory while it runs.
-- Parcel joins and splits keep OpenSim's own handling of `Dwell`.
+- Parcel joins and reclaims keep OpenSim's own handling of `Dwell`: a number the module didn't write (a join adds the
+  other parcel's, a reclaim clears it) is taken as the parcel's new number.
 
 ## Constraints
 

@@ -57,12 +57,13 @@ public sealed class ListedParcels(Func<LauncherSettings> settings, ILogger<Liste
     private int _warned;
 
     /// <summary>
-    /// A place's rating: its region's maturity (0 General, 1 Moderate, 2 Adult; unknown reads as General), raised to Adult
+    /// A place's rating: its region's maturity (0 General, 1 Moderate, 2 Adult; unknown reads as Adult, so a region whose
+    /// settings can't be read is never shown to strangers), raised to Adult
     /// in the Adult category and to at least Moderate when the owner marked it "Mature content".
     /// </summary>
     public static int RatingOf(int? regionMaturity, int category, uint flags)
     {
-        var rating = Math.Clamp(regionMaturity ?? 0, 0, 2);
+        var rating = Math.Clamp(regionMaturity ?? 2, 0, 2);
         if (category == AdultCategory) rating = 2;
         if ((flags & MatureContent) != 0) rating = Math.Max(rating, 1);
         return rating;

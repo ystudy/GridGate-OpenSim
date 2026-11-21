@@ -51,7 +51,7 @@ public sealed class FeaturedQueryTests
     [InlineData(0, 11, 0x40000u, 1)]
     [InlineData(1, 11, 0u, 1)]
     [InlineData(2, 11, 0u, 2)]
-    [InlineData(null, 11, 0u, 0)]
+    [InlineData(null, 11, 0u, 2)] // a region whose rating can't be read is treated as Adult: never shown to strangers
     [InlineData(1, 2, 0x40000u, 2)]
     public void Rating_comes_from_region_category_and_mature_flag(int? maturity, int category, uint flags, int rating) =>
         Assert.Equal(rating, ListedParcels.RatingOf(maturity, category, flags));
