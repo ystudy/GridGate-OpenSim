@@ -19,7 +19,7 @@
 {
     <input type="hidden" name="@BotGuard.ProofField" value="" data-challenge-url="/api/bots/challenge">
     <noscript><p class="form-text">@T["Bots.NeedsJs"]</p></noscript>
-    <script src="/js/pow.js" defer></script>
+    <script src="/js/pow.js" asp-append-version="true" defer></script>
 }
 @if (bots.ImageCaptcha)
 {

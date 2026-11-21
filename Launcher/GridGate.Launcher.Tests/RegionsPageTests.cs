@@ -86,10 +86,13 @@ public sealed class RegionsPageTests : IAsyncLifetime
     {
         var doc = await PageAsync();
 
-        var scripts = doc.QuerySelectorAll("script[src]").Select(s => s.GetAttribute("src")).ToList();
+        var srcs = doc.QuerySelectorAll("script[src]").Select(s => s.GetAttribute("src")!).ToList();
+        var scripts = srcs.Select(s => s.Split('?')[0]).ToList();
         var core = scripts.IndexOf("/js/map-core.js");
         Assert.True(core >= 0, "map-core.js is loaded");
         Assert.True(core < scripts.IndexOf("/js/map.js"), "map-core.js comes before map.js");
+        // Versioned, so a browser loads the new script after an upgrade instead of a cached old one.
+        Assert.Matches(@"^/js/map-core\.js\?v=[A-Za-z0-9_-]+$", srcs[core]);
     }
 
     [Fact]

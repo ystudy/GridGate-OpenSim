@@ -54,7 +54,7 @@ public sealed class PublicLookTests
     }
 
     private static List<string> Sheets(IDocument page) =>
-        page.QuerySelectorAll("link[rel=stylesheet]").Select(l => l.GetAttribute("href")!).ToList();
+        page.QuerySelectorAll("link[rel=stylesheet]").Select(l => l.GetAttribute("href")!.Split('?')[0]).ToList();
 
     // ---- Task 2: the top bar ----
 
@@ -259,7 +259,7 @@ public sealed class PublicLookTests
             var sheets = Sheets(page);
             Assert.Contains("/css/guest.css", sheets);
             Assert.True(sheets.IndexOf("/css/guest.css") > sheets.IndexOf("/css/site.css"), path + ": guest.css must come after site.css");
-            Assert.Null(page.QuerySelector("script[src='/js/theme.js']"));
+            Assert.Null(page.QuerySelector("script[src^='/js/theme.js']"));
             Assert.Contains("guest-site", page.Body!.ClassList);
         }
     }
@@ -270,7 +270,7 @@ public sealed class PublicLookTests
         await using var f = Factory();
         var page = await PageAsync(await StaffAsync(f, "admin"), "/profile/sessions");
         Assert.DoesNotContain("/css/guest.css", Sheets(page));
-        Assert.NotNull(page.QuerySelector("script[src='/js/theme.js']"));
+        Assert.NotNull(page.QuerySelector("script[src^='/js/theme.js']"));
     }
 
     [Fact]

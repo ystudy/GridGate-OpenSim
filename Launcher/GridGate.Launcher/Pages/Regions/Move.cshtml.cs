@@ -65,8 +65,9 @@ public sealed class MoveModel(IGridController grid, RegionActions actions) : Pag
         }
 
         if (!actions.TryMove(id, x, y)) return NotFound();
-        Notice = $"Moving {Name}…";
-        return Redirect("/regions/region/" + id);
+        // Back to the map with the region picked, so the owner sees it move, and a note that the pictures follow later.
+        TempData[nameof(IndexModel.MoveNote)] = IndexModel.MoveNoteFor(Name);
+        return Redirect("/regions?region=" + id);
     }
 
     private bool Load(Guid id, out RegionSettings region)

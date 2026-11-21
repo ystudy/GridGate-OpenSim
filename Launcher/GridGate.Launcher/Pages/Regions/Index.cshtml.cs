@@ -34,6 +34,16 @@ public sealed class IndexModel(IGridController grid, RegionRights rights) : Page
 
     [TempData] public string? Notice { get; set; }
 
+    /// <summary>
+    /// After a move (MoveModel): the region restarts at its new spot, and the map's pictures follow later, because Robust
+    /// rebuilds its zoomed-out tiles a minute after a change. Shown once, in yellow above the map.
+    /// </summary>
+    [TempData] public string? MoveNote { get; set; }
+
+    /// <summary>The move note's words for <paramref name="name"/>.</summary>
+    public static string MoveNoteFor(string name) =>
+        $"Moving {name}. It restarts at its new spot, and the map pictures catch up within a minute or 2.";
+
     /// <summary>Whether the Landing section is shown: only where this computer runs the grid (a Region Server's grid decides).</summary>
     public bool LandingShown { get; private set; }
 

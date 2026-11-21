@@ -20,6 +20,10 @@
     <ProjectReference Include="../../OpenSim/Framework/OpenSim.Framework.csproj" />
     <ProjectReference Include="../../OpenSim/Framework/Console/OpenSim.Framework.Console.csproj" />
     <ProjectReference Include="..\GridGate.Smoke\GridGate.Smoke.csproj" />
+    <!-- Robust's grid service, with the in-memory region store, for the map tile clean-up after a region moves. -->
+    <ProjectReference Include="../../OpenSim/Services/GridService/OpenSim.Services.GridService.csproj" />
+    <ProjectReference Include="../../OpenSim/Services/Interfaces/OpenSim.Services.Interfaces.csproj" />
+    <ProjectReference Include="../../OpenSim/Data/Null/OpenSim.Data.Null.csproj" />
   </ItemGroup>
 
   <ItemGroup>
@@ -28,6 +32,9 @@
     </Reference>
     <Reference Include="log4net">
       <HintPath>$(GgRoot)bin/log4net.dll</HintPath>
+    </Reference>
+    <Reference Include="Nini">
+      <HintPath>$(GgRoot)bin/Nini.dll</HintPath>
     </Reference>
   </ItemGroup>
 

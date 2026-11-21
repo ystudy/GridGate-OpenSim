@@ -92,17 +92,25 @@ public sealed class MoveRegionPageTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Move_posts_and_returns_to_panel()
+    public async Task Move_posts_and_returns_to_the_map_with_a_note()
     {
         using var client = await SignedInAsync();
 
         using var response = await PostAsync(client, SunsetId, new() { ["X"] = "1500", ["Y"] = "1600" });
 
+        // Back to the map, the region picked, so the owner watches it move.
         Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
-        Assert.Equal($"/regions/region/{SunsetId}", response.Headers.Location!.OriginalString);
+        Assert.Equal($"/regions?region={SunsetId}", response.Headers.Location!.OriginalString);
         Assert.True(await WaitForCallAsync($"MoveRegion {SunsetId} 1500 1600"));
-        var panel = new HtmlParser().ParseDocument(await client.GetStringAsync($"/regions/region/{SunsetId}", Ct));
-        Assert.Equal("Moving Sunset Shore…", panel.QuerySelector(".notice")!.TextContent.Trim());
+        var map = new HtmlParser().ParseDocument(await client.GetStringAsync($"/regions?region={SunsetId}", Ct));
+        var note = map.QuerySelector("#move-note");
+        Assert.NotNull(note);
+        Assert.Contains("alert-warning", note!.ClassName);
+        Assert.Equal("Moving Sunset Shore. It restarts at its new spot, and the map pictures catch up within a minute or 2.",
+            note.TextContent.Trim());
+        // Once: the next visit has no note.
+        var again = new HtmlParser().ParseDocument(await client.GetStringAsync("/regions", Ct));
+        Assert.Null(again.QuerySelector("#move-note"));
     }
 
     [Fact]

@@ -109,7 +109,7 @@ public sealed class BotsPageTests
         Assert.Equal("Leave this empty", form.QuerySelector(".gg-hp label")!.TextContent);
         var pow = form.QuerySelector("input[name=pow]")!;
         Assert.Equal("/api/bots/challenge", pow.GetAttribute("data-challenge-url"));
-        Assert.NotNull(form.QuerySelector("script[src='/js/pow.js'][defer]"));
+        Assert.NotNull(form.QuerySelector("script[src^='/js/pow.js'][defer]"));
         Assert.Null(page.QuerySelector("#try-result"));
 
         Assert.Equal("Passed", await TryAsync(owner, "", await SolvedAsync(owner)));

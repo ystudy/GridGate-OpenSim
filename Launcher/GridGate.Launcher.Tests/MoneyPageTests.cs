@@ -1278,10 +1278,35 @@ public sealed class MoneyPageTests
     public async Task Database_down_says_so()
     {
         await using var f = Make(new FakeBooks { Down = true });
+        f.Services.GetRequiredService<MoneyStatus>().ServiceRunning = true;
 
         var doc = await PageAsync(await SignedInAsync(f), "/money");
 
         Assert.Contains("The money database can't be reached", MainText(doc));
+        Assert.Null(doc.QuerySelector("#money-restart"));
+    }
+
+    [Fact]
+    public async Task Money_page_says_money_starts_on_restart()
+    {
+        // Live check on the Debian 12 VM: Play coins saved while GridGate runs. The money database is made when GridGate
+        // starts, so until then the Money page says so, like the dashboard, instead of a red "can't be reached".
+        var books = new FakeBooks { Down = true };
+        await using var f = Make(books);
+        var status = f.Services.GetRequiredService<MoneyStatus>();
+        status.ServiceRunning = false;
+        status.ServiceError = null;
+
+        var doc = await PageAsync(await SignedInAsync(f), "/money");
+
+        var notice = doc.QuerySelector("#money-restart");
+        Assert.NotNull(notice);
+        Assert.Equal(MoneyPageRules.StartsOnRestart, notice!.TextContent.Trim());
+        Assert.DoesNotContain("alert-danger", notice.ClassName);
+        Assert.Null(doc.QuerySelector("#money-database-down"));
+        Assert.Empty(books.Calls);
+        // The settings stay, so the owner can still change what they saved.
+        Assert.NotNull(doc.QuerySelector("#money-settings"));
     }
 
     [Fact]

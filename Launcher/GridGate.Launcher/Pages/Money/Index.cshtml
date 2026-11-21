@@ -14,6 +14,10 @@
 </div>
 <error-box text="@Model.Error" />
 <ok-box text="@Model.Notice" />
+@if (Model.WaitingForRestart)
+{
+    <div id="money-restart" class="alert alert-info" role="status">@MoneyPageRules.StartsOnRestart</div>
+}
 @if (Model.DatabaseDown)
 {
     <div id="money-database-down" class="error-box error alert alert-danger" role="alert">The money database can't be reached, so payments are refused and the books can't be shown.</div>

@@ -50,6 +50,10 @@
                     <button type="button" id="zoom-in" class="btn btn-outline-secondary" icon="none" aria-label="Zoom in" hidden>+</button>
                 </span>
             </div>
+            @if (!string.IsNullOrEmpty(Model.MoveNote))
+            {
+                <div id="move-note" class="alert alert-warning" role="status">@Model.MoveNote</div>
+            }
             <div id="map" class="region-map"
                  data-tiles="/api/map/tile" data-regions="/api/regions" data-placement="/api/regions/placement"
                  data-add="/regions/add" data-panel="/regions/region/"
@@ -142,7 +146,7 @@
 }
 
 @section Scripts {
-<script src="/js/map-core.js"></script>
-<script src="/js/map.js"></script>
-<script src="/js/img-fallback.js"></script>
+<script src="/js/map-core.js" asp-append-version="true"></script>
+<script src="/js/map.js" asp-append-version="true"></script>
+<script src="/js/img-fallback.js" asp-append-version="true"></script>
 }

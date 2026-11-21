@@ -29,6 +29,15 @@ public sealed class MoneyStatus
         set { lock (_gate) _serviceRunning = value; }
     }
 
+    /// <summary>
+    /// Money is on but waits for a restart: the service didn't start in this run and nothing failed, so its database may
+    /// not exist yet. Pages say <see cref="MoneyPageRules.StartsOnRestart"/> and don't ask the database.
+    /// </summary>
+    public bool WaitingForRestart
+    {
+        get { lock (_gate) return !_serviceRunning && _serviceError is null; }
+    }
+
     public (DateTimeOffset At, SelfCheckResult Result)? LastCheck
     {
         get { lock (_gate) return _lastCheck; }

@@ -51,6 +51,13 @@ public static class MoneyPageRules
 
     public const string RestartWorld = "Takes effect after you restart GridGate and then the world (Power → Restart on the dashboard).";
 
+    /// <summary>
+    /// Money is on in the settings but its service and database haven't started yet, because they start with GridGate:
+    /// the dashboard and the Money page say this instead of a database fault.
+    /// </summary>
+    public const string StartsOnRestart =
+        "Money was turned on after GridGate started. Restart GridGate and then the world (Power → Restart) for money to start.";
+
     /// <summary>The first problem with <paramref name="m"/>, in words for the page, or null when it can be saved.</summary>
     public static string? Problem(MoneySettings m, IReadOnlyList<MoneyMode> offered)
     {

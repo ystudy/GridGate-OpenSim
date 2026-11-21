@@ -7,8 +7,8 @@
     ViewData["Wide"] = "full";
 }
 @section Head {
-<link rel="stylesheet" href="/css/splash.css">
-<link rel="stylesheet" href="/css/splash-editor.css">
+<link rel="stylesheet" href="/css/splash.css" asp-append-version="true">
+<link rel="stylesheet" href="/css/splash-editor.css" asp-append-version="true">
 <link id="draft-css" rel="stylesheet" href="/api/splash/draft.css?v=@Model.View.Version">
 }
 <div id="splash-editor" data-api="/api/splash" data-blocks="/splash?handler=Blocks" data-version="@Model.View.Version">
@@ -114,6 +114,6 @@
 </div>
 
 @section Scripts {
-<script src="/js/splash-editor-core.js"></script>
-<script src="/js/splash-editor.js"></script>
+<script src="/js/splash-editor-core.js" asp-append-version="true"></script>
+<script src="/js/splash-editor.js" asp-append-version="true"></script>
 }

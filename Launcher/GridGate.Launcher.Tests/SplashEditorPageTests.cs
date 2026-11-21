@@ -132,7 +132,7 @@ public sealed class SplashEditorPageTests
         var client = await StaffAsync(f, "owner");
         var page = Parser.ParseDocument(await client.GetStringAsync("/splash", Ct));
 
-        var scripts = page.QuerySelectorAll("script").Select(s => s.GetAttribute("src")).ToList();
+        var scripts = page.QuerySelectorAll("script").Select(s => s.GetAttribute("src")?.Split('?')[0]).ToList();
         Assert.All(scripts, s => Assert.False(string.IsNullOrEmpty(s)));
         Assert.Contains("/js/splash-editor-core.js", scripts);
         Assert.Contains("/js/splash-editor.js", scripts);
