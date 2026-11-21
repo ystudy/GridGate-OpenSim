@@ -205,8 +205,10 @@
    right; one column on a phone, the headline first. */
 .guest-site .account-split { display: grid; gap: 2rem; align-items: center; max-width: 64rem; margin: 1.5rem auto; }
 @media (min-width: 768px) { .guest-site .account-split { grid-template-columns: minmax(0, 1fr) minmax(0, 26rem); } }
-/* Sign up's card is wider only where the headline still has room beside it. */
+/* Sign up's card is wider only where the headline still has room beside it. Its card is tall and changes height between
+   the two steps, so its headline sits at the top instead of jumping to the card's middle. */
 @media (min-width: 992px) { .guest-site .account-split-wide { grid-template-columns: minmax(0, 1fr) minmax(0, 36rem); } }
+.guest-site .account-split-wide { align-items: start; }
 /* The headline sizes to its column (cqi), so the longest title words of the six languages fit whole from a phone up;
    a word longer still breaks rather than pushing the page sideways. */
 .guest-site .account-lead { container-type: inline-size; }

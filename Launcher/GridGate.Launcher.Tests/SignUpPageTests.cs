@@ -103,6 +103,7 @@ public sealed class SignUpPageTests
         var page = new HtmlParser().ParseDocument(await r.Content.ReadAsStringAsync(Ct));
         Assert.Equal(CheckEmail, page.QuerySelector("#sign-up-reply")!.TextContent.Trim());
         Assert.NotNull(page.QuerySelector("form#resend"));
+        AccountPagesLookTests.AssertSplit(page, "Create an account", line: false);
     }
 
     [Fact]
@@ -124,7 +125,8 @@ public sealed class SignUpPageTests
         using var r = await PostSignUpAsync(Client(rig), terms: false);
 
         var page = new HtmlParser().ParseDocument(await r.Content.ReadAsStringAsync(Ct));
-        Assert.Contains("Tick the box", page.QuerySelector("[role=alert]")!.TextContent);
+        Assert.Contains("Tick the box", page.QuerySelector(".account-card [role=alert]")!.TextContent);
+        AccountPagesLookTests.AssertSplit(page, "Create an account", line: true);
         Assert.Equal("Bea", page.QuerySelector("input[name=First]")!.GetAttribute("value"));
         Assert.Equal("", page.QuerySelector("input[name=Password]")!.GetAttribute("value") ?? "");
     }
@@ -189,6 +191,7 @@ public sealed class SignUpPageTests
         var page = new HtmlParser().ParseDocument(await r.Content.ReadAsStringAsync(Ct));
         Assert.Contains(WaitingForStaff, page.QuerySelector("main")!.TextContent);
         Assert.Empty(page.QuerySelectorAll("form#resend"));
+        AccountPagesLookTests.AssertSplit(page, "Create an account", line: false);
     }
 
     [Fact]

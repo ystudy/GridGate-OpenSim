@@ -89,6 +89,17 @@ public sealed partial class PasswordResetTests
     }
 
     [Fact]
+    public async Task Forgot_password_reply_shows_headline_alone()
+    {
+        await using var rig = Factory();
+
+        var page = await AskAsync(Client(rig), "Ann Smith", "ann@example.com");
+
+        AccountPagesLookTests.AssertSplit(page, "Forgot password", line: false);
+        Assert.NotNull(page.QuerySelector(".account-card #reset-reply"));
+    }
+
+    [Fact]
     public async Task Reset_form_has_headline_left_and_back_link()
     {
         await using var rig = Factory();
@@ -291,9 +302,15 @@ public sealed partial class PasswordResetTests
         var token = await LinkTokenAsync(rig, "Ann Smith", "ann@example.com");
 
         Assert.Equal("Use at least 8 characters.", Error(await ResetAsync(Client(rig), token, "short")));
-        Assert.Equal("Type the same password twice.", Error(await ResetAsync(Client(rig), token, NewPassword, "different-one")));
+        var mismatch = await ResetAsync(Client(rig), token, NewPassword, "different-one");
+        Assert.Equal("Type the same password twice.", Error(mismatch));
+        AccountPagesLookTests.AssertSplit(mismatch, "Choose a new password", line: true);
+        Assert.Equal("For Ann Smith. Use at least 8 characters.", mismatch.QuerySelector(".account-line")!.TextContent.Trim());
+        Assert.NotNull(mismatch.QuerySelector(".account-card .error"));
         Assert.Equal("That password is too common. Choose another.", Error(await ResetAsync(Client(rig), token, "password123")));
-        Assert.NotNull(Done(await ResetAsync(Client(rig), token)));
+        var done = await ResetAsync(Client(rig), token);
+        Assert.NotNull(Done(done));
+        AccountPagesLookTests.AssertSplit(done, "Choose a new password", line: false);
     }
 
     [Fact]
