@@ -407,6 +407,9 @@ builder.Services.AddSingleton(sp => new ThemeStore(paths, sp.GetRequiredKeyedSer
 builder.Services.AddSingleton<SplashSnapshot>();
 builder.Services.AddSingleton<GridGate.Launcher.Front.FrontPageSnapshot>();
 builder.Services.AddSingleton<GridGate.Launcher.World.WorldMapSnapshot>();
+builder.Services.AddSingleton<IListedParcels>(sp => new ListedParcels(sp.GetRequiredService<Func<LauncherSettings>>(),
+    sp.GetRequiredService<ILogger<ListedParcels>>()));
+builder.Services.AddSingleton<GridGate.Launcher.Featured.FeaturedDirectory>();
 builder.Services.AddSingleton<GridGate.Launcher.Front.FrontMapTiles>();
 builder.Services.AddSingleton<GridGate.Launcher.Front.FrontPageView>();
 // The Home dashboard's counts (design 2026-11-05-dashboard), cached a minute.
