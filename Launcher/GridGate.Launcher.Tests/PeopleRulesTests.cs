@@ -117,4 +117,27 @@ public sealed class PeopleRulesTests
         Assert.Equal(StaffChanges.OwnerRefusal,
             PeopleRules.Refusal(StaffRole.Admin, Resident() with { IsOwner = true, Judged = StaffRole.Owner }, PersonTask.Inventory));
     }
+
+    // Taking a profile off the Residents page (spec 2026-11-21-resident-profiles-design, "Staff"): moderation, like suspending.
+    [Theory]
+    [InlineData(StaffRole.Supervisor)]
+    [InlineData(StaffRole.Admin)]
+    [InlineData(StaffRole.Owner)]
+    public void Every_staff_member_may_hold_a_residents_profile(StaffRole actor)
+    {
+        Assert.Null(PeopleRules.Refusal(actor, Resident(), PersonTask.HoldProfile));
+        Assert.Null(PeopleRules.Refusal(actor, Resident(suspended: true), PersonTask.ReleaseProfile));
+    }
+
+    [Fact]
+    public void Only_the_owner_holds_staff_and_nobody_the_owner_or_themself()
+    {
+        var supervisor = Resident() with { Judged = StaffRole.Supervisor };
+        Assert.Equal(PeopleRules.OwnerChangesStaff, PeopleRules.Refusal(StaffRole.Admin, supervisor, PersonTask.HoldProfile));
+        Assert.Null(PeopleRules.Refusal(StaffRole.Owner, supervisor, PersonTask.HoldProfile));
+        Assert.Equal(StaffChanges.OwnerRefusal,
+            PeopleRules.Refusal(StaffRole.Owner, Resident() with { IsOwner = true, IsActor = true, Judged = StaffRole.Owner }, PersonTask.HoldProfile));
+        Assert.Equal(PeopleRules.Self, PeopleRules.Refusal(StaffRole.Admin, Resident() with { IsActor = true, Judged = StaffRole.Admin }, PersonTask.HoldProfile));
+        Assert.Equal(PeopleRules.Waiting, PeopleRules.Refusal(StaffRole.Admin, Resident() with { Waiting = true }, PersonTask.HoldProfile));
+    }
 }

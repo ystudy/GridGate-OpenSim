@@ -698,4 +698,30 @@
   <data name="Featured.Category11" xml:space="preserve"><value>Магазины</value></data>
   <data name="Featured.Category12" xml:space="preserve"><value>Сцена</value></data>
   <data name="Featured.Category13" xml:space="preserve"><value>Другое</value></data>
+  <data name="Layout.MenuResidents" xml:space="preserve"><value>Жители</value></data>
+  <data name="Residents.Title" xml:space="preserve"><value>Жители</value></data>
+  <data name="Residents.Intro" xml:space="preserve"><value>Познакомьтесь с людьми, которые здесь живут.</value></data>
+  <data name="Residents.StatShown" xml:space="preserve"><value>На этой странице</value></data>
+  <data name="Residents.Unavailable" xml:space="preserve"><value>Сейчас не удаётся показать жителей. Попробуйте ещё раз через несколько минут.</value></data>
+  <data name="Residents.None" xml:space="preserve"><value>Здесь пока никого нет. Жители сами решают на странице своей учётной записи, показываться ли здесь.</value></data>
+  <data name="Residents.AddMe" xml:space="preserve"><value>Добавить мой профиль</value></data>
+  <data name="Residents.Search" xml:space="preserve"><value>Искать жителей</value></data>
+  <data name="Residents.Sort" xml:space="preserve"><value>Порядок</value></data>
+  <data name="Residents.SortNewest" xml:space="preserve"><value>Новые участники</value></data>
+  <data name="Residents.SortName" xml:space="preserve"><value>По имени</value></data>
+  <data name="Residents.NoMatch" xml:space="preserve"><value>Нет жителей, подходящих под этот поиск.</value></data>
+  <data name="Residents.MemberSince" xml:space="preserve"><value>Регистрация: {0}</value></data>
+  <data name="Residents.Back" xml:space="preserve"><value>Все жители</value></data>
+  <data name="Residents.WantTo" xml:space="preserve"><value>Я хочу</value></data>
+  <data name="Residents.Skills" xml:space="preserve"><value>Навыки</value></data>
+  <data name="Residents.Languages" xml:space="preserve"><value>Языки</value></data>
+  <data name="Residents.WebPage" xml:space="preserve"><value>Веб-страница</value></data>
+  <data name="Residents.Picks" xml:space="preserve"><value>Избранное</value></data>
+  <data name="Account.PublicTitle" xml:space="preserve"><value>Страница жителей</value></data>
+  <data name="Account.PublicSwitch" xml:space="preserve"><value>Показывать мой профиль на странице жителей</value></data>
+  <data name="Account.PublicNote" xml:space="preserve"><value>Там любой может увидеть ваше имя, фото профиля, раздел «О себе», интересы и избранное. Изменить их можно в профиле вашего вьюера.</value></data>
+  <data name="Account.PublicSave" xml:space="preserve"><value>Сохранить</value></data>
+  <data name="Account.PublicSaved" xml:space="preserve"><value>Сохранено.</value></data>
+  <data name="Account.PublicSee" xml:space="preserve"><value>Открыть мою страницу</value></data>
+  <data name="Account.PublicHeld" xml:space="preserve"><value>Команда убрала ваш профиль со страницы жителей.</value></data>
 </root>

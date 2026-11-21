@@ -92,6 +92,58 @@ public sealed class OnlineUsersTests : IDisposable
             Assert.Equal(new GridGate.Launcher.Core.Dashboard.ResidentCounts(1, 1), await residents.CountAsync(now.AddDays(-30), ct));
             Assert.Equal(new GridGate.Launcher.Core.Dashboard.ResidentCounts(1, 0), await residents.CountAsync(now.AddDays(1), ct));
 
+            // The Residents pages' reader against Robust's own profile tables (spec 2026-11-21-resident-profiles-design): only
+            // the accounts asked about, the profile's public parts, enabled picks top first; an unknown id is no one.
+            var profiles = new PublicProfiles(store.LoadOrCreate);
+            var bare = await profiles.ReadAsync([owner.PrincipalId, Guid.NewGuid()], ct);
+            Assert.True(bare.Available);
+            var noProfile = Assert.Single(bare.Profiles);
+            Assert.Equal("Test Owner", noProfile.Name);
+            Assert.Equal("", noProfile.About);
+            Assert.Empty(noProfile.Picks);
+            var photo = Guid.NewGuid();
+            var (topPick, otherPick) = (Guid.NewGuid(), Guid.NewGuid());
+            await using (var conn = new MySqlConnection(new MySqlConnectionStringBuilder
+            {
+                Server = "127.0.0.1", Port = (uint)s.MariaDbPort, Database = "robust",
+                UserID = "robustuser", Password = s.Db.RobustPassword, SslMode = MySqlSslMode.Disabled, Pooling = false,
+            }.ConnectionString))
+            {
+                await conn.OpenAsync(ct);
+                await using (var cmd = new MySqlCommand(
+                    "INSERT INTO userprofile (useruuid, profilePartner, profileAllowPublish, profileMaturePublish, profileURL, " +
+                    "profileWantToMask, profileWantToText, profileSkillsMask, profileSkillsText, profileLanguages, profileImage, " +
+                    "profileAboutText, profileFirstImage, profileFirstText) VALUES (@u, @z, 0, 0, 'example.com', 0, 'Sail', 0, " +
+                    "'Build', 'English', @img, 'Hello there.', @z, 'My real life')", conn))
+                {
+                    cmd.Parameters.AddWithValue("@u", owner.PrincipalId.ToString());
+                    cmd.Parameters.AddWithValue("@z", Guid.Empty.ToString());
+                    cmd.Parameters.AddWithValue("@img", photo.ToString());
+                    await cmd.ExecuteNonQueryAsync(ct);
+                }
+                foreach (var (pick, top, enabled, name) in new[] { (otherPick, "false", "true", "Second"), (topPick, "true", "true", "First"),
+                             (Guid.NewGuid(), "true", "false", "Hidden") })
+                {
+                    await using var cmd = new MySqlCommand(
+                        "INSERT INTO userpicks (pickuuid, creatoruuid, toppick, parceluuid, name, description, snapshotuuid, user, " +
+                        "originalname, simname, posglobal, sortorder, enabled) VALUES (@p, @u, @top, @z, @name, 'A pick.', @z, '', '', " +
+                        "'Sandbox', '<256100.5, 256050, 22>', 0, @on)", conn);
+                    cmd.Parameters.AddWithValue("@p", pick.ToString());
+                    cmd.Parameters.AddWithValue("@u", owner.PrincipalId.ToString());
+                    cmd.Parameters.AddWithValue("@top", top);
+                    cmd.Parameters.AddWithValue("@z", Guid.Empty.ToString());
+                    cmd.Parameters.AddWithValue("@name", name);
+                    cmd.Parameters.AddWithValue("@on", enabled);
+                    await cmd.ExecuteNonQueryAsync(ct);
+                }
+            }
+            var filled = Assert.Single((await profiles.ReadAsync([owner.PrincipalId], ct)).Profiles);
+            Assert.Equal(photo, filled.ImageId);
+            Assert.Equal(("Hello there.", "Sail", "Build", "English", "example.com"), (filled.About, filled.WantTo, filled.Skills, filled.Languages, filled.WebUrl));
+            Assert.Equal(["First", "Second"], filled.Picks.Select(p => p.Name));
+            Assert.Equal((256100.5f, 256050f, 22f, "Sandbox"), (filled.Picks[0].X, filled.Picks[0].Y, filled.Picks[0].Z, filled.Picks[0].RegionName));
+            Assert.Equal(Guid.Empty, filled.Picks[0].SnapshotId);
+
             // A database that is down: no exception, no long wait.
             await grid.StopAllAsync(ct);
             var watch = Stopwatch.StartNew();

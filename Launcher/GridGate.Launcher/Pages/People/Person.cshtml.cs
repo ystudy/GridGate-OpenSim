@@ -37,6 +37,12 @@ public sealed class PersonModel(PeopleActions people, RegionRights rights, Func<
     /// <summary>The task the "May upload models" button posts, or null when this staff member may not change it (the state still shows).</summary>
     public PersonTask? UploadTask { get; private set; }
 
+    /// <summary>Whether the person is on the Residents page (spec 2026-11-21-resident-profiles-design, "Staff").</summary>
+    public GridGate.Launcher.Core.Guests.PublicProfileState PublicProfile { get; private set; }
+
+    /// <summary>The task the Residents page button posts, or null when this staff member may not change it (the state still shows).</summary>
+    public PersonTask? ProfileTask { get; private set; }
+
     /// <summary>The person's inventory backup switches and own limits, and the grid's values they fall back to.</summary>
     public IarPersonRights? Iar { get; private set; }
     public IarSettings GridIar { get; private set; } = new();
@@ -85,6 +91,9 @@ public sealed class PersonModel(PeopleActions people, RegionRights rights, Func<
         MayUpload = people.MayUpload(id);
         var uploadTask = MayUpload ? PersonTask.StopUpload : PersonTask.AllowUpload;
         UploadTask = people.Refusal(User, Person, uploadTask) is null ? uploadTask : null;
+        PublicProfile = people.PublicProfileOf(id);
+        var profileTask = PublicProfile == GridGate.Launcher.Core.Guests.PublicProfileState.Held ? PersonTask.ReleaseProfile : PersonTask.HoldProfile;
+        ProfileTask = people.Refusal(User, Person, profileTask) is null ? profileTask : null;
         var s = settings();
         Iar = people.IarRightsOf(id);
         GridIar = s.Iar;

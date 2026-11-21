@@ -1,0 +1,91 @@
+@page "/residents/{first}/{last}"
+@model GridGate.Launcher.Pages.ResidentProfileModel
+@{
+    Layout = "_GuestLayout";
+    var p = Model.Profile;
+    ViewData["Title"] = p.Name;
+    var details = new (string Key, string Text)[] { ("Residents.WantTo", p.WantTo), ("Residents.Skills", p.Skills), ("Residents.Languages", p.Languages) }
+        .Where(d => d.Text.Length > 0).ToList();
+}
+@section Head {
+    <meta name="robots" content="noindex">
+}
+@* One resident's public profile (spec 2026-11-21-resident-profiles-design, "The profile page"). Text is shown as text, never HTML. *@
+<p><a id="resident-back" class="resident-back" href="/residents">@Html.Raw(GridGate.Launcher.Navigation.ButtonIcons.Svg("arrow-left"))@T["Residents.Back"]</a></p>
+<article id="resident-profile" class="resident-profile">
+    <div class="resident-profile-picture">
+        @if (p.ImageId == Guid.Empty)
+        {
+            <div class="front-card-blank resident-photo" aria-hidden="true"></div>
+        }
+        else
+        {
+            <img class="resident-photo" src="/residents/picture/@(p.Id).jpg" alt="">
+        }
+    </div>
+    <div class="resident-profile-text">
+        <h1>@p.Name</h1>
+        @if (Model.Since is { } since)
+        {
+            <p class="tone-text resident-since">@T["Residents.MemberSince", since]</p>
+        }
+        @if (p.About.Length > 0)
+        {
+            <p id="resident-about" class="resident-about-full">@p.About</p>
+        }
+        @if (details.Count > 0 || Model.WebLink is not null)
+        {
+            <dl id="resident-details" class="resident-details">
+                @foreach (var d in details)
+                {
+                    <dt>@T[d.Key]</dt>
+                    <dd>@d.Text</dd>
+                }
+                @if (Model.WebLink is { } link)
+                {
+                    <dt>@T["Residents.WebPage"]</dt>
+                    <dd><a id="resident-web" href="@link.AbsoluteUri" rel="nofollow ugc noopener noreferrer" target="_blank">@link.Host</a></dd>
+                }
+            </dl>
+        }
+    </div>
+</article>
+
+@if (p.Picks.Count > 0)
+{
+    <section id="resident-picks" class="resident-picks">
+        <h2>@T["Residents.Picks"]</h2>
+        <p class="featured-note">@T["Featured.TeleportNote"]</p>
+        <div class="front-cards-grid featured-cards">
+            @foreach (var pick in p.Picks)
+            {
+                var teleport = Model.TeleportOf(pick);
+                <article class="front-card card featured-card resident-pick">
+                    @if (pick.SnapshotId == Guid.Empty)
+                    {
+                        <div class="front-card-picture front-card-blank" aria-hidden="true"></div>
+                    }
+                    else
+                    {
+                        <img class="front-card-picture" src="/residents/pick/@(pick.Id).jpg" alt="" loading="lazy">
+                    }
+                    <div class="front-card-body">
+                        <h3 class="front-card-name">@(pick.Name.Length > 0 ? pick.Name : T["Featured.Unnamed"].Value)</h3>
+                        @if (pick.RegionName.Length > 0)
+                        {
+                            <p class="featured-where">@pick.RegionName</p>
+                        }
+                        @if (pick.Description.Length > 0)
+                        {
+                            <p class="featured-description">@pick.Description</p>
+                        }
+                        @if (teleport is not null)
+                        {
+                            <a class="btn btn-primary featured-teleport" href="@teleport">@Html.Raw(GridGate.Launcher.Navigation.ButtonIcons.Svg("map-pin"))@T["Featured.Teleport"]</a>
+                        }
+                    </div>
+                </article>
+            }
+        </div>
+    </section>
+}

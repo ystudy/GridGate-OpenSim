@@ -60,6 +60,8 @@ internal sealed class LauncherFactory : WebApplicationFactory<Program>
     public FakeGridRegions Regions { get; } = new();
     /// <summary>The parcels residents put in search (the Featured page).</summary>
     public FakeListedParcels Listed { get; } = new();
+    /// <summary>The residents' profiles the Residents pages read (no database).</summary>
+    public FakePublicProfiles Profiles { get; } = new();
     /// <summary>The staff list the Staff page reads: the fake Robust's accounts.</summary>
     public FakeStaffDirectory Staff { get; }
     public FakePeopleDirectory People { get; }
@@ -132,6 +134,8 @@ internal sealed class LauncherFactory : WebApplicationFactory<Program>
             services.AddSingleton<IGridRegions>(Regions);
             services.RemoveAll<IListedParcels>();
             services.AddSingleton<IListedParcels>(Listed);
+            services.RemoveAll<IPublicProfiles>();
+            services.AddSingleton<IPublicProfiles>(Profiles);
             services.RemoveAll<IStaffDirectory>();
             services.AddSingleton<IStaffDirectory>(Staff);
             services.RemoveAll<IPeopleDirectory>();

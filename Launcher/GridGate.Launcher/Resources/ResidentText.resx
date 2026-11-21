@@ -698,4 +698,30 @@
   <data name="Featured.Category11" xml:space="preserve"><value>Shopping</value></data>
   <data name="Featured.Category12" xml:space="preserve"><value>Stage</value></data>
   <data name="Featured.Category13" xml:space="preserve"><value>Other</value></data>
+  <data name="Layout.MenuResidents" xml:space="preserve"><value>Residents</value></data>
+  <data name="Residents.Title" xml:space="preserve"><value>Residents</value></data>
+  <data name="Residents.Intro" xml:space="preserve"><value>Meet the people who live here.</value></data>
+  <data name="Residents.StatShown" xml:space="preserve"><value>On this page</value></data>
+  <data name="Residents.Unavailable" xml:space="preserve"><value>The residents can't be shown right now. Please try again in a few minutes.</value></data>
+  <data name="Residents.None" xml:space="preserve"><value>Nobody is shown here yet. Residents choose to be shown here from their Account page.</value></data>
+  <data name="Residents.AddMe" xml:space="preserve"><value>Add my profile</value></data>
+  <data name="Residents.Search" xml:space="preserve"><value>Search residents</value></data>
+  <data name="Residents.Sort" xml:space="preserve"><value>Order</value></data>
+  <data name="Residents.SortNewest" xml:space="preserve"><value>Newest members</value></data>
+  <data name="Residents.SortName" xml:space="preserve"><value>By name</value></data>
+  <data name="Residents.NoMatch" xml:space="preserve"><value>No resident matches that search.</value></data>
+  <data name="Residents.MemberSince" xml:space="preserve"><value>Member since {0}</value></data>
+  <data name="Residents.Back" xml:space="preserve"><value>All residents</value></data>
+  <data name="Residents.WantTo" xml:space="preserve"><value>I want to</value></data>
+  <data name="Residents.Skills" xml:space="preserve"><value>Skills</value></data>
+  <data name="Residents.Languages" xml:space="preserve"><value>Languages</value></data>
+  <data name="Residents.WebPage" xml:space="preserve"><value>Web page</value></data>
+  <data name="Residents.Picks" xml:space="preserve"><value>Picks</value></data>
+  <data name="Account.PublicTitle" xml:space="preserve"><value>Residents page</value></data>
+  <data name="Account.PublicSwitch" xml:space="preserve"><value>Show my profile on the Residents page</value></data>
+  <data name="Account.PublicNote" xml:space="preserve"><value>Anyone can see your name, profile picture, About, interests and picks there. You change them in your viewer's profile.</value></data>
+  <data name="Account.PublicSave" xml:space="preserve"><value>Save</value></data>
+  <data name="Account.PublicSaved" xml:space="preserve"><value>Saved.</value></data>
+  <data name="Account.PublicSee" xml:space="preserve"><value>See my page</value></data>
+  <data name="Account.PublicHeld" xml:space="preserve"><value>Staff took your profile off the Residents page.</value></data>
 </root>
