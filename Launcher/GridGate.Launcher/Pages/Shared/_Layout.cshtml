@@ -103,6 +103,11 @@
 <script src="/lib/bootstrap/bootstrap.bundle.min.js" asp-append-version="true"></script>
 <script src="/js/copy.js" asp-append-version="true"></script>
 <script src="/js/live.js" asp-append-version="true"></script>
+@if (User.Identity?.IsAuthenticated == true)
+{
+    @* Back after signing out must not show this page again from the browser's back/forward cache. *@
+    <script src="/js/back-check.js" asp-append-version="true"></script>
+}
 @await RenderSectionAsync("Scripts", required: false)
 </body>
 </html>
