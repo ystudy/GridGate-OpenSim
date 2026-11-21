@@ -2026,7 +2026,8 @@ namespace OpenSim.Region.CoreModules.World.Land
             }
 
             // need to update dwell here bc landdata has no parent info
-            if(LandData is not null && m_dwellModule is not null)
+            // GridGate: not when the dwell module keeps the number itself (IKeepsOwnDwell): it counts visits, not minutes.
+            if(LandData is not null && m_dwellModule is not null && m_dwellModule is not IKeepsOwnDwell)
             {
                 double now = Util.GetTimeStampMS();
                 double elapsed = now - LandData.LastDwellTimeMS;

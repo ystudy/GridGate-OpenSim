@@ -657,4 +657,45 @@
   <data name="Map.Close" xml:space="preserve"><value>Cerrar</value></data>
   <data name="Map.ZoomIn" xml:space="preserve"><value>Acercar</value></data>
   <data name="Map.ZoomOut" xml:space="preserve"><value>Alejar</value></data>
+  <data name="Layout.MenuFeatured" xml:space="preserve"><value>Destacados</value></data>
+  <data name="Featured.Title" xml:space="preserve"><value>Lugares destacados</value></data>
+  <data name="Featured.Intro" xml:space="preserve"><value>Lugares que los residentes eligieron mostrar. Teletranspórtate directamente con tu visor.</value></data>
+  <data name="Featured.StatPlaces" xml:space="preserve"><value>Lugares</value></data>
+  <data name="Featured.StatVisits" xml:space="preserve"><value>Visitas recientes</value></data>
+  <data name="Featured.StatCategories" xml:space="preserve"><value>Categorías</value></data>
+  <data name="Featured.StatRegions" xml:space="preserve"><value>Regiones</value></data>
+  <data name="Featured.TeleportNote" xml:space="preserve"><value>Los enlaces de teletransporte abren tu visor.</value></data>
+  <data name="Featured.Search" xml:space="preserve"><value>Buscar lugares</value></data>
+  <data name="Featured.AnyCategory" xml:space="preserve"><value>Todas las categorías</value></data>
+  <data name="Featured.AnyRating" xml:space="preserve"><value>Todas las clasificaciones</value></data>
+  <data name="Featured.Sort" xml:space="preserve"><value>Ordenar</value></data>
+  <data name="Featured.SortVisits" xml:space="preserve"><value>Más visitados</value></data>
+  <data name="Featured.SortName" xml:space="preserve"><value>Por nombre</value></data>
+  <data name="Featured.Show" xml:space="preserve"><value>Mostrar</value></data>
+  <data name="Featured.Teleport" xml:space="preserve"><value>Teletransportarse</value></data>
+  <data name="Featured.Visits" xml:space="preserve"><value>{0} visitas recientes</value></data>
+  <data name="Featured.VisitOne" xml:space="preserve"><value>1 visita reciente</value></data>
+  <data name="Featured.Unnamed" xml:space="preserve"><value>Lugar sin nombre</value></data>
+  <data name="Featured.None" xml:space="preserve"><value>Todavía no hay lugares en la lista. Para añadir el tuyo: en tu visor, Acerca del terreno → Opciones → Mostrar en la búsqueda.</value></data>
+  <data name="Featured.NoMatch" xml:space="preserve"><value>Ningún lugar coincide. Prueba otras palabras u otra categoría.</value></data>
+  <data name="Featured.Unavailable" xml:space="preserve"><value>No se puede leer el directorio ahora. Inténtalo de nuevo en un minuto.</value></data>
+  <data name="Featured.Previous" xml:space="preserve"><value>Anterior</value></data>
+  <data name="Featured.Next" xml:space="preserve"><value>Siguiente</value></data>
+  <data name="Featured.Page" xml:space="preserve"><value>Página {0} de {1}</value></data>
+  <data name="Featured.RatingGeneral" xml:space="preserve"><value>General</value></data>
+  <data name="Featured.RatingModerate" xml:space="preserve"><value>Moderado</value></data>
+  <data name="Featured.RatingAdult" xml:space="preserve"><value>Adulto</value></data>
+  <data name="Featured.Category1" xml:space="preserve"><value>Lugar del grid</value></data>
+  <data name="Featured.Category2" xml:space="preserve"><value>Adultos</value></data>
+  <data name="Featured.Category3" xml:space="preserve"><value>Arte y cultura</value></data>
+  <data name="Featured.Category4" xml:space="preserve"><value>Negocios</value></data>
+  <data name="Featured.Category5" xml:space="preserve"><value>Educación</value></data>
+  <data name="Featured.Category6" xml:space="preserve"><value>Juegos</value></data>
+  <data name="Featured.Category7" xml:space="preserve"><value>Lugar de encuentro</value></data>
+  <data name="Featured.Category8" xml:space="preserve"><value>Para recién llegados</value></data>
+  <data name="Featured.Category9" xml:space="preserve"><value>Parques y naturaleza</value></data>
+  <data name="Featured.Category10" xml:space="preserve"><value>Residencial</value></data>
+  <data name="Featured.Category11" xml:space="preserve"><value>Compras</value></data>
+  <data name="Featured.Category12" xml:space="preserve"><value>Escenario</value></data>
+  <data name="Featured.Category13" xml:space="preserve"><value>Otros</value></data>
 </root>

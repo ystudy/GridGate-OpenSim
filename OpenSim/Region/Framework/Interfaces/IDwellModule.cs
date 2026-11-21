@@ -35,4 +35,13 @@ namespace OpenSim.Region.Framework.Interfaces
         int GetDwell(UUID parcelID);
         int GetDwell(LandData land);
     }
+
+    /// <summary>
+    /// GridGate: a dwell module that keeps <c>LandData.Dwell</c> itself (GridGate's parcel traffic counter, spec
+    /// 2026-11-21-featured-places-design). <c>LandObject.OnFrame</c> then leaves the number alone instead of adding
+    /// avatar-minutes to it.
+    /// </summary>
+    public interface IKeepsOwnDwell : IDwellModule
+    {
+    }
 }

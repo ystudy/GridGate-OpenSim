@@ -147,6 +147,23 @@ public sealed class GridConfigWriterTests : IDisposable
         Assert.Equal("http://203.0.113.7:8001/guest/forgot-password", Robust().Get("GridInfoService", "password"));
     }
 
+    /// <summary>Featured places (spec 2026-11-21-featured-places-design): every region counts parcel traffic with GridGate's module.</summary>
+    [Fact]
+    public void Region_ini_turns_on_the_traffic_counter()
+    {
+        Write(Make());
+        Assert.Equal("GridGateTraffic", Region().Get("Dwell", "DwellModule"));
+    }
+
+    /// <summary>Featured places' pictures: Robust loads GridGate's snapshot converter on its private port.</summary>
+    [Fact]
+    public void Robust_lists_the_snapshot_converter()
+    {
+        Write(Make());
+        Assert.Equal("${Const|PrivatePort}/GridGateSnapshots.dll:GridGateSnapshotsConnector",
+            Robust().Get("ServiceList", "GridGateSnapshotsConnector"));
+    }
+
     [Fact]
     public void Region_ready_reports_to_the_gridgate_route_and_templates_name_the_grid_GridGate()
     {

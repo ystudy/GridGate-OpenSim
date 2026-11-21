@@ -1,0 +1,42 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Tests for GridGate's Robust snapshot converter (spec 2026-11-21-featured-places-design, "Pictures"): a real JPEG 2000
+    texture from bin/assets in, a JPEG out, and what it refuses.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <NoWarn>CA1416</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Runs on Microsoft.Testing.Platform (selected in global.json); no VSTest packages needed. -->
+    <PackageReference Include="xunit.v3" Version="4.0.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- System.Drawing on Linux needs libgdiplus and this switch, as Robust's own runtimeconfig has. -->
+    <RuntimeHostConfigurationOption Include="System.Drawing.EnableUnixSupport" Value="true" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../addon-modules/GridGateSnapshots/GridGateSnapshots.csproj">
+      <Private>True</Private>
+    </ProjectReference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="CSJ2K">
+      <HintPath>$(GgRoot)bin/CSJ2K.dll</HintPath>
+    </Reference>
+    <Reference Include="System.Drawing.Common">
+      <HintPath>$(GgRoot)bin/System.Drawing.Common.dll</HintPath>
+    </Reference>
+    <None Include="$(GgRoot)bin/assets/TexturesAssetSet/d21e44ca-ff1c-a96e-b2ef-c0753426b7d9.j2c" Link="data/texture.j2c" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

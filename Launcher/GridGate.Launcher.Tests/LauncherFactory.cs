@@ -58,6 +58,8 @@ internal sealed class LauncherFactory : WebApplicationFactory<Program>
     public FakeOnlineUsers OnlineUsers { get; } = new();
     /// <summary>The whole grid's regions as Robust lists them (the splash page counts them).</summary>
     public FakeGridRegions Regions { get; } = new();
+    /// <summary>The parcels residents put in search (the Featured page).</summary>
+    public FakeListedParcels Listed { get; } = new();
     /// <summary>The staff list the Staff page reads: the fake Robust's accounts.</summary>
     public FakeStaffDirectory Staff { get; }
     public FakePeopleDirectory People { get; }
@@ -128,6 +130,8 @@ internal sealed class LauncherFactory : WebApplicationFactory<Program>
             services.AddSingleton<GridGate.Launcher.Dashboard.IServiceChecks>(Checks);
             services.RemoveAll<IGridRegions>();
             services.AddSingleton<IGridRegions>(Regions);
+            services.RemoveAll<IListedParcels>();
+            services.AddSingleton<IListedParcels>(Listed);
             services.RemoveAll<IStaffDirectory>();
             services.AddSingleton<IStaffDirectory>(Staff);
             services.RemoveAll<IPeopleDirectory>();

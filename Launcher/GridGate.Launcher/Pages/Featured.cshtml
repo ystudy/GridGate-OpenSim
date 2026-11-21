@@ -1,0 +1,127 @@
+@page "/featured"
+@model GridGate.Launcher.Pages.FeaturedModel
+@{
+    Layout = "_GuestLayout";
+    ViewData["Title"] = T["Featured.Title"].Value;
+    var view = Model.View;
+    string[] ratings = ["Featured.RatingGeneral", "Featured.RatingModerate", "Featured.RatingAdult"];
+}
+@* The Featured places directory (spec 2026-11-21-featured-places-design): parcels residents put in search. *@
+<section class="featured-head">
+    <h1>@T["Featured.Title"]</h1>
+    <p class="tone-text featured-intro">@T["Featured.Intro"]</p>
+</section>
+
+@if (!Model.Available)
+{
+    <p id="featured-unavailable" class="featured-empty" role="status">@T["Featured.Unavailable"]</p>
+}
+else if (view.Stats.Places == 0)
+{
+    <p id="featured-none" class="featured-empty">@T["Featured.None"]</p>
+}
+else
+{
+    @if (Model.Numbers.Count > 0)
+    {
+        <section id="featured-numbers" class="front-numbers" aria-label="@T["Featured.Title"]">
+            @foreach (var n in Model.Numbers)
+            {
+                <div class="front-number">
+                    <span class="front-number-value">@n.Value</span>
+                    <span class="front-number-label">@T[n.Key]</span>
+                </div>
+            }
+        </section>
+    }
+    <p class="featured-note">@T["Featured.TeleportNote"]</p>
+
+    <form id="featured-filter" class="featured-filter" method="get" action="/featured" role="search">
+        <input class="form-control" type="search" id="featured-q" name="q" value="@view.Filter.Q" maxlength="100"
+               placeholder="@T["Featured.Search"]" aria-label="@T["Featured.Search"]">
+        <select class="form-select" name="category" aria-label="@T["Featured.StatCategories"]">
+            <option value="">@T["Featured.AnyCategory"]</option>
+            @foreach (var c in view.Categories)
+            {
+                <option value="@c.Category" selected="@(view.Filter.Category == c.Category)">@T[$"Featured.Category{c.Category}"] (@c.Count)</option>
+            }
+        </select>
+        @if (view.CanPickRating)
+        {
+            <select class="form-select" name="rating" aria-label="@T["Featured.AnyRating"]">
+                <option value="">@T["Featured.AnyRating"]</option>
+                @for (var r = 0; r < ratings.Length; r++)
+                {
+                    <option value="@r" selected="@(view.Filter.Rating == r)">@T[ratings[r]]</option>
+                }
+            </select>
+        }
+        <select class="form-select" name="sort" aria-label="@T["Featured.Sort"]">
+            <option value="visits" selected="@(view.Filter.Sort == "visits")">@T["Featured.SortVisits"]</option>
+            <option value="name" selected="@(view.Filter.Sort == "name")">@T["Featured.SortName"]</option>
+        </select>
+        <button type="submit" class="btn btn-primary">@T["Featured.Show"]</button>
+    </form>
+
+    @if (!view.Matched)
+    {
+        <p id="featured-no-match" class="featured-empty" role="status">@T["Featured.NoMatch"]</p>
+    }
+    else
+    {
+        <div id="featured-places" class="front-cards-grid featured-cards">
+            @foreach (var p in view.Page)
+            {
+                var parcel = p.Parcel;
+                var where = parcel.Category != 0 ? p.Region.Name + " · " + T[$"Featured.Category{parcel.Category}"].Value : p.Region.Name;
+                <article class="front-card card featured-card">
+                    @if (Model.NoPicture(p))
+                    {
+                        <div class="front-card-picture front-card-blank" aria-hidden="true"></div>
+                    }
+                    else
+                    {
+                        <img class="front-card-picture" src="/featured/picture/@(parcel.Id).jpg" alt="" loading="lazy">
+                    }
+                    <div class="front-card-body">
+                        <h2 class="front-card-name">@(parcel.Name.Length > 0 ? parcel.Name : T["Featured.Unnamed"].Value)</h2>
+                        <p class="featured-where">
+                            @where
+                            @if (parcel.Rating > 0)
+                            {
+                                <span class="featured-rating featured-rating-@parcel.Rating">@T[ratings[parcel.Rating]]</span>
+                            }
+                        </p>
+                        @if (parcel.Description.Length > 0)
+                        {
+                            <p class="featured-description">@parcel.Description</p>
+                        }
+                        @if (parcel.Visits == 1)
+                        {
+                            <p class="featured-visits">@T["Featured.VisitOne"]</p>
+                        }
+                        else if (parcel.Visits > 1)
+                        {
+                            <p class="featured-visits">@T["Featured.Visits", parcel.Visits.ToString("N0", System.Globalization.CultureInfo.CurrentUICulture)]</p>
+                        }
+                        <a class="btn btn-primary featured-teleport" href="@Model.TeleportOf(p)">@Html.Raw(GridGate.Launcher.Navigation.ButtonIcons.Svg("map-pin"))@T["Featured.Teleport"]</a>
+                    </div>
+                </article>
+            }
+        </div>
+        @if (view.PageCount > 1)
+        {
+            <nav class="featured-pages" aria-label="@T["Featured.Page", view.PageNumber, view.PageCount]">
+                @if (view.PageNumber > 1)
+                {
+                    <a id="featured-previous" class="btn btn-secondary" href="@Model.PageLink(view.PageNumber - 1)">@T["Featured.Previous"]</a>
+                }
+                <span class="featured-page">@T["Featured.Page", view.PageNumber, view.PageCount]</span>
+                @if (view.PageNumber < view.PageCount)
+                {
+                    <a id="featured-next" class="btn btn-secondary" href="@Model.PageLink(view.PageNumber + 1)">@T["Featured.Next"]</a>
+                }
+            </nav>
+        }
+    }
+}

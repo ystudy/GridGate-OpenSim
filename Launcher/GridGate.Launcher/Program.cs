@@ -217,7 +217,7 @@ builder.Services.AddRazorPages(o =>
     // The operator's legal pages and the sign-up page are public in the same way.
     // The coins page too (money plan 2): where the viewer's Buy currency window sends residents.
     // The world map too: the page itself says who sees regions (WorldMapAccess).
-    foreach (var publicPage in new[] { "/Home", "/Legal", "/SignUp", "/Coins", "/Map" })
+    foreach (var publicPage in new[] { "/Home", "/Legal", "/SignUp", "/Coins", "/Map", "/Featured" })
         o.Conventions.AddPageApplicationModelConvention(publicPage, m => m.Filters.Add(new GuestSideOnly()));
     // The owner's legal editor: the Security folder's owner policy, and not there where there is no guest side.
     o.Conventions.AddPageApplicationModelConvention("/Security/Legal", m => m.Filters.Add(new GuestSideOnly()));
@@ -243,7 +243,7 @@ builder.Services.AddRazorPages(o =>
     // The same for the Email pages: email is for the guest side's sign-up and password reset.
     foreach (var emailPage in new[] { "/Security/Email", "/Security/EmailWording", "/Security/Wording", "/Security/Languages", "/Security/Translate" })
         o.Conventions.AddPageApplicationModelConvention(emailPage, m => m.Filters.Add(new GuestSideOnly()));
-    foreach (var open in new[] { "/Login", "/Login/Code", "/Logout", "/Welcome", "/Waiting", "/SetupDone", "/Setup", "/Home", "/Legal", "/SignUp", "/Guest/SignIn", "/Guest/SignInCode", "/Guest/ForgotPassword", "/Guest/ResetPassword", "/Guest/Confirm", "/Guest/ConfirmEmail", "/Guest/Connect", "/Language", "/Coins", "/Map" })
+    foreach (var open in new[] { "/Login", "/Login/Code", "/Logout", "/Welcome", "/Waiting", "/SetupDone", "/Setup", "/Home", "/Legal", "/SignUp", "/Guest/SignIn", "/Guest/SignInCode", "/Guest/ForgotPassword", "/Guest/ResetPassword", "/Guest/Confirm", "/Guest/ConfirmEmail", "/Guest/Connect", "/Language", "/Coins", "/Map", "/Featured" })
         o.Conventions.AllowAnonymousToPage(open);
     o.Conventions.AllowAnonymousToFolder("/Setup");
     // Support tickets for guests: open to anyone (each page checks the ticket's link or cookie), only where there is a guest side.
@@ -257,7 +257,7 @@ builder.Services.AddRazorPages(o =>
     o.Conventions.AddPageApplicationModelConvention("/Language", m => m.Filters.Add(new GuestSideOnly()));
     foreach (var folder in new[] { "/Guest", "/Support" })
         o.Conventions.AddFolderApplicationModelConvention(folder, m => m.Filters.Add(new ResidentLanguageFilter(welcome: false)));
-    foreach (var page in new[] { "/Home", "/Legal", "/SignUp", "/Coins", "/Map" })
+    foreach (var page in new[] { "/Home", "/Legal", "/SignUp", "/Coins", "/Map", "/Featured" })
         o.Conventions.AddPageApplicationModelConvention(page, m => m.Filters.Add(new ResidentLanguageFilter(welcome: false)));
     // The dashboard's forms post here: a POST to "/" belongs to the port-8001 contract (LegacyRootPolicy).
     o.Conventions.AddPageRoute("/Index", "dashboard");
@@ -407,6 +407,13 @@ builder.Services.AddSingleton(sp => new ThemeStore(paths, sp.GetRequiredKeyedSer
 builder.Services.AddSingleton<SplashSnapshot>();
 builder.Services.AddSingleton<GridGate.Launcher.Front.FrontPageSnapshot>();
 builder.Services.AddSingleton<GridGate.Launcher.World.WorldMapSnapshot>();
+builder.Services.AddSingleton<IListedParcels>(sp => new ListedParcels(sp.GetRequiredService<Func<LauncherSettings>>(),
+    sp.GetRequiredService<ILogger<ListedParcels>>()));
+builder.Services.AddSingleton<GridGate.Launcher.Featured.FeaturedDirectory>();
+// Parcel snapshots for the Featured cards: Robust's asset service and its GridGate converter, on the private port.
+builder.Services.AddHttpClient(GridGate.Launcher.Featured.ParcelPictures.ClientName, c => c.Timeout = TimeSpan.FromSeconds(15));
+builder.Services.AddSingleton(sp => new GridGate.Launcher.Featured.ParcelPictures(sp.GetRequiredService<IHttpClientFactory>(),
+    sp.GetRequiredService<Func<LauncherSettings>>(), sp.GetRequiredService<TimeProvider>()));
 builder.Services.AddSingleton<GridGate.Launcher.Front.FrontMapTiles>();
 builder.Services.AddSingleton<GridGate.Launcher.Front.FrontPageView>();
 // The Home dashboard's counts (design 2026-11-05-dashboard), cached a minute.
@@ -558,6 +565,7 @@ SetupApi.Map(app);
 SplashApi.Map(app);
 FrontApi.Map(app);
 WorldMapApi.Map(app);
+FeaturedApi.Map(app);
 EconomyApi.Map(app);
 app.MapRazorPages();
 

@@ -1,0 +1,65 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    GridGate's parcel traffic counter (spec 2026-11-21-featured-places-design): OpenSim's dwell module, counting each
+    parcel's recent visits into the land table's Dwell column, which About Land shows as Traffic.
+  -->
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <AssemblyName>GridGateTraffic</AssemblyName>
+    <RootNamespace>GridGate.Region.Traffic</RootNamespace>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <Deterministic>true</Deterministic>
+    <ProduceReferenceAssembly>false</ProduceReferenceAssembly>
+    <GenerateDependencyFile>false</GenerateDependencyFile>
+    <EnableDefaultItems>false</EnableDefaultItems>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <WarningLevel>4</WarningLevel>
+    <NoWarn>CA1416</NoWarn>
+    <PlatformTarget>AnyCPU</PlatformTarget>
+    <UseCommonOutputDirectory>True</UseCommonOutputDirectory>
+    <AppendTargetFrameworkToOutputPath>False</AppendTargetFrameworkToOutputPath>
+    <AppendRuntimeIdentifierToOutputPath>False</AppendRuntimeIdentifierToOutputPath>
+    <OutputPath>$(GgRoot)bin\</OutputPath>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="log4net">
+      <HintPath>$(GgRoot)bin\log4net.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="Mono.Addins">
+      <HintPath>$(GgRoot)bin\Mono.Addins.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="Nini">
+      <HintPath>$(GgRoot)bin\Nini.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="OpenMetaverse">
+      <HintPath>$(GgRoot)bin\OpenMetaverse.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="OpenMetaverseTypes">
+      <HintPath>$(GgRoot)bin\OpenMetaverseTypes.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="$(GgRoot)OpenSim\Framework\OpenSim.Framework.csproj">
+      <Private>False</Private>
+    </ProjectReference>
+    <ProjectReference Include="$(GgRoot)OpenSim\Region\Framework\OpenSim.Region.Framework.csproj">
+      <Private>False</Private>
+    </ProjectReference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="AssemblyInfo.cs" />
+    <Compile Include="ParcelTraffic.cs" />
+    <Compile Include="GridGateTrafficModule.cs" />
+  </ItemGroup>
+</Project>

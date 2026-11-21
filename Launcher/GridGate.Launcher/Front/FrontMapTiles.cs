@@ -16,19 +16,26 @@ public sealed class FrontMapTiles(IGridController grid, IHttpClientFactory http,
     private readonly Dictionary<Guid, Kept> _tiles = [];
 
     /// <summary>The region's tile; empty bytes when the grid has none yet (a missing tile is kept too, so it isn't asked again at once).</summary>
-    public Task<(byte[] Bytes, string ContentType)> TileAsync(FrontAutoPlace place, CancellationToken ct)
+    public Task<(byte[] Bytes, string ContentType)> TileAsync(FrontAutoPlace place, CancellationToken ct) =>
+        TileAsync(new GridRegion(place.RegionId, place.Name, place.X, place.Y), ct);
+
+    /// <summary>
+    /// The tile of any region a public page shows (the Featured page's places too); the caller checks the page shows it.
+    /// Empty bytes when the grid has none yet.
+    /// </summary>
+    public Task<(byte[] Bytes, string ContentType)> TileAsync(GridRegion region, CancellationToken ct)
     {
         var now = time.GetUtcNow();
         Kept kept;
         lock (_gate)
         {
-            if (!_tiles.TryGetValue(place.RegionId, out kept!) || now >= kept.Until || kept.Tile.IsFaulted || kept.Tile.IsCanceled)
+            if (!_tiles.TryGetValue(region.Id, out kept!) || now >= kept.Until || kept.Tile.IsFaulted || kept.Tile.IsCanceled)
             {
                 // Not tied to this visitor's request: one who leaves mustn't cancel the ask the others are waiting on. The
                 // map client's own timeout ends it.
-                kept = new Kept(MapTiles.FetchAsync(new GridRegion(place.RegionId, place.Name, place.X, place.Y), grid, http, CancellationToken.None),
+                kept = new Kept(MapTiles.FetchAsync(region, grid, http, CancellationToken.None),
                     now + FrontPageSnapshot.Lifetime);
-                _tiles[place.RegionId] = kept;
+                _tiles[region.Id] = kept;
                 // Regions that left the list are dropped, so the cache never holds more than the list and a few recent ones.
                 foreach (var (id, old) in _tiles.ToList())
                     if (now >= old.Until) _tiles.Remove(id);

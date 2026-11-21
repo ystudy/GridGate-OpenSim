@@ -133,7 +133,7 @@ public sealed class LegalPagesTests
         Assert.Contains("<script>alert(2)</script>", page.QuerySelector("main article")!.TextContent);
         Assert.Equal("Terms - Avalon", page.Title);
         Assert.All(page.QuerySelectorAll("header nav a"), a => // none of the staff side: only the public menu's pages
-            Assert.Contains(a.GetAttribute("href"), new[] { "/home", "/map", "/guest/connect", "/support", "/guest/forgot-password" }));
+            Assert.Contains(a.GetAttribute("href"), new[] { "/home", "/map", "/featured", "/guest/connect", "/support", "/guest/forgot-password" }));
     }
 
     [Theory]

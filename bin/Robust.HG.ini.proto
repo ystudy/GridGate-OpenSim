@@ -107,6 +107,8 @@ NoVerifyCertHostname=true
 [ServiceList]
 AssetServiceConnector="${Const|PrivatePort}/OpenSim.Server.Handlers.dll:AssetServiceConnector"
 InventoryInConnector="${Const|PrivatePort}/OpenSim.Server.Handlers.dll:XInventoryInConnector"
+;; GridGate: turns parcel snapshots (JPEG 2000) into JPEGs for the launcher's Featured page; private port only.
+GridGateSnapshotsConnector="${Const|PrivatePort}/GridGateSnapshots.dll:GridGateSnapshotsConnector"
 VoiceConnector=
 
 ;; Uncomment if you have set up Freeswitch (see [FreeswitchService] below)
