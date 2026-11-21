@@ -698,4 +698,30 @@
   <data name="Featured.Category11" xml:space="preserve"><value>Shopping</value></data>
   <data name="Featured.Category12" xml:space="preserve"><value>Scène</value></data>
   <data name="Featured.Category13" xml:space="preserve"><value>Autre</value></data>
+  <data name="Layout.MenuResidents" xml:space="preserve"><value>Résidents</value></data>
+  <data name="Residents.Title" xml:space="preserve"><value>Résidents</value></data>
+  <data name="Residents.Intro" xml:space="preserve"><value>Découvrez les personnes qui vivent ici.</value></data>
+  <data name="Residents.StatShown" xml:space="preserve"><value>Sur cette page</value></data>
+  <data name="Residents.Unavailable" xml:space="preserve"><value>Les résidents ne peuvent pas être affichés pour le moment. Réessayez dans quelques minutes.</value></data>
+  <data name="Residents.None" xml:space="preserve"><value>Personne n’est encore affiché ici. Les résidents choisissent d’apparaître ici depuis leur page Compte.</value></data>
+  <data name="Residents.AddMe" xml:space="preserve"><value>Ajouter mon profil</value></data>
+  <data name="Residents.Search" xml:space="preserve"><value>Chercher des résidents</value></data>
+  <data name="Residents.Sort" xml:space="preserve"><value>Ordre</value></data>
+  <data name="Residents.SortNewest" xml:space="preserve"><value>Nouveaux membres</value></data>
+  <data name="Residents.SortName" xml:space="preserve"><value>Par nom</value></data>
+  <data name="Residents.NoMatch" xml:space="preserve"><value>Aucun résident ne correspond à cette recherche.</value></data>
+  <data name="Residents.MemberSince" xml:space="preserve"><value>Membre depuis {0}</value></data>
+  <data name="Residents.Back" xml:space="preserve"><value>Tous les résidents</value></data>
+  <data name="Residents.WantTo" xml:space="preserve"><value>Je veux</value></data>
+  <data name="Residents.Skills" xml:space="preserve"><value>Compétences</value></data>
+  <data name="Residents.Languages" xml:space="preserve"><value>Langues</value></data>
+  <data name="Residents.WebPage" xml:space="preserve"><value>Page web</value></data>
+  <data name="Residents.Picks" xml:space="preserve"><value>Favoris</value></data>
+  <data name="Account.PublicTitle" xml:space="preserve"><value>Page des résidents</value></data>
+  <data name="Account.PublicSwitch" xml:space="preserve"><value>Afficher mon profil sur la page des résidents</value></data>
+  <data name="Account.PublicNote" xml:space="preserve"><value>Tout le monde peut y voir votre nom, votre photo de profil, votre « À propos », vos centres d’intérêt et vos favoris. Vous les modifiez dans le profil de votre viewer.</value></data>
+  <data name="Account.PublicSave" xml:space="preserve"><value>Enregistrer</value></data>
+  <data name="Account.PublicSaved" xml:space="preserve"><value>Enregistré.</value></data>
+  <data name="Account.PublicSee" xml:space="preserve"><value>Voir ma page</value></data>
+  <data name="Account.PublicHeld" xml:space="preserve"><value>L’équipe a retiré votre profil de la page des résidents.</value></data>
 </root>

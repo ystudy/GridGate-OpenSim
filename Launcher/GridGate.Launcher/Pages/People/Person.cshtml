@@ -2,6 +2,7 @@
 @model GridGate.Launcher.Pages.People.PersonModel
 @inject GridGate.Launcher.Core.Starter.StarterAvatarList Starters
 @inject GridGate.Launcher.Core.Money.MoneyGate MoneyGate
+@inject Func<GridGate.Launcher.Core.Settings.LauncherSettings> Settings
 @{
     ViewData["Title"] = Model.Person?.FullName ?? "Person";
 }
@@ -72,6 +73,27 @@ else
         </form>
     }
 </div>
+@* Only where the grid has a public side, so a Residents page (spec 2026-11-21-resident-profiles-design, "Staff"). *@
+@if (GridGate.Launcher.Core.Security.AdminRule.HasStaffPages(Settings()))
+{
+    <div id="person-public-profile" class="mb-3">
+        <span>Residents page: @(Model.PublicProfile switch
+        {
+            GridGate.Launcher.Core.Guests.PublicProfileState.On => "shown",
+            GridGate.Launcher.Core.Guests.PublicProfileState.Held => "taken off by staff",
+            _ => "not shown",
+        })</span>
+        @if (Model.ProfileTask is { } profileTask)
+        {
+            var label = profileTask == GridGate.Launcher.Core.Security.PersonTask.HoldProfile ? "Take off the Residents page" : "Allow on the Residents page again";
+            <form method="post" action="/people/@a.PrincipalId?handler=Task" asp-antiforgery="true" class="d-inline ms-2">
+                <input type="hidden" name="id" value="@a.PrincipalId">
+                <input type="hidden" name="task" value="@profileTask">
+                <button type="submit" class="btn btn-sm people-icon btn-outline-secondary" data-task="@profileTask" title="@label" aria-label="@($"{label}: {p.FullName}")"><svg aria-hidden="true"><use href="/img/icons.svg#eye"></use></svg><span class="ms-1">@label</span></button>
+            </form>
+        }
+    </div>
+}
 @if (Model.Person is { } coinsFor && MoneyGate.ServiceHere)
 {
     <p id="person-coins" class="mb-3"><a href="/money/person?id=@coinsFor.Row.Account.PrincipalId">Coins</a>: balance, history and changes.</p>

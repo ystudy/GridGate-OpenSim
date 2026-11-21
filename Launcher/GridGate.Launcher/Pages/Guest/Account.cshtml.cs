@@ -3,9 +3,11 @@ using System.Globalization;
 using GridGate.Launcher.Core;
 using GridGate.Launcher.Core.OpenSim;
 using GridGate.Launcher.Core.Security;
+using GridGate.Launcher.Core.Guests;
 using GridGate.Launcher.Core.Settings;
 using GridGate.Launcher.Guests;
 using GridGate.Launcher.Resident;
+using GridGate.Launcher.Residents;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.Extensions.Localization;
@@ -19,7 +21,8 @@ namespace GridGate.Launcher.Pages.Guest;
 /// the new stamp, so it stays signed in while every other session ends.
 /// </summary>
 public sealed class AccountModel(AccountChanges changes, IRobustClient robust, Func<LauncherSettings> settings, RegionRights rights,
-    ResidentTwoFactor residents, EmailLanguage emailLanguage, OfferedLanguages offeredLanguages, ResidentLanguages languages, ILogger<AccountModel> log, IStringLocalizer<ResidentText> t) : PageModel
+    ResidentTwoFactor residents, EmailLanguage emailLanguage, OfferedLanguages offeredLanguages, ResidentLanguages languages,
+    PublicProfileChoices publicProfiles, ResidentDirectory directory, ILogger<AccountModel> log, IStringLocalizer<ResidentText> t) : PageModel
 {
     [BindProperty] public string? Current { get; set; }
     [BindProperty] public string? Code { get; set; }
@@ -40,6 +43,11 @@ public sealed class AccountModel(AccountChanges changes, IRobustClient robust, F
 
     /// <summary>The language shown selected: the one saved for this account, else the one this page is in.</summary>
     public string SelectedLanguage { get; private set; } = Core.Languages.English;
+
+    /// <summary>Whether this account is on the Residents page (spec 2026-11-21-resident-profiles-design).</summary>
+    public PublicProfileState PublicState { get; private set; }
+
+    [TempData] public string? PublicNotice { get; set; }
 
     /// <summary>Shown when the account can't be read: no forms then.</summary>
     public string? Unavailable { get; private set; }
@@ -98,6 +106,21 @@ public sealed class AccountModel(AccountChanges changes, IRobustClient robust, F
         return Task.FromResult<IActionResult>(RedirectToPage());
     }
 
+    /// <summary>
+    /// The resident's own Residents page switch: an unticked box sends nothing, so anything but "true" is off. Ignored while
+    /// staff hold the profile (the page shows no form then). The shared directory is dropped, so the change shows at once.
+    /// </summary>
+    public IActionResult OnPostPublicProfile(string? shown)
+    {
+        if (GuestSignIn.Read(User) is not { } guest) return Challenge();
+        if (publicProfiles.Choose(guest.Principal, shown == "true"))
+        {
+            directory.Invalidate();
+            PublicNotice = t["Account.PublicSaved"];
+        }
+        return Redirect("/guest/account#public-profile");
+    }
+
     private async Task LoadAsync(Guid principal, CancellationToken ct)
     {
         var s = settings();
@@ -126,6 +149,7 @@ public sealed class AccountModel(AccountChanges changes, IRobustClient robust, F
         EmailChangeAvailable = changes.EmailChangeAvailable();
         TwoFactorLink = ResidentTwoFactor.PageShown(s, residents.Store.StateOf(principal));
         OwnsRegions = rights.OwnedBy(principal).Count > 0;
+        PublicState = publicProfiles.StateOf(principal);
         var offered = offeredLanguages.Current();
         LanguageChoices = [.. offered.Select(c => (c, Core.Languages.NativeName(c)))];
         SelectedLanguage = Core.Languages.Match(languages.Get(principal), offered) ?? ResidentLanguageFilter.Current(HttpContext);

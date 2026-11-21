@@ -46,6 +46,32 @@ else
         <button type="submit" class="btn btn-primary">@T["Account.SaveLanguage"]</button>
     </form>
 
+    @* The Residents page switch (spec 2026-11-21-resident-profiles-design, "The Account page switch"). *@
+    <h2 id="public-profile">@T["Account.PublicTitle"]</h2>
+    @if (Model.PublicState == GridGate.Launcher.Core.Guests.PublicProfileState.Held)
+    {
+        <p id="public-profile-held" class="mb-4">@T["Account.PublicHeld"]</p>
+    }
+    else
+    {
+        <form id="change-public-profile" method="post" asp-page-handler="PublicProfile" class="mb-4">
+            @if (Model.PublicNotice is not null)
+            {
+                <div class="alert alert-success" role="status">@Model.PublicNotice</div>
+            }
+            <div class="form-check mb-2">
+                <input class="form-check-input" type="checkbox" id="public-profile-on" name="shown" value="true" checked="@(Model.PublicState == GridGate.Launcher.Core.Guests.PublicProfileState.On)">
+                <label class="form-check-label" for="public-profile-on">@T["Account.PublicSwitch"]</label>
+            </div>
+            <p class="form-text">@T["Account.PublicNote"]</p>
+            <button type="submit" class="btn btn-primary">@T["Account.PublicSave"]</button>
+            @if (Model.PublicState == GridGate.Launcher.Core.Guests.PublicProfileState.On)
+            {
+                <a id="public-profile-see" class="ms-2" href="@GridGate.Launcher.Residents.ResidentQuery.LinkOf(a.FirstName, a.LastName)">@T["Account.PublicSee"]</a>
+            }
+        </form>
+    }
+
     <h2>@T["Common.ChangePassword"]</h2>
     <form id="change-password" method="post" asp-page-handler="Password" class="mb-4">
         <error-box text="@Model.PasswordError" />

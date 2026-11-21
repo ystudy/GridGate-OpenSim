@@ -307,6 +307,10 @@ public sealed class AccessTests
             // The Featured page's pictures (spec 2026-11-21-featured-places-design): only a place the asker may see on the page
             // answers (its snapshot, else its region's map tile), 404 where there is no guest side.
             "route /featured/picture/{id:guid}.jpg",
+            // The Residents pages' pictures (spec 2026-11-21-resident-profiles-design): a shown resident's profile picture and
+            // their picks' snapshots only, 404 where there is no guest side.
+            "route /residents/picture/{id:guid}.jpg",
+            "route /residents/pick/{id:guid}.jpg",
             // The public front page: SetupGate shows it at "/" to anyone not signed in as staff, where there is a guest side.
             // How coins work here, where those windows send residents (money plan 2).
             "page coins",
@@ -315,6 +319,9 @@ public sealed class AccessTests
             "page map",
             // The Featured places directory: parcels residents put in search; Adult ones only for a signed-in resident or staff.
             "page featured",
+            // The Residents pages: only residents who chose to be shown from their Account page.
+            "page residents",
+            "page residents/{first}/{last}",
             // The guest door: any account at level 0 or more signs in here, to the guest pages only.
             "page guest/sign-in",
             // A resident's two-factor code step: only does anything with the pending cookie the guest password step leaves.
