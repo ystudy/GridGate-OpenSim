@@ -3,6 +3,7 @@ using System.Text.RegularExpressions;
 using AngleSharp.Html.Parser;
 using GridGate.Launcher.Core;
 using GridGate.Launcher.Core.Ini;
+using GridGate.Launcher.Core.Security;
 using GridGate.Launcher.Core.Settings;
 using Xunit;
 using static GridGate.Launcher.IntegrationTests.GridTestSupport;
@@ -188,7 +189,7 @@ public sealed partial class LauncherEndToEndTests
                     ["AddressKind"] = "lan", ["FirstRegionPort"] = sB.RegionPort.ToString(System.Globalization.CultureInfo.InvariantCulture),
                 });
                 Assert.Equal("/setup/avatar", pageB.Path);
-                await FinishSetupFromAvatarAsync(b, "B", pageB, OwnerByName, "Isle");
+                var twoFactor = await FinishSetupFromAvatarAsync(b, "B", pageB, OwnerByName, "Isle", twoFactorStep: true);
 
                 // 3. B joined Avalon, placed Isle beside Hub, runs no grid service, and A's map has both regions.
                 var settingsB = storeB.LoadOrCreate();
@@ -201,8 +202,8 @@ public sealed partial class LauncherEndToEndTests
                 Assert.Contains("Isle", map.Select(r => r.Name));
 
                 await WaitForLoginsEnabledAsync(b.Launcher, sB, "B");
-                // Signing in to B's website as the owner, with the password kept on A.
-                await AssertWebsiteSignInAsync(sB);
+                // Signing in to B's website as the owner, with the password kept on A and the two-factor code kept on B.
+                await AssertWebsiteSignInAsync(sB, twoFactor);
 
                 // 4. Stop A's world; then stop B's and start it again: B can't start without the Grid Asset Server, and
                 // keeps its join.
@@ -261,7 +262,7 @@ public sealed partial class LauncherEndToEndTests
                     ["AddressKind"] = "lan", ["FirstRegionPort"] = sB.RegionPort.ToString(System.Globalization.CultureInfo.InvariantCulture),
                 });
                 Assert.Equal("/setup/avatar", pageB.Path);
-                await FinishSetupFromAvatarAsync(b, "B", pageB, OwnerByName, "Isle");
+                var twoFactor = await FinishSetupFromAvatarAsync(b, "B", pageB, OwnerByName, "Isle", twoFactorStep: true);
 
                 // 3. B is connected to Elsewhere by address (no preset), placed Isle beside Hub, runs no grid service, and
                 // A's map has both regions.
@@ -276,8 +277,8 @@ public sealed partial class LauncherEndToEndTests
                 Assert.Contains("Isle", map.Select(r => r.Name));
 
                 await WaitForLoginsEnabledAsync(b.Launcher, sB, "B");
-                // Signing in to B's website as the owner: Elsewhere checks the password.
-                await AssertWebsiteSignInAsync(sB);
+                // Signing in to B's website as the owner: Elsewhere checks the password, B the two-factor code.
+                await AssertWebsiteSignInAsync(sB, twoFactor);
 
                 // 4. Stop A's world; then stop B's and start it again: B can't start without Elsewhere answering, and keeps
                 // its connection.
@@ -328,10 +329,13 @@ public sealed partial class LauncherEndToEndTests
     /// From the avatar step (<paramref name="page"/>) to the dashboard: the owner (<paramref name="owner"/>), the first
     /// region, its progress until it is ready, and "I'm in!". <paramref name="regionForm"/> picks the region form when the
     /// page has more than one. <paramref name="securityStep"/>: the plan has a guest side, so "What kind of grid is this?"
-    /// comes between the owner and the region (answered Home lab).
+    /// comes between the owner and the region (answered Home lab). <paramref name="twoFactorStep"/>: a Region Server or
+    /// Connected Server, so "Turn on two-factor" comes right after the owner; it is turned on with the secret the page shows,
+    /// which is returned with the step its code used.
     /// </summary>
-    private async Task FinishSetupFromAvatarAsync(SetupSession setup, string which, WebPage page, Dictionary<string, string> owner,
-        string regionName, string regionForm = "main form", bool securityStep = false)
+    private async Task<(byte[] Secret, long UsedStep)?> FinishSetupFromAvatarAsync(SetupSession setup, string which, WebPage page,
+        Dictionary<string, string> owner, string regionName, string regionForm = "main form", bool securityStep = false,
+        bool twoFactorStep = false)
     {
         var web = setup.Web;
         page = await web.SubmitAsync(page, owner);
@@ -339,6 +343,19 @@ public sealed partial class LauncherEndToEndTests
         {
             Assert.Equal("/setup/security", page.Path);
             page = await web.SubmitAsync(page, new() { ["Kind"] = "HomeLab" });
+        }
+        (byte[] Secret, long UsedStep)? twoFactor = null;
+        if (twoFactorStep)
+        {
+            Assert.Equal("/setup/two-factor", page.Path);
+            var shown = new HtmlParser().ParseDocument(page.Html).QuerySelector("#two-factor-secret")?.TextContent;
+            Assert.False(string.IsNullOrWhiteSpace(shown), $"{which}: the two-factor step shows no secret");
+            var secret = FromBase32(shown!);
+            var step = Totp.StepAt(DateTimeOffset.UtcNow);
+            page = await web.SubmitAsync(page, new() { ["Code"] = Totp.Code(secret, step) }, "form#turn-on", redirects: false);
+            Assert.Contains("id=\"backup-codes\"", page.Html);
+            twoFactor = (secret, step);
+            page = await web.FollowAsync("/setup");
         }
         Assert.Equal("/setup/region", page.Path);
         page = await web.SubmitAsync(page, new() { ["RegionName"] = regionName, ["Content"] = "island" }, regionForm);
@@ -348,6 +365,23 @@ public sealed partial class LauncherEndToEndTests
         Assert.Equal("/setup/connect", page.Path);
         page = await web.SubmitAsync(page, new());
         Assert.Equal("/", page.Path);
+        return twoFactor;
+    }
+
+    private static byte[] FromBase32(string text)
+    {
+        const string alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+        var bytes = new List<byte>();
+        int buffer = 0, bits = 0;
+        foreach (var ch in text.Trim().TrimEnd('='))
+        {
+            buffer = (buffer << 5) | alphabet.IndexOf(char.ToUpperInvariant(ch));
+            bits += 5;
+            if (bits < 8) continue;
+            bits -= 8;
+            bytes.Add((byte)(buffer >> bits));
+        }
+        return [.. bytes];
     }
 
     private async Task WaitForLoginsEnabledAsync(LauncherProcess launcher, LauncherSettings s, string which) =>
@@ -360,12 +394,19 @@ public sealed partial class LauncherEndToEndTests
         }, $"{which}: /api/status to report logins enabled", () => "last status: " + _lastStatus);
 
     /// <summary>A fresh browser signs in to the website at <paramref name="s"/>'s port as the owner, "Test Owner".</summary>
-    private static async Task AssertWebsiteSignInAsync(LauncherSettings s)
+    private static async Task AssertWebsiteSignInAsync(LauncherSettings s, (byte[] Secret, long UsedStep)? twoFactor = null)
     {
         using var signIn = new WebSession(s.WebPort);
         var login = await signIn.FollowAsync("/login");
         Assert.Equal("/login", login.Path);
         login = await signIn.SubmitAsync(login, new() { ["Name"] = "Test Owner", ["Password"] = Password });
+        if (twoFactor is { } tf)
+        {
+            Assert.Equal("/login/code", login.Path);
+            // A code's 30-second step is used once: wait for a later one than setup used.
+            while (Totp.StepAt(DateTimeOffset.UtcNow) <= tf.UsedStep) await Task.Delay(TimeSpan.FromSeconds(1), Ct);
+            login = await signIn.SubmitAsync(login, new() { ["Code"] = Totp.Code(tf.Secret, Totp.StepAt(DateTimeOffset.UtcNow)) });
+        }
         Assert.Equal("/", login.Path);
     }
 
