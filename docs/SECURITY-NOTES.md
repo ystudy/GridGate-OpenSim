@@ -52,6 +52,12 @@ Any staff member can turn on two-factor sign-in on the Two-factor page (`/profil
 
 The Security page (`/security`, owner only) has the switch "Require two-factor sign-in for admins and supervisors". When it is on, they must set up two-factor the next time they sign in, or when they next open a page. The switch never applies to the owner. The Security page also lists the people with two-factor on and can reset any of them. A reset signs that person out everywhere.
 
+On a Region Server or a Connected Server, the owner's avatar lives on another grid, so the owner's two-factor is turned on only with proof from this computer. During setup that is the "Turn on two-factor" step right after "Your avatar", which the setup link leads to. Later (an install set up before that step existed, or after `reset-two-factor`), run `admin-link --two-factor` on the grid computer, as the same account and in the same way as `reset-two-factor` below. It prints a one-time link that works for 15 minutes. Open it while signed in as the owner, then turn two-factor on as usual. On Debian:
+
+```
+sudo runuser -u gridgate -- /opt/gridgate/dotnet/dotnet /opt/gridgate/launcher/GridGate.Launcher.dll admin-link --two-factor
+```
+
 If the owner loses their phone and backup codes, run `reset-two-factor` on the grid computer with the launcher program, the same way the installer runs `admin-link`. It turns two-factor off for the owner. It works whether the grid is running or stopped.
 
 On Debian, run it as the `gridgate` account, which owns the data folder:

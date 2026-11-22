@@ -96,7 +96,8 @@ public sealed class JoinModel(IGridController grid, Func<LauncherSettings> setti
         }
 
         // The owner here is a grid account, which the Grid Asset Server's admins can reset: so a current two-factor code of this
-        // computer's own is needed too. Without two-factor on, nothing more is asked.
+        // computer's own is needed too. Without two-factor on, the re-point is refused until the owner turns it on (with a link from
+        // admin-link --two-factor on this computer, OwnerEnrolLinks).
         if (OwnerCodeStep.CanAsk(twoFactor, User) is var asked and not OwnerCodeResult.Ok)
             return Refuse(read, OwnerCodeStep.Words(asked), OwnerCodeStep.AuditResult(asked));
 

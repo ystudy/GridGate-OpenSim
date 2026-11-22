@@ -66,7 +66,8 @@ public static class OwnerCodeStep
     /// <summary>What the page tells the owner when the check didn't pass.</summary>
     public static string Words(OwnerCodeResult result) => result switch
     {
-        OwnerCodeResult.NotSetUp => "This needs two-factor sign-in, which isn't on for your account on this computer. Turn it on first, then come back.",
+        OwnerCodeResult.NotSetUp => "This needs two-factor sign-in, which isn't on for your account on this computer. Run admin-link --two-factor on "
+            + "this computer and open the link it prints to turn it on, then come back.",
         OwnerCodeResult.Unreadable => "Your two-factor code can't be checked right now: this computer's two-factor file can't be read.",
         OwnerCodeResult.Locked => "Too many attempts. Try again in a few minutes.",
         OwnerCodeResult.SaveFailed => TwoFactorStore.SaveFailed,
