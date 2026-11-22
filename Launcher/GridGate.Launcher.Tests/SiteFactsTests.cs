@@ -105,6 +105,28 @@ public sealed class SiteFactsTests
             Assert.Equal("/login/code", r.Headers.Location?.OriginalString.Split('?')[0]);
         }
 
+        // gg-2fa-proof: a Region Server owner opens a one-time two-factor link from admin-link --two-factor.
+        await using (var f = new LauncherFactory(s => s with
+        {
+            SetupToken = null,
+            Plan = OwnerPlan.RegionServer,
+            Join = new JoinedGrid("192.168.1.5", 8002, 8003, "Avalon", "http://192.168.1.5:8002/",
+                GridGate.Launcher.Core.LauncherVersion.Current, false, 8004, 8006),
+            Setup = new SetupState(WorldNamed: true, OwnerCreated: true, RegionCreated: true, Finished: true,
+                Owner: new OwnerInfo("Test", "Owner", TestAuth.OwnerId), NetworkSet: true),
+        })
+        {
+            Before = TestAuth.Apply,
+        })
+        {
+            TestAuth.AddStaff(f.Robust);
+            var client = Client(f, seen);
+            using (await client.GetAsync("/__test/signin?role=owner", Ct)) { }
+            var link = f.Services.GetRequiredService<OwnerEnrolLinks>().Create(TestAuth.OwnerId);
+            using var r = await client.GetAsync("/profile/two-factor?link=" + link, Ct);
+            Assert.Equal(HttpStatusCode.Redirect, r.StatusCode);
+        }
+
         // gg-guest: the guest door.
         await using (var f = AfterSetup())
         {
@@ -172,6 +194,7 @@ public sealed class SiteFactsTests
     [InlineData("security/throttle.json")]
     [InlineData("security/sessions.json")]
     [InlineData("security/twofactor.json")]
+    [InlineData("security/two-factor-link.json")]
     [InlineData("security/suspended.json")]
     [InlineData("guests/terms.json")]
     [InlineData("guests/region-rights.json")]

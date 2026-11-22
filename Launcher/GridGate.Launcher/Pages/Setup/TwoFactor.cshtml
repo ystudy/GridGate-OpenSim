@@ -12,7 +12,11 @@
 {
     <div class="alert alert-info" role="status">@Model.Notice</div>
 }
-@if (Model.State == TwoFactorState.Unknown)
+@if (Model.NotOwner)
+{
+    <div id="owner-only" class="alert alert-info" role="status">@GridGate.Launcher.Pages.Setup.SetupTwoFactorModel.OwnerOnly</div>
+}
+else if (Model.State == TwoFactorState.Unknown)
 {
     <div class="alert alert-danger" role="alert">Two-factor sign-in can't be checked on this computer. Run <code>reset-two-factor --all-damaged</code> on the grid computer, then come back.</div>
 }

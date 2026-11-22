@@ -5,6 +5,7 @@ using GridGate.Launcher.Core;
 using GridGate.Launcher.Core.Security;
 using GridGate.Launcher.Core.Settings;
 using GridGate.Launcher.Pages.Profile;
+using GridGate.Launcher.Pages.Setup;
 using GridGate.Launcher.Security;
 using GridGate.Launcher.Setup;
 using Microsoft.Extensions.DependencyInjection;
@@ -222,6 +223,24 @@ public sealed class SetupTwoFactorStepTests
         Assert.Contains(TwoFactorModel.LinkCommand, page.QuerySelector("main")!.TextContent, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task Turn_on_post_after_the_hour_is_refused_even_with_a_right_code()
+    {
+        await using var f = BeforeAvatar();
+        var client = await ThroughAvatarAsync(f);
+        var page = await GetPageAsync(client, Step);
+
+        f.Time.Advance(OwnerEnrolProof.FromSetup + TimeSpan.FromSeconds(1));
+        using var on = await TurnOnAsync(client, f, page);
+
+        Assert.Equal(HttpStatusCode.OK, on.StatusCode);
+        Assert.Equal(TwoFactorState.Off, f.Services.GetRequiredService<TwoFactorStore>().StateOf(OwnerOf(f)));
+        Assert.False(f.Store.LoadOrCreate().Setup.OwnerTwoFactorSet);
+        var after = Parser.ParseDocument(await on.Content.ReadAsStringAsync(Ct));
+        Assert.NotNull(after.QuerySelector("#two-factor-link"));
+        Assert.Null(after.QuerySelector("#backup-codes"));
+    }
+
     [Theory]
     [InlineData(OwnerPlan.RegionServer)]
     [InlineData(OwnerPlan.Connected)]
@@ -240,6 +259,8 @@ public sealed class SetupTwoFactorStepTests
             ["Shown"] = "",
             ["__RequestVerificationToken"] = page.QuerySelector("input[name=__RequestVerificationToken]")!.GetAttribute("value")!,
         }), Ct);
+        Assert.Equal(HttpStatusCode.OK, post.StatusCode);
+        Assert.NotNull(Parser.ParseDocument(await post.Content.ReadAsStringAsync(Ct)).QuerySelector("#two-factor-link"));
         Assert.Equal(TwoFactorState.Off, f.Services.GetRequiredService<TwoFactorStore>().StateOf(TestAuth.OwnerId));
         Assert.False(f.Store.LoadOrCreate().Setup.OwnerTwoFactorSet);
     }
@@ -258,13 +279,34 @@ public sealed class SetupTwoFactorStepTests
     }
 
     [Fact]
-    public async Task Step_is_closed_to_an_admin()
+    public async Task Step_tells_an_admin_that_only_the_owner_can_finish_it()
     {
         await using var f = AtStep();
         var client = await SignedInAsync(f, "admin");
 
-        using var r = await client.GetAsync(Step, Ct);
+        var page = await GetPageAsync(client, Step);
 
-        Assert.Equal("/setup", r.Headers.Location?.OriginalString);
+        Assert.Contains(SetupTwoFactorModel.OwnerOnly, page.QuerySelector("main")!.TextContent, StringComparison.Ordinal);
+        Assert.Null(page.QuerySelector("#two-factor-secret"));
+        Assert.Null(page.QuerySelector("form#turn-on"));
+    }
+
+    [Fact]
+    public async Task Step_turn_on_by_an_admin_changes_nothing()
+    {
+        await using var f = AtStep();
+        var client = await SignedInAsync(f, "admin");
+        var page = await GetPageAsync(client, Step);
+
+        using var post = await client.PostAsync(Step + "?handler=TurnOn", new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["Code"] = "123456",
+            ["Shown"] = "",
+            ["__RequestVerificationToken"] = page.QuerySelector("input[name=__RequestVerificationToken]")!.GetAttribute("value")!,
+        }), Ct);
+
+        Assert.Equal(HttpStatusCode.OK, post.StatusCode);
+        Assert.Equal(TwoFactorState.Off, f.Services.GetRequiredService<TwoFactorStore>().StateOf(TestAuth.AdminId));
+        Assert.False(f.Store.LoadOrCreate().Setup.OwnerTwoFactorSet);
     }
 }

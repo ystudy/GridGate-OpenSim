@@ -21,6 +21,11 @@ public sealed class SetupTwoFactorModel(TwoFactorStore store, Func<LauncherSetti
     IDataProtectionProvider dp, LoginThrottle throttle, OwnerEnrolProof proof, ILogger<SetupTwoFactorModel> log)
     : TwoFactorSetupPageModel(settings, audit, dp, throttle, log)
 {
+    public const string OwnerOnly = "Only the grid owner can finish this step. Ask the owner to sign in and turn on two-factor sign-in here.";
+
+    /// <summary>Someone other than the owner (an admin added during setup) opened the step: it says only the owner can finish it.</summary>
+    public bool NotOwner { get; private set; }
+
     /// <summary>The owner of a plan this step is for, two-factor off, with no proof: no secret is made.</summary>
     public bool NeedsLink { get; private set; }
 
@@ -33,7 +38,7 @@ public sealed class SetupTwoFactorModel(TwoFactorStore store, Func<LauncherSetti
 
     public IActionResult OnGet()
     {
-        if (Open() is not { } principal) return Redirect("/setup");
+        if (Open() is not { } principal) return Closed();
         if (State == TwoFactorState.On) return Done();
         if (State == TwoFactorState.Off && !NeedsLink) StartEnrol(principal);
         return Page();
@@ -41,7 +46,7 @@ public sealed class SetupTwoFactorModel(TwoFactorStore store, Func<LauncherSetti
 
     public async Task<IActionResult> OnPostTurnOnAsync()
     {
-        if (Open() is not { } principal) return Redirect("/setup");
+        if (Open() is not { } principal) return Closed();
         if (State == TwoFactorState.On) return Done();
         if (State != TwoFactorState.Off || NeedsLink) return Page();
         return await TurnOnAsync(principal);
@@ -58,13 +63,21 @@ public sealed class SetupTwoFactorModel(TwoFactorStore store, Func<LauncherSetti
     private Guid? Open()
     {
         var s = Settings();
-        if (!SetupSteps.CanOpen(s, SetupSteps.TwoFactorPath) || StaffSignIn.Read(User) is not { } claims
-            || !OwnerEnrolRule.Applies(s, claims.Role))
+        if (!SetupSteps.CanOpen(s, SetupSteps.TwoFactorPath) || StaffSignIn.Read(User) is not { } claims) return null;
+        if (!OwnerEnrolRule.Applies(s, claims.Role))
+        {
+            // The step is open (so the plan is one it is for) but this isn't the owner. Sending them to /setup would bring them
+            // straight back here.
+            NotOwner = true;
             return null;
+        }
         State = store.StateOf(claims.Principal);
         NeedsLink = State == TwoFactorState.Off && !proof.Has(Request, claims.Principal);
         return claims.Principal;
     }
+
+    /// <summary>Not this person's step: a short page for someone other than the owner, otherwise back to the checklist.</summary>
+    private IActionResult Closed() => NotOwner ? Page() : Redirect("/setup");
 
     private IActionResult Done()
     {

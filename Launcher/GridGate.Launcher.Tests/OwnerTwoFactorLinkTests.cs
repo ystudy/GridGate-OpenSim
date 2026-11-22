@@ -187,6 +187,8 @@ public sealed class OwnerTwoFactorLinkTests
             ["__RequestVerificationToken"] = otherPage.QuerySelector("input[name=__RequestVerificationToken]")!.GetAttribute("value")!,
         }), Ct);
 
+        Assert.Equal(HttpStatusCode.OK, on.StatusCode);
+        Assert.NotNull(Parser.ParseDocument(await on.Content.ReadAsStringAsync(Ct)).QuerySelector("#two-factor-link"));
         Assert.Equal(TwoFactorState.Off, State(f));
     }
 
