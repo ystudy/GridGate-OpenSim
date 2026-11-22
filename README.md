@@ -269,9 +269,14 @@ code. The [money design](docs/superpowers/specs/2026-11-13-money-design.md)
 
 Building the money system turned up bugs in how OpenSim itself handles money.
 Most of them let a scammer take someone else's money, or let a grid's fees be
-skipped. GridGate fixed them in OpenSim's own code, so the fixes are in every
-build, whether money is on or not. They matter to anyone who runs a money
-module on OpenSim, not only to GridGate.
+skipped. GridGate fixed them in its own copy of the OpenSim code, in this
+repository, so the fixes are in every GridGate build, whether money is on or
+not. They are not in the official OpenSimulator code
+([opensim/opensim](https://github.com/opensim/opensim)), so a grid running stock
+OpenSim doesn't have them. They matter to anyone who runs a money module on
+OpenSim, not only to GridGate. The OpenSimulator developers are welcome to
+review them and put them into core OpenSim; [Keeping the fixes](#keeping-the-fixes)
+says how to find each one.
 
 **First, how a script spends money.** Money normally moves because a person
 chooses to pay: they right-click an object or an avatar, pick Pay and type the
