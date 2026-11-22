@@ -201,6 +201,9 @@ public abstract class TwoFactorSetupPageModel(Func<LauncherSettings> settings, A
         return true;
     }
 
+    /// <summary>An audit line for this page's person, with the page's audit role.</summary>
+    protected void Audit(Guid principal, string action, string result = "ok") => audit.Write(Entry(principal, action, null, result));
+
     private AuditEntry Entry(Guid principal, string action, string? target = null, string result = "ok") =>
         new(LogText.Clean(User.Identity?.Name, 64), principal, AuditRole,
             HttpContext.Connection.RemoteIpAddress?.ToString(), action, target, result);
