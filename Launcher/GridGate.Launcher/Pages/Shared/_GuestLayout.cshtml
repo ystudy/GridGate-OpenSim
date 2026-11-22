@@ -116,6 +116,12 @@
 </footer>
 <script src="/js/copy.js" asp-append-version="true"></script>
 <script src="/js/language.js" asp-append-version="true"></script>
+@if (residentName is not null || isStaff)
+{
+    @* Back after signing out must not show this page again from the browser's back/forward cache. A visitor's pages keep
+       the fast Back. *@
+    <script src="/js/back-check.js" asp-append-version="true"></script>
+}
 @await RenderSectionAsync("Scripts", required: false)
 </body>
 </html>
