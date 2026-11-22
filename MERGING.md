@@ -9,11 +9,12 @@ longer public, so we now take them from OpenSimulator directly.
 
 ## Where our tree stands
 
-- **Base:** OpenSimulator `master` at `9d00a5555225b17d3d1063cb0f3496fb1b6217f9` (2026-11-07, "soem extra
-  spaces"), version `0.9.3.1` Dev. Every upstream commit up to it has been picked or recorded. On top of it sit
-  Fred's patches and our own changes.
+- **Base:** OpenSimulator `master` at `feccd9cc535bed3d836dd9a82fd22117afa0cee7` (pushed 2026-11-20, "fix(profiles):
+  preserve profile flags when marking online status"), version `0.9.3.1` Dev. Every upstream commit up to it has
+  been picked or recorded. On top of it sit Fred's patches and our own changes.
 - **How we got there:** Fred brought in upstream `78cb44c0` (2026-08-11) as "Update to August core"
-  (`a19786cf`). "OpenSim merge 1" (PR #30) picked 34 later commits, and "OpenSim merge 2" picked the other 36.
+  (`a19786cf`). "OpenSim merge 1" (PR #30) picked 34 later commits, "OpenSim merge 2" picked the other 36, and
+  "OpenSim merge 3" picked `feccd9cc`.
 - **No shared history.** Our history starts with Fred's import of the source in January 2025 ("V5 from Tandy"),
   so `git merge-base` finds no common commit with OpenSimulator. A `git merge` would treat every file that
   differs as a conflict, so we cherry-pick instead.
@@ -40,7 +41,7 @@ Work in a branch named after the batch, e.g. `opensim-merge-2`.
 
 ```bash
 git fetch opensim
-BASE=9d00a5555225b17d3d1063cb0f3496fb1b6217f9
+BASE=feccd9cc535bed3d836dd9a82fd22117afa0cee7
 git log main --format='%(trailers:key=Upstream-OpenSim,valueonly)' | grep . | sort -u > picked.txt
 git rev-list --reverse --no-merges $BASE..opensim/master | grep -vFf picked.txt > todo.txt
 git log --no-walk=unsorted --date=short --format='%h %ad %an | %s' $(cat todo.txt)
