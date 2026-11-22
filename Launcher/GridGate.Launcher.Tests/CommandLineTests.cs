@@ -621,4 +621,92 @@ public class CommandLineTests : IDisposable
             return new NoAccess(() => { var undo = f.GetAccessControl(); undo.RemoveAccessRule(rule); f.SetAccessControl(undo); });
         }
     }
+
+    private string TwoFactorLinkFile => Path.Combine(DataDir, "security", "two-factor-link.json");
+
+    private SettingsStore NewStoreWithOwnerOn(OwnerPlan plan) => NewStore(s => s with
+    {
+        Plan = plan,
+        Setup = s.Setup with { OwnerCreated = true, Owner = new OwnerInfo("Olive", "Owner", Owner) },
+    });
+
+    [Theory]
+    [InlineData(OwnerPlan.RegionServer)]
+    [InlineData(OwnerPlan.Connected)]
+    public async Task Admin_link_two_factor_prints_a_link_and_writes_the_file(OwnerPlan plan)
+    {
+        var store = NewStoreWithOwnerOn(plan);
+
+        var (code, output) = await RunAsync(_ => null, "admin-link", "--two-factor", "--data", DataDir);
+
+        Assert.Equal(0, code);
+        var line = Assert.Single(output.Split('\n', StringSplitOptions.RemoveEmptyEntries), l => l.Contains("/profile/two-factor?link=", StringComparison.Ordinal)).Trim();
+        Assert.StartsWith(GridGate.Launcher.Core.Config.WebsiteAddress.Base(store.LoadOrCreate()), line, StringComparison.Ordinal);
+        var token = line[(line.IndexOf("?link=", StringComparison.Ordinal) + "?link=".Length)..];
+        Assert.True(File.Exists(TwoFactorLinkFile));
+        Assert.DoesNotContain(token, File.ReadAllText(TwoFactorLinkFile), StringComparison.Ordinal);
+        Assert.True(new GridGate.Launcher.Security.OwnerEnrolLinks(TwoFactorLinkFile, TimeProvider.System).Spend(Owner, token));
+    }
+
+    [Theory]
+    [InlineData(OwnerPlan.Local)]
+    [InlineData(OwnerPlan.GridAsset)]
+    public async Task Admin_link_two_factor_is_refused_where_the_owner_is_on_this_grid(OwnerPlan plan)
+    {
+        NewStoreWithOwnerOn(plan);
+
+        var (code, output) = await RunAsync(_ => null, "admin-link", "--two-factor", "--data", DataDir);
+
+        Assert.Equal(2, code);
+        Assert.DoesNotContain("?link=", output, StringComparison.Ordinal);
+        Assert.False(File.Exists(TwoFactorLinkFile));
+    }
+
+    [Fact]
+    public async Task Admin_link_two_factor_is_refused_before_the_owner_exists()
+    {
+        NewStore(s => s with { Plan = OwnerPlan.RegionServer });
+
+        var (code, _) = await RunAsync(_ => null, "admin-link", "--two-factor", "--data", DataDir);
+
+        Assert.Equal(2, code);
+        Assert.False(File.Exists(TwoFactorLinkFile));
+    }
+
+    [Fact]
+    public async Task Admin_link_two_factor_runs_only_as_the_data_folders_owner()
+    {
+        NewStoreWithOwnerOn(OwnerPlan.RegionServer);
+
+        var (code, output) = await RunAsync(_ => "gridgate", "admin-link", "--two-factor", "--data", DataDir);
+
+        Assert.Equal(2, code);
+        Assert.Contains("sudo runuser -u gridgate -- ", output);
+        Assert.Contains("admin-link --two-factor", output);
+        Assert.False(File.Exists(TwoFactorLinkFile));
+    }
+
+    [Fact]
+    public async Task Reset_two_factor_on_a_region_server_says_to_run_admin_link()
+    {
+        NewStoreWithOwnerOn(OwnerPlan.RegionServer);
+        Enrol(Owner, "Olive Owner");
+
+        var (code, output) = await RunAsync(_ => null, "reset-two-factor", "--data", DataDir);
+
+        Assert.Equal(0, code);
+        Assert.Contains("admin-link --two-factor", output.Split('\n')[^1], StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Reset_two_factor_on_the_local_plan_does_not_mention_the_link()
+    {
+        NewStoreWithOwnerOn(OwnerPlan.Local);
+        Enrol(Owner, "Olive Owner");
+
+        var (code, output) = await RunAsync(_ => null, "reset-two-factor", "--data", DataDir);
+
+        Assert.Equal(0, code);
+        Assert.Equal("Two-factor sign-in is off for Olive Owner.", output);
+    }
 }

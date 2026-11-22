@@ -13,7 +13,7 @@ using Microsoft.AspNetCore.DataProtection;
 namespace GridGate.Launcher;
 
 /// <summary>
-/// The verbs the installers and the owner call (<c>--version</c>, <c>admin-link</c>, <c>stop-grid</c>, <c>set-web-port</c>, <c>reset-two-factor</c>) and the
+/// The verbs the installers and the owner call (<c>--version</c>, <c>admin-link</c>, <c>admin-link --two-factor</c>, <c>stop-grid</c>, <c>set-web-port</c>, <c>reset-two-factor</c>) and the
 /// <c>--web-port</c> host option. Exit codes: 0 done, 2 bad arguments, a refused port or unreadable settings, 3 another
 /// launcher holds the data directory, 4 the settings did not appear in time, 5 the grid's programs were still running
 /// a minute after the stop.
@@ -40,6 +40,8 @@ public static class CommandLine
             case "--version":
                 output.WriteLine(Version());
                 return 0;
+            case "admin-link" when args.Contains("--two-factor"):
+                return await Guarded(output, () => Task.FromResult(TwoFactorLink(args, env, output, foreignDataOwner ?? ForeignDataOwner)));
             case "admin-link":
                 return await Guarded(output, () => AdminLinkAsync(args, env, output, ct));
             case "stop-grid":
@@ -308,6 +310,78 @@ public static class CommandLine
             return 2;
         }
         output.WriteLine($"Two-factor sign-in is off for {owner.FirstName} {owner.LastName}.");
+        if (OwnerEnrolRule.Applies(settings, StaffRole.Owner))
+            output.WriteLine($"To turn it on again, run {TwoFactorLinkVerb} on this computer and open the link it prints.");
+        return 0;
+    }
+
+    private const string TwoFactorLinkVerb = "admin-link --two-factor";
+
+    /// <summary>
+    /// <c>admin-link --two-factor [--data &lt;dir&gt;]</c>: on a Region Server or Connected Server, whose owner's account lives on
+    /// another grid, prints a one-time link (<see cref="OwnerEnrolLinks"/>, 15 minutes) with which the owner turns on two-factor
+    /// sign-in on this computer's website. Running it proves the person can use this computer: only the account that owns the data
+    /// folder can write the link file. On Unix it runs only as that account, as <c>reset-two-factor</c> does. It writes no audit
+    /// line (the running launcher owns the audit log; it audits the link when it is used or refused). Exit 0 with the link, 2 with
+    /// a one-line reason.
+    /// </summary>
+    private static int TwoFactorLink(string[] args, IDictionary<string, string?> env, TextWriter output, Func<string, string?> foreignDataOwner)
+    {
+        var dataDir = LauncherPaths.ResolveData(args, env, OperatingSystem.IsWindows());
+        if (!Directory.Exists(dataDir))
+        {
+            output.WriteLine($"The data folder {dataDir} does not exist. Pass --data <folder> if the grid keeps its data elsewhere.");
+            return 2;
+        }
+        string? account;
+        try
+        {
+            account = foreignDataOwner(dataDir);
+        }
+        catch (DataOwnerUnknownException)
+        {
+            output.WriteLine($"The owner of {dataDir} couldn't be read, so this command won't run as root; run the command as the account that owns the data folder:");
+            output.WriteLine($"sudo runuser -u gridgate -- {SameCommand(args)}");
+            return 2;
+        }
+        if (account is not null)
+        {
+            output.WriteLine($"Run this as {account}, the account that owns {dataDir}, so the grid can still read what it changes:");
+            output.WriteLine($"sudo runuser -u {account} -- {SameCommand(args)}");
+            return 2;
+        }
+
+        var s = new SettingsStore(Path.Combine(dataDir, "settings.json")).TryLoad();
+        if (s is null)
+        {
+            output.WriteLine($"No settings found in {dataDir}. Is the GridGate service installed?");
+            return 2;
+        }
+        if (!OwnerEnrolRule.Applies(s, StaffRole.Owner))
+        {
+            output.WriteLine("This grid's owner signs in on this computer, so two-factor sign-in is turned on from the owner's Two-factor page; no link is needed.");
+            return 2;
+        }
+        if (!s.Setup.OwnerCreated || s.Setup.Owner is not { } owner)
+        {
+            output.WriteLine("There is no owner yet. Finish setup with the setup link first (run admin-link).");
+            return 2;
+        }
+
+        string token;
+        try
+        {
+            token = new OwnerEnrolLinks(Path.Combine(dataDir, "security", "two-factor-link.json"), TimeProvider.System).Create(owner.PrincipalId);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            output.WriteLine(OperatingSystem.IsWindows()
+                ? "This account can't write to the data folder. Run this from an Administrator command prompt."
+                : "This account can't write to the data folder; run the command as the account that owns it.");
+            return 2;
+        }
+        output.WriteLine($"Sign in as {owner.FirstName} {owner.LastName}, then open this link within {OwnerEnrolLinks.Lasts.TotalMinutes:0} minutes to turn on two-factor sign-in:");
+        output.WriteLine($"{WebsiteAddress.Base(s)}/profile/two-factor?link={token}");
         return 0;
     }
 
