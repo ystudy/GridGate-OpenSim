@@ -21,6 +21,7 @@ public sealed partial class AvatarModel(
     IGridController grid,
     Func<LauncherSettings> settings,
     SetupRunner runner,
+    OwnerEnrolProof proof,
     IHostApplicationLifetime lifetime,
     ILogger<AvatarModel> log) : PageModel
 {
@@ -136,6 +137,9 @@ public sealed partial class AvatarModel(
         grid.UpdateSettings(s => s with { SetupToken = null }, writeConfig: false);
         Response.Cookies.Delete(SetupTokenCookie.Name, new CookieOptions { Path = "/" });
         await StaffSignIn.SignInAsync(HttpContext, account, StaffRole.Owner);
+        // The setup link got this person here: setup's two-factor step may use that for the next hour (OwnerEnrolRule).
+        if (OwnerEnrolRule.Applies(settings(), StaffRole.Owner))
+            proof.Issue(Response, account.PrincipalId, OwnerEnrolProof.FromSetup);
         return Redirect("/setup");
     }
 

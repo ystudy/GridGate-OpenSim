@@ -353,6 +353,7 @@ public sealed class AccessTests
             "page setup/plan/{id}",
             "page setup/region",
             "page setup/security",
+            "page setup/two-factor",
             "page setup/world",
             "page waiting",
             "page signup",

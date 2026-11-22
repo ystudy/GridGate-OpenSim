@@ -37,12 +37,7 @@ else if (Model.State == TwoFactorState.Off)
     <p>Two-factor sign-in is off.</p>
     @if (Model.NeedsLink)
     {
-        <div id="two-factor-link" class="alert alert-info" role="status">
-            <p>Your account lives on another grid, so two-factor sign-in can only be turned on from this computer.</p>
-            <p>On the grid computer, run the launcher's <code>@TwoFactorModel.LinkCommand</code> and open the link it prints within 15 minutes, while signed in here.</p>
-            <p>On Linux:<br><code>sudo runuser -u gridgate -- /opt/gridgate/dotnet/dotnet /opt/gridgate/launcher/GridGate.Launcher.dll @TwoFactorModel.LinkCommand</code></p>
-            <p>On Windows, from an Administrator command prompt:<br><code>"C:\Program Files\GridGate\dotnet-&lt;version&gt;\dotnet.exe" "C:\Program Files\GridGate\launcher\GridGate.Launcher.dll" @TwoFactorModel.LinkCommand</code></p>
-        </div>
+        <partial name="_OwnerTwoFactorLink" />
     }
     else if (Model.QrSvg is not null)
     {

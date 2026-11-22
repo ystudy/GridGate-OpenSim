@@ -33,7 +33,8 @@ public sealed class TwoFactorModel(TwoFactorStore store, Func<LauncherSettings> 
     public const string LinkCommand = "admin-link --two-factor";
     public const string LinkRunOut = "This link has run out or was already used. Run admin-link --two-factor on the grid computer again.";
 
-    private static readonly TwoFactorSetupTexts SetupTexts = new(WrongCode, "Too many attempts. Try again in a few minutes.",
+    /// <summary>The wording the setup forms use; setup's two-factor step uses it too.</summary>
+    internal static readonly TwoFactorSetupTexts SetupTexts = new(WrongCode, "Too many attempts. Try again in a few minutes.",
         TwoFactorStore.SaveFailed, "Setup started again. Scan the new code below.",
         "Setup was started again somewhere else. Scan the new code below.");
 
