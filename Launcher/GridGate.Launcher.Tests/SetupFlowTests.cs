@@ -631,7 +631,7 @@ public sealed class SetupFlowTests
                 ? new ConnectedGrid("osgrid", "OSGrid", "http://login.osgrid.org/", "http://login.osgrid.org/", "http://grid.osgrid.org/", null)
                 : null,
             Setup = new SetupState(WorldNamed: true, OwnerCreated: true,
-                Owner: new OwnerInfo("Test", "Owner", Guid.NewGuid()), NetworkSet: true),
+                Owner: new OwnerInfo("Test", "Owner", Guid.NewGuid()), NetworkSet: true, OwnerTwoFactorSet: true),
             Recovery = HomeLab,
         };
         return more is null ? seeded : more(seeded);
@@ -1594,7 +1594,7 @@ public sealed class SetupFlowTests
         Join = Avalon(),
         GridName = "Avalon",
         SetupToken = null,
-        Setup = new SetupState(WorldNamed: true, OwnerCreated: true, Owner: new OwnerInfo("Ann", "Lee", Guid.NewGuid()), NetworkSet: true),
+        Setup = new SetupState(WorldNamed: true, OwnerCreated: true, Owner: new OwnerInfo("Ann", "Lee", Guid.NewGuid()), NetworkSet: true, OwnerTwoFactorSet: true),
     });
 
     [Fact]
@@ -1826,8 +1826,9 @@ public sealed class SetupFlowTests
         Assert.Null(s.SetupToken);
         Assert.Contains(resp.Headers.GetValues("Set-Cookie"), c => c.StartsWith("gg-auth=", StringComparison.Ordinal));
         Assert.Contains(resp.Headers.GetValues("Set-Cookie"), c => c.StartsWith("gg-setup=;", StringComparison.Ordinal));
+        Assert.Contains(resp.Headers.GetValues("Set-Cookie"), c => c.StartsWith("gg-2fa-proof=", StringComparison.Ordinal));
         using var next = await client.GetAsync("/setup", Ct);
-        Assert.Equal("/setup/region", Location(next));
+        Assert.Equal("/setup/two-factor", Location(next));
     }
 
     [Fact]
@@ -1887,7 +1888,7 @@ public sealed class SetupFlowTests
         using var client = await SetupClientAsync(f);
 
         var page = new HtmlParser().ParseDocument(await client.GetStringAsync("/setup/avatar", Ct));
-        Assert.Equal(["Choose your plan (done)", "Join the Grid Asset Server (done)", "Your network (done)", "Your avatar", "Choose your first region", "Connect with Firestorm"],
+        Assert.Equal(["Choose your plan (done)", "Join the Grid Asset Server (done)", "Your network (done)", "Your avatar", "Turn on two-factor", "Choose your first region", "Connect with Firestorm"],
             page.QuerySelectorAll(".checklist li").Select(li => li.TextContent.Trim()));
         Assert.DoesNotContain(GridGate.Launcher.Setup.SetupSteps.For(f.Store.LoadOrCreate()), step => step.Path == "/setup/world");
 
@@ -2224,8 +2225,9 @@ public sealed class SetupFlowTests
         Assert.Equal(("Ann", "Lee"), (s.Setup.Owner?.FirstName, s.Setup.Owner?.LastName));
         Assert.Null(s.SetupToken);
         Assert.Contains(resp.Headers.GetValues("Set-Cookie"), c => c.StartsWith("gg-auth=", StringComparison.Ordinal));
+        Assert.Contains(resp.Headers.GetValues("Set-Cookie"), c => c.StartsWith("gg-2fa-proof=", StringComparison.Ordinal));
         using var next = await client.GetAsync("/setup", Ct);
-        Assert.Equal("/setup/region", Location(next));
+        Assert.Equal("/setup/two-factor", Location(next));
     }
 
     [Fact]
@@ -2252,7 +2254,7 @@ public sealed class SetupFlowTests
         using var client = await SetupClientAsync(f);
 
         var page = new HtmlParser().ParseDocument(await client.GetStringAsync("/setup/avatar", Ct));
-        Assert.Equal(["Choose your plan (done)", "Connect to the other grid (done)", "Your network (done)", "Your avatar", "Choose your first region", "Connect with Firestorm"],
+        Assert.Equal(["Choose your plan (done)", "Connect to the other grid (done)", "Your network (done)", "Your avatar", "Turn on two-factor", "Choose your first region", "Connect with Firestorm"],
             page.QuerySelectorAll(".checklist li").Select(li => li.TextContent.Trim()));
         Assert.DoesNotContain(GridGate.Launcher.Setup.SetupSteps.For(f.Store.LoadOrCreate()), step => step.Path == "/setup/world");
 
@@ -2267,7 +2269,7 @@ public sealed class SetupFlowTests
         {
             Connected = Osgrid(),
             SetupToken = null,
-            Setup = new SetupState(WorldNamed: true, OwnerCreated: true, Owner: new OwnerInfo("Ann", "Lee", Guid.NewGuid()), NetworkSet: true),
+            Setup = new SetupState(WorldNamed: true, OwnerCreated: true, Owner: new OwnerInfo("Ann", "Lee", Guid.NewGuid()), NetworkSet: true, OwnerTwoFactorSet: true),
         });
         using var client = await SignedInClientAsync(f);
 
@@ -2284,7 +2286,7 @@ public sealed class SetupFlowTests
             Connected = Osgrid(),
             GridName = "OSGrid",
             SetupToken = null,
-            Setup = new SetupState(WorldNamed: true, OwnerCreated: true, Owner: new OwnerInfo("Ann", "Lee", Guid.NewGuid()), NetworkSet: true),
+            Setup = new SetupState(WorldNamed: true, OwnerCreated: true, Owner: new OwnerInfo("Ann", "Lee", Guid.NewGuid()), NetworkSet: true, OwnerTwoFactorSet: true),
         });
         using var client = await SignedInClientAsync(f);
         await f.Grid.Started.Task.WaitAsync(TimeSpan.FromSeconds(5), Ct);
@@ -2305,7 +2307,7 @@ public sealed class SetupFlowTests
             Connected = Osgrid(),
             GridName = "OSGrid",
             SetupToken = null,
-            Setup = new SetupState(WorldNamed: true, OwnerCreated: true, Owner: new OwnerInfo("Ann", "Lee", Guid.NewGuid()), NetworkSet: true),
+            Setup = new SetupState(WorldNamed: true, OwnerCreated: true, Owner: new OwnerInfo("Ann", "Lee", Guid.NewGuid()), NetworkSet: true, OwnerTwoFactorSet: true),
         });
         var client = await SignedInClientAsync(f);
         await f.Grid.Started.Task.WaitAsync(TimeSpan.FromSeconds(5), Ct);

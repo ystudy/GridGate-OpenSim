@@ -24,12 +24,17 @@ namespace GridGate.Launcher.Pages.Profile;
 /// <para>A damaged two-factor file shows how the owner resets it; a failed save says so. Secrets and codes are never logged.</para>
 /// </summary>
 public sealed class TwoFactorModel(TwoFactorStore store, Func<LauncherSettings> settings, AuditLog audit, IDataProtectionProvider dp,
-    LoginThrottle throttle, ILogger<TwoFactorModel> log) : TwoFactorSetupPageModel(settings, audit, dp, throttle, log)
+    LoginThrottle throttle, OwnerEnrolLinks links, OwnerEnrolProof proof, ILogger<TwoFactorModel> log)
+    : TwoFactorSetupPageModel(settings, audit, dp, throttle, log)
 {
     public const string WrongCode = "That code isn't right. Try again.";
     public const string RequiredText = "The grid owner requires two-factor sign-in.";
+    /// <summary>The command that prints the one-time link (<see cref="OwnerEnrolLinks"/>).</summary>
+    public const string LinkCommand = "admin-link --two-factor";
+    public const string LinkRunOut = "This link has run out or was already used. Run admin-link --two-factor on the grid computer again.";
 
-    private static readonly TwoFactorSetupTexts SetupTexts = new(WrongCode, "Too many attempts. Try again in a few minutes.",
+    /// <summary>The wording the setup forms use; setup's two-factor step uses it too.</summary>
+    internal static readonly TwoFactorSetupTexts SetupTexts = new(WrongCode, "Too many attempts. Try again in a few minutes.",
         TwoFactorStore.SaveFailed, "Setup started again. Scan the new code below.",
         "Setup was started again somewhere else. Scan the new code below.");
 
@@ -40,6 +45,11 @@ public sealed class TwoFactorModel(TwoFactorStore store, Func<LauncherSettings> 
     /// <summary>The owner's switch is on and applies to this person.</summary>
     public bool Required { get; private set; }
     public string Home { get; private set; } = "/";
+    /// <summary>
+    /// The owner of a Region Server or Connected Server, two-factor off, with no proof from this computer
+    /// (<see cref="OwnerEnrolRule"/>): no secret is made, and the page says how to get the one-time link.
+    /// </summary>
+    public bool NeedsLink { get; private set; }
 
     /// <summary>The claims <see cref="Load"/> read; every step that needs the role runs after it.</summary>
     private StaffClaims? _claims;
@@ -53,11 +63,30 @@ public sealed class TwoFactorModel(TwoFactorStore store, Func<LauncherSettings> 
     protected override string LogArea => "Two-factor";
     protected override TwoFactorSetupTexts Texts => SetupTexts;
 
-    public IActionResult OnGet()
+    public IActionResult OnGet(string? link)
     {
         if (StaffSignIn.Read(User) is not { } claims) return Challenge(AuthSchemes.Admin);
         Load(claims);
-        if (State == TwoFactorState.Off) StartEnrol(claims.Principal);
+        if (link is not null) return OpenLink(claims, link);
+        if (State == TwoFactorState.Off && !NeedsLink) StartEnrol(claims.Principal);
+        return Page();
+    }
+
+    /// <summary>
+    /// A one-time link from <c>admin-link --two-factor</c>: spent only by the owner it was made for, on a plan where it applies.
+    /// The proof cookie it gives lasts <see cref="OwnerEnrolProof.FromLink"/>, and the redirect takes the token out of the URL.
+    /// Anything else spends nothing.
+    /// </summary>
+    private IActionResult OpenLink(StaffClaims claims, string link)
+    {
+        if (OwnerEnrolRule.Applies(Settings(), claims.Role) && links.Spend(claims.Principal, link))
+        {
+            proof.Issue(Response, claims.Principal, OwnerEnrolProof.FromLink);
+            Audit(claims.Principal, "two-factor-link-used");
+            return RedirectToPage();
+        }
+        Audit(claims.Principal, "two-factor-link-refused", "refused");
+        Error = LinkRunOut;
         return Page();
     }
 
@@ -65,7 +94,7 @@ public sealed class TwoFactorModel(TwoFactorStore store, Func<LauncherSettings> 
     {
         if (StaffSignIn.Read(User) is not { } claims) return Challenge(AuthSchemes.Admin);
         Load(claims);
-        if (State != TwoFactorState.Off) return Page();
+        if (State != TwoFactorState.Off || NeedsLink) return Page();
         return await TurnOnAsync(claims.Principal);
     }
 
@@ -105,6 +134,7 @@ public sealed class TwoFactorModel(TwoFactorStore store, Func<LauncherSettings> 
             MustEnrol = false;
         }
         TwoFactorGate.Forget(HttpContext); // the layout works it out again: two-factor is on now
+        OwnerEnrolProof.Clear(Response);
     }
 
     private void Load(StaffClaims claims)
@@ -115,5 +145,7 @@ public sealed class TwoFactorModel(TwoFactorStore store, Func<LauncherSettings> 
         MustEnrol = TwoFactorGate.MustEnrol(HttpContext);
         Required = Settings().Security.RequireTwoFactorForStaff && claims.Role is StaffRole.Admin or StaffRole.Supervisor;
         Home = StaffSignIn.Home(claims.Role);
+        NeedsLink = State == TwoFactorState.Off && OwnerEnrolRule.Applies(Settings(), claims.Role)
+            && !proof.Has(Request, claims.Principal);
     }
 }

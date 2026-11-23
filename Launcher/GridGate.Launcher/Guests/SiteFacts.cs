@@ -12,6 +12,8 @@ public static class SiteFacts
         ("gg-auth", "Keeps a staff member signed in to the staff pages."),
         ("gg-2fa", "Remembers that the password was right while the two-factor code is typed. It lasts 5 minutes."),
         ("gg-setup", "Carries the setup link's key from page to page until the owner exists."),
+        ("gg-2fa-proof", "Lets the owner of a Region Server or Connected Server turn on two-factor sign-in after the setup link or a "
+            + "link from the grid computer. It lasts up to an hour."),
         ("gg-guest", "Keeps a guest signed in to the guest pages."),
         ("gg-af", "Protects forms from being sent by other websites."),
         ("gg-notice", "Carries a one-time message to the next page after a form was sent."),
@@ -28,6 +30,8 @@ public static class SiteFacts
         ("The browser each staff session was started from, as the browser names itself", "security/sessions.json."),
         ("Two-factor sign-in: the avatar name, the authenticator secret (encrypted) and the backup codes (only as hashes)",
             "security/twofactor.json."),
+        ("The owner's account id, with a one-time link for turning on two-factor sign-in (only as a hash) and when it expires",
+            "security/two-factor-link.json."),
         ("The level a suspended account had before, by account id", "security/suspended.json."),
         ("Guests' account ids, with a value that signs them out everywhere when it changes", "guests/stamps.json."),
         ("Account ids, with the email links sent to them (only as hashes) and when they expire", "guests/email-tokens.json."),

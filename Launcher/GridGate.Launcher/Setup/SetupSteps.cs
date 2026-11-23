@@ -19,6 +19,17 @@ public static class SetupSteps
     /// <summary>The path of the Connected Server's step that connects to the other grid.</summary>
     public const string OtherGridPath = "/setup/other-grid";
 
+    /// <summary>The path of the Region Server's and Connected Server's step that turns on the owner's two-factor.</summary>
+    public const string TwoFactorPath = "/setup/two-factor";
+
+    /// <summary>
+    /// The owner's account on these plans lives on another grid, whose admins can set its password; two-factor kept on this
+    /// computer is what keeps them out, so it is turned on while the setup link still proves who is here. Done once on, or on an
+    /// install whose setup finished before this step existed (its owner uses admin-link --two-factor instead).
+    /// </summary>
+    private static readonly (string Title, string Path, Func<LauncherSettings, bool> Done) TwoFactorStep =
+        ("Turn on two-factor", TwoFactorPath, s => s.Setup.OwnerTwoFactorSet || s.Setup.Finished);
+
     private static readonly IReadOnlyList<(string Title, string Path, Func<LauncherSettings, bool> Done)> Single =
     [
         ("Choose your plan", PlanPath, s => s.Plan is not null),
@@ -37,6 +48,7 @@ public static class SetupSteps
         ("Join the Grid Asset Server", JoinPath, s => s.Join is not null),
         ("Your network", "/setup/network", s => s.Setup.NetworkSet),
         ("Your avatar", "/setup/avatar", s => s.Setup.OwnerCreated),
+        TwoFactorStep,
         ("Choose your first region", "/setup/region", s => s.Setup.RegionCreated),
         ("Connect with Firestorm", "/setup/connect", s => s.Setup.Finished),
     ];
@@ -47,6 +59,7 @@ public static class SetupSteps
         ("Connect to the other grid", OtherGridPath, s => s.Connected is not null),
         ("Your network", "/setup/network", s => s.Setup.NetworkSet),
         ("Your avatar", "/setup/avatar", s => s.Setup.OwnerCreated),
+        TwoFactorStep,
         ("Choose your first region", "/setup/region", s => s.Setup.RegionCreated),
         ("Connect with Firestorm", "/setup/connect", s => s.Setup.Finished),
     ];

@@ -35,7 +35,11 @@ else if (Model.State == TwoFactorState.Off)
         <div class="alert alert-warning" role="status">@TwoFactorModel.RequiredText Set it up to continue.</div>
     }
     <p>Two-factor sign-in is off.</p>
-    @if (Model.QrSvg is not null)
+    @if (Model.NeedsLink)
+    {
+        <partial name="_OwnerTwoFactorLink" />
+    }
+    else if (Model.QrSvg is not null)
     {
         <h2>Turn it on</h2>
         <p>Scan this code with an authenticator app on your phone, then enter the 6-digit code the app shows.</p>

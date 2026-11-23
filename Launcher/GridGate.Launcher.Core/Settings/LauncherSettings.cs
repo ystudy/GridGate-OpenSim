@@ -49,7 +49,9 @@ public sealed record SetupState(
     bool Finished = false,
     OwnerInfo? Owner = null,
     bool NetworkSet = false,
-    bool RegionSkipped = false);
+    bool RegionSkipped = false,
+    // Region Server and Connected plans: the owner turned on two-factor at setup's two-factor step (or had it on already).
+    bool OwnerTwoFactorSet = false);
 
 /// <summary>How a map tile is drawn; "None" turns map tiles off.</summary>
 public enum MapQuality { None, Simple, Good, Better, Best }
